@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NotesCache — Academic Resource Hub</title>
+  <meta name="description" content="NotesCache — Your all-in-one academic resource hub for notes, study groups, and AI assistance.">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary: #1a237e;
+      --accent: #3949ab;
+      --light: #e8eaf6;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0d1117;
+      color: white;
+      min-height: 100vh;
+    }
+
+    /* ===== NAVBAR ===== */
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 40px;
+      position: sticky;
+      top: 0;
+      background: rgba(13,17,23,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      z-index: 100;
+    }
+    .nav-logo { font-size: 22px; font-weight: 900; letter-spacing: -0.5px; }
+    .nav-logo span { color: #5c6bc0; }
+    .nav-badge {
+      background: rgba(92,107,192,0.15);
+      border: 1px solid rgba(92,107,192,0.4);
+      color: #9fa8da;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      letter-spacing: 0.5px;
+    }
+
+    /* ===== HERO ===== */
+    .hero {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 100px 24px 60px;
+      min-height: calc(100vh - 70px);
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(57,73,171,0.3) 0%, transparent 70%);
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .coming-soon-badge {
+      background: linear-gradient(135deg, rgba(92,107,192,0.2), rgba(57,73,171,0.2));
+      border: 1px solid rgba(92,107,192,0.5);
+      color: #9fa8da;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      padding: 8px 20px;
+      border-radius: 999px;
+      margin-bottom: 32px;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 72px);
+      font-weight: 900;
+      line-height: 1.1;
+      letter-spacing: -2px;
+      margin-bottom: 24px;
+    }
+    .hero h1 span { color: #5c6bc0; }
+    .hero p {
+      font-size: clamp(16px, 2vw, 20px);
+      color: rgba(255,255,255,0.5);
+      max-width: 560px;
+      line-height: 1.6;
+      margin-bottom: 48px;
+    }
+
+    /* Progress bar */
+    .build-progress {
+      width: 100%;
+      max-width: 400px;
+      margin-bottom: 12px;
+    }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 8px;
+    }
+    .progress-track {
+      height: 6px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 72%;
+      background: linear-gradient(90deg, #3949ab, #5c6bc0);
+      border-radius: 999px;
+      animation: shimmer 2s ease-in-out infinite;
+    }
+    @keyframes shimmer {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .notify-hint {
+      font-size: 13px;
+      color: rgba(255,255,255,0.3);
+      margin-top: 8px;
+    }
+
+    /* Feature cards */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      max-width: 900px;
+      width: 100%;
+      margin-top: 64px;
+      padding: 0 24px;
+    }
+    .feature-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 16px;
+      padding: 24px;
+      text-align: left;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .feature-card:hover {
+      border-color: rgba(92,107,192,0.4);
+      background: rgba(92,107,192,0.05);
+    }
+    .feature-icon { font-size: 28px; margin-bottom: 12px; }
+    .feature-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+    .feature-desc { font-size: 13px; color: rgba(255,255,255,0.4); line-height: 1.5; }
+
+    footer {
+      text-align: center;
+      padding: 32px;
+      color: rgba(255,255,255,0.2);
+      font-size: 12px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+
+    /* ===== RESET PASSWORD OVERLAY ===== */
+    #reset-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(8px);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    #reset-overlay.active { display: flex; }
+    .reset-card {
+      background: #161b22;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 24px;
+      padding: 40px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.5);
+    }
+    .reset-card .logo { text-align: center; font-size: 40px; margin-bottom: 16px; }
+    .reset-card h2 { text-align: center; font-size: 22px; margin-bottom: 8px; }
+    .reset-card p.sub { text-align: center; color: rgba(255,255,255,0.4); font-size: 14px; margin-bottom: 28px; }
+    .reset-card label { display: block; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.6); margin-bottom: 6px; }
+    .reset-card input {
+      width: 100%; padding: 14px 16px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      color: white;
+      font-size: 15px;
+      outline: none;
+      margin-bottom: 16px;
+      transition: border-color 0.2s;
+    }
+    .reset-card input:focus { border-color: #5c6bc0; }
+    .reset-card button {
+      width: 100%; padding: 16px;
+      background: linear-gradient(135deg, #1a237e, #3949ab);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .reset-card button:hover { opacity: 0.85; }
+    .reset-card button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .rmsg {
+      margin-top: 16px; padding: 14px;
+      border-radius: 10px; font-size: 14px;
+      text-align: center; display: none;
+    }
+    .rmsg.success { background: rgba(46,125,50,0.2); color: #81c784; display: block; }
+    .rmsg.error   { background: rgba(198,40,40,0.2); color: #ef9a9a; display: block; }
+    .rmsg.info    { background: rgba(21,101,192,0.2); color: #90caf9; display: block; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <nav>
+    <div class="nav-logo">Notes<span>Cache</span></div>
+    <div class="nav-badge">🚧 WEB BUILD IN PROGRESS</div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="coming-soon-badge">✦ Web Version Coming Soon</div>
+    <h1>Your Academic Hub,<br><span>Anywhere You Are</span></h1>
+    <p>Notes, study groups, AI tutoring, and real-time collaboration — all in one place. Available now on Windows &amp; Android.</p>
+
+    <div class="build-progress">
+      <div class="progress-label">
+        <span>Web Build Progress</span>
+        <span>72%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill"></div>
+      </div>
+    </div>
+    <p class="notify-hint">Download the app while you wait ↓</p>
+
+    <div class="features">
+      <div class="feature-card">
+        <div class="feature-icon">📚</div>
+        <div class="feature-title">Academic Notes</div>
+        <div class="feature-desc">Upload, share, and access study materials organized by year and semester.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💬</div>
+        <div class="feature-title">Study Groups</div>
+        <div class="feature-desc">Create or join groups, chat with friends, and collaborate in real time.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <div class="feature-title">AI Assistant</div>
+        <div class="feature-desc">Get instant answers and explanations from your personal AI tutor.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔔</div>
+        <div class="feature-title">Live Updates</div>
+        <div class="feature-desc">Get notified when lecturers upload new materials or admins post updates.</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    &copy; 2025 NotesCache. All rights reserved.
+  </footer>
+
+  <!-- PASSWORD RESET OVERLAY (hidden by default, shown when ?code= is in URL) -->
+  <div id="reset-overlay">
+    <div class="reset-card">
+      <div class="logo">🔑</div>
+      <h2>Set New Password</h2>
+      <p class="sub">Enter a new password for your NotesCache account.</p>
+
+      <div id="reset-form" style="display:none">
+        <label>New Password</label>
+        <input type="password" id="password" placeholder="At least 6 characters" />
+        <label>Confirm Password</label>
+        <input type="password" id="confirm" placeholder="Repeat password" />
+        <button id="reset-btn" onclick="doReset()">UPDATE PASSWORD</button>
+      </div>
+
+      <div id="rmsg" class="rmsg info">Verifying your reset link...</div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL  = 'https://wgxsumbvhzwljxyozdsd.supabase.co';
+    const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndneHN1bWJ2aHp3bGp4eW96ZHNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxMDMwMTcsImV4cCI6MjA5MjY3OTAxN30.C-gtaaheXGpD5vZHjs_fpsXa_J-ENqBa96A6X-VOJH4';
+
+    const { createClient } = supabase;
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+      const code   = params.get('code');
+      const hash   = new URLSearchParams(window.location.hash.substring(1));
+      const token  = hash.get('access_token');
+      const type   = hash.get('type');
+
+      // Only show reset overlay if this looks like a reset link
+      if (!code && !(token && type === 'recovery')) return;
+
+      document.getElementById('reset-overlay').classList.add('active');
+
+      if (code) {
+        try {
+          const { error } = await sb.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+          showResetForm();
+        } catch (e) {
+          showRMsg('Reset link is invalid or has expired. Please request a new one from the app.', 'error');
+        }
+      } else if (token) {
+        try {
+          await sb.auth.setSession({ access_token: token, refresh_token: hash.get('refresh_token') || '' });
+          showResetForm();
+        } catch (e) {
+          showRMsg('Reset link is invalid or has expired.', 'error');
+        }
+      }
+    }
+
+    function showResetForm() {
+      document.getElementById('rmsg').style.display = 'none';
+      document.getElementById('reset-form').style.display = 'block';
+    }
+
+    async function doReset() {
+      const pw  = document.getElementById('password').value;
+      const cfg = document.getElementById('confirm').value;
+      const btn = document.getElementById('reset-btn');
+
+      if (pw.length < 6) return showRMsg('Password must be at least 6 characters.', 'error');
+      if (pw !== cfg)    return showRMsg('Passwords do not match.', 'error');
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Updating...';
+
+      const { error } = await sb.auth.updateUser({ password: pw });
+
+      if (error) {
+        btn.disabled = false;
+        btn.innerHTML = 'UPDATE PASSWORD';
+        showRMsg(error.message, 'error');
+      } else {
+        document.getElementById('reset-form').style.display = 'none';
+        showRMsg('✅ Password updated! Log back into the NotesCache app with your new password.', 'success');
+      }
+    }
+
+    function showRMsg(text, type) {
+      const el = document.getElementById('rmsg');
+      el.className = 'rmsg ' + type;
+      el.textContent = text;
+      el.style.display = 'block';
+    }
+
+    init();
+  </script>
+</body>
+</html>

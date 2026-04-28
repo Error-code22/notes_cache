@@ -4,11 +4,15 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
+  file_selector_windows
+  local_notifier
+  share_plus
   url_launcher_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
   jni
+  pdfrx
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

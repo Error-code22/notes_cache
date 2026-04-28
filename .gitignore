@@ -45,3 +45,10 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Agent & Progress files
+agents.md
+progress.md
+.gemini/
+supabase/.temp/
+node_modules/
