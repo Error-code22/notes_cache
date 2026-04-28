@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -13,11 +12,18 @@ void main() async {
   // Load environment variables
   await dotenv.load(fileName: ".env");
 
-  // Initialize Supabase
+  // Initialize Supabase (implicit flow so password reset works on web page)
   await Supabase.initialize(
     url: dotenv.env['SUPABASE_URL']!,
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+    authOptions: const FlutterAuthClientOptions(
+      authFlowType: AuthFlowType.implicit,
+    ),
   );
+
+  // Initialize Notifications
+  final notificationService = NotificationService();
+  await notificationService.init();
 
   // Load the current session to check if user is already logged in
   final session = Supabase.instance.client.auth.currentSession;
@@ -25,8 +31,11 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => AuthService()),
         Provider(create: (_) => NoteService()),
+        Provider(create: (_) => ChatService()),
+        Provider(create: (_) => notificationService),
       ],
       child: MyApp(initialRoute: session != null ? '/dashboard' : '/login'),
     ),
@@ -39,30 +48,15 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = context.watch<ThemeProvider>();
+
     return MaterialApp(
       title: 'NotesCache',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1A237E), // Deep Navy
-          primary: const Color(0xFF1A237E),
-          secondary: const Color(0xFFFFA000), // Amber/Gold
-          surface: Colors.white,
-        ),
-        textTheme: GoogleFonts.interTextTheme(),
-        appBarTheme: const AppBarTheme(
-          centerTitle: true,
-          backgroundColor: Colors.white,
-          elevation: 0,
-          titleTextStyle: TextStyle(
-            color: Color(0xFF1A237E),
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-      home: const LoginPage(),
+      themeMode: themeProvider.themeMode,
+      theme: themeProvider.getThemeData(Brightness.light),
+      darkTheme: themeProvider.getThemeData(Brightness.dark),
+      initialRoute: initialRoute,
       routes: {
         '/login': (context) => const LoginPage(),
         '/dashboard': (context) => const DashboardPage(),

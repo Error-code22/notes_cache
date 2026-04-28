@@ -1,49 +1,45 @@
-# NotesCache Development Progress
+# Project Progress Log 🚀📈
 
-## [2026-04-25] Project Genesis & Architecture
-- Initialized Flutter project `notes_cache`.
-- Set up Premium Design System (Deep Navy & Amber).
-- Implemented core models (User, Note, Role).
-- Integrated `provider` for state management.
+## Latest Milestone: PDF Engine Overhaul & Guest Lockdown (2026-04-26)
 
-## [2026-04-25] UI Foundation
-- Built Identity Selection (Mock Auth) for testing.
-- Created Premium Dashboard with horizontal filter chips (Kotlin-inspired).
-- Added Search Bar and Filter UI components.
+### 1. In-App Document Experience
+- **PDF Engine Upgrade**: Swapped `syncfusion` for the lightweight and lightning-fast `pdfrx` engine.
+- **Gallery Mode**: Added a full-screen, swipeable gallery view for mobile reading comfort.
+- **Page Extraction**: Built a "Snipper" tool allowing students to export and share specific PDF pages as high-resolution images (`share_plus`).
+- **Smart Metadata Detection**: Removed unreliable file extension guessing. The app now directly queries Google Drive metadata to flawlessly route `.txt` files to the in-app editor and Office files to native device viewers.
+- **Orientation Lock**: Added manual Landscape/Portrait toggles for distraction-free reading.
+- **Academic Notes View**: Added a drop-down view switcher (List, Detailed, Compact) for browsing notes.
 
-## [2026-04-25] Backend Integration (Supabase)
-- Added `supabase_flutter` and `flutter_dotenv`.
-- Migrated keys from old project (Supabase, Gemini, Groq, Cloudinary, Telegram).
-- Configured `.env` and `.gitignore` for security.
-- Initialized Supabase in `main.dart`.
-- Migrated to new Supabase project (`wgxsumbvhzwljxyozdsd`).
+### 2. Guest Mode & Privacy Lockdown
+- **Persistent AI Limits**: The 3-message limit for guest AI chats is now saved in `SharedPreferences`, surviving app restarts.
+- **Social Blocks**: Guests are officially blocked from creating groups, adding friends, or viewing other users' activities.
+- **View-Only Access**: Guests can browse the note repository but are restricted from opening or downloading materials.
 
-## [2026-04-25] Perfecting Auth
-- Replaced Mock Auth with **Real Supabase Authentication**.
-- Built Login/Signup form with **Academic Year** and **Full Name** support.
-- Set up Supabase **SQL Trigger** for automatic profile creation.
-- Implemented **Year-Locked Filtering** (Students only see notes for their year).
+### 3. Roles & Branding
+- **Multi-Role Mastery**: Admins can now hold multiple roles (e.g., Admin + Lecturer + Student) simultaneously.
+- **Custom App Icons**: Integrated `flutter_launcher_icons` to replace default Flutter icons with the official NotesCache branding across Windows and Android.
+- **UI Clean-up**: Streamlined the Dashboard by removing redundant logos.
 
-## [2026-04-25] Storage Strategy & Research
-- Evaluated **Telegram vs Google Drive** for academic storage.
-- Decided on **Direct Google Drive Link (OAuth)** after successfully bypassing the Service Account quota limitation.
-- Successfully verified "Direct Link" by uploading `Direct_Link_Test.txt` from the Flutter app to the admin's personal GDrive folder.
-- Established "Drive Pooling" readiness: The architecture now supports linking multiple accounts for infinite storage.
-- Identified data usage constraints for mobile users (avoiding double-uploads).
+## Latest Milestone: Auth Stability & Global Notifications (2026-04-26)
 
-## [2026-04-25] Admin Infrastructure
-- Created **Admin Dashboard (Command Center)** for system-wide management.
-- Implemented **Role-Based Access Control (RBAC)** in the UI: Admins see specific management tools.
-- Added Stats overview for Users, Notes, and Storage.
+### 1. Authentication & Account Recovery
+- **Custom SMTP Integration**: Bypassed Supabase's free tier limits by linking a custom Gmail SMTP server. Sign-up and recovery emails are now unlimited.
+- **Forgot Password Flow**: Implemented a complete password reset workflow in `login_page.dart`.
+- **Web Landing Page**: Built and deployed a premium landing page at `notescache-reset.netlify.app`. It serves as the official project site and handles password resets/email confirmations via an intelligent overlay.
+- **Implicit Auth Flow**: Switched to implicit auth to ensure seamless handshakes between the Flutter mobile app and the Netlify web handler.
 
-## [2026-04-25] UX & Quality of Life
-- Implemented **Session Persistence**: Users stay logged in across restarts/hot reloads.
-- Added **Keyboard Support**: Login form now supports "Enter" key for submission.
-- Implemented **Profile Dropdown UI**: Premium profile menu in the AppBar.
-- Added **Logout Confirmation**: Safety dialog to prevent accidental sign-outs.
-- Replicated **Kotlin Profile Design**: Added Bio, Interests, and Tabbed UI to match the original StudySphere layout.
-- Integrated **Windows Documents Folder**: App now defaults to `Documents\NotesCache` for all local storage and downloads.
-- Analyzed **Spotilark Flutter Architecture**: 
-    - Audio: `just_audio` + `audio_service` for background play.
-    - Storage: YouTube scraping + Telegram-as-a-Database for unlimited free MP3 hosting.
-    - Media: Cloudinary for optimized cover art.
+### 2. Global Notification System
+- **Desktop Alerts**: Integrated `local_notifier` to trigger native Windows toast notifications.
+- **Real-time Subscriptions**: Added background listeners in the Dashboard for new messages, lecturer uploads, and admin announcements.
+- **Graceful Failures**: Wrapped notification initialization in try-catch blocks to prevent app crashes during hot restarts or missing native plugin links.
+
+### 3. Admin & Content Management
+- **Broadcast System**: Added a "Post App Update" section in the Admin Dashboard, allowing admins to send global push alerts and news feed items instantly.
+- **App Updates Feed**: Created a dedicated `UpdatesPage` accessible from the user profile menu to track all official app news.
+
+## Next Steps (See next_fixes.md)
+- Fix unread message persistence (read-receipt sync).
+- Implement native mobile push notifications (FCM/Supabase Edge).
+- Verify Admin Update triggers for all user roles.
+- Harden Notesy AI security and daily limits.
+
