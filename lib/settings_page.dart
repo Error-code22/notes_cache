@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:url_launcher/url_launcher.dart';
 import 'services.dart';
+import 'feedback_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -234,6 +235,14 @@ class _SettingsPageState extends State<SettingsPage> {
 
           _buildSectionHeader('Support & About'),
           _buildSettingsCard([
+            _buildActionTile(
+              'Report a Bug',
+              'Tell us what is not working',
+              Icons.bug_report_outlined,
+              Colors.red,
+              () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackPage())),
+            ),
+            const Divider(height: 1),
             _buildActionTile(
               'Help Centre',
               'Contact our support team',

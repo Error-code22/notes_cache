@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum UserRole { student, lecturer, admin, moderator }
@@ -21,6 +21,7 @@ class UserProfile {
   final String themeMode; // 'light', 'dark', 'system'
   final int themeColor;   // Seed color value
   final String themeFont;
+  final bool isProfilePublic;
 
   UserProfile({
     required this.id,
@@ -38,6 +39,7 @@ class UserProfile {
     this.themeMode = 'system',
     this.themeColor = 0xFF1A237E,
     this.themeFont = 'Inter',
+    this.isProfilePublic = true,
   });
 
   bool hasRole(UserRole r) => roles.contains(r);
@@ -71,6 +73,7 @@ class UserProfile {
       themeMode: map['theme_mode'] ?? 'system',
       themeColor: map['theme_color'] ?? 0xFF1A237E,
       themeFont: map['theme_font'] ?? 'Inter',
+      isProfilePublic: map['is_profile_public'] ?? true,
     );
   }
 }
@@ -143,6 +146,7 @@ class ChatRoom {
   final String? imageUrl;
   final List<String> memberIds;
   final String? createdBy;
+  final List<String>? lastMessageReadBy;
 
   ChatRoom({
     required this.id,
@@ -155,6 +159,7 @@ class ChatRoom {
     this.imageUrl,
     required this.memberIds,
     this.createdBy,
+    this.lastMessageReadBy,
   });
 
   factory ChatRoom.fromMap(Map<String, dynamic> map) {
@@ -169,6 +174,9 @@ class ChatRoom {
       imageUrl: map['image_url'],
       memberIds: List<String>.from(map['member_ids'] ?? []),
       createdBy: map['created_by'],
+      lastMessageReadBy: map['last_message_read_by'] != null
+          ? List<String>.from((map['last_message_read_by'] as List).map((e) => e.toString()))
+          : null,
     );
   }
 }
@@ -214,4 +222,33 @@ class FriendRelation {
     required this.status,
     this.friendProfile,
   });
+}
+
+class AppFeedback {
+  final String id;
+  final String userId;
+  final String type; // 'bug' or 'feature'
+  final String content;
+  final DateTime createdAt;
+  final String? userName;
+
+  AppFeedback({
+    required this.id,
+    required this.userId,
+    required this.type,
+    required this.content,
+    required this.createdAt,
+    this.userName,
+  });
+
+  factory AppFeedback.fromMap(Map<String, dynamic> map) {
+    return AppFeedback(
+      id: map['id'].toString(),
+      userId: map['user_id'],
+      type: map['type'] ?? 'bug',
+      content: map['content'] ?? '',
+      createdAt: DateTime.parse(map['created_at']),
+      userName: map['profiles'] != null ? map['profiles']['full_name'] : null,
+    );
+  }
 }

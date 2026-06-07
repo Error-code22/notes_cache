@@ -12,6 +12,7 @@ import 'notes_page.dart';
 import 'chats_list_page.dart';
 import 'ai_chat_page.dart';
 import 'updates_page.dart';
+import 'feedback_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -21,29 +22,76 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
+class _FeaturePill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _FeaturePill({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.14)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: theme.colorScheme.primary),
+          const SizedBox(width: 5),
+          Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
 class _DashboardPageState extends State<DashboardPage> {
+  final ConnectivityService _connectivity = ConnectivityService();
+
   @override
   void initState() {
     super.initState();
+    _connectivity.start();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final authService = context.read<AuthService>();
       final themeProvider = context.read<ThemeProvider>();
       
-      // Link services for user-specific theme sync
       authService.updateThemeProvider(themeProvider);
       
-      // If already logged in (session recovery), sync theme immediately
       if (authService.currentUser != null) {
         themeProvider.setUserId(authService.currentUser!.id);
         themeProvider.setUserTheme(authService.currentUser!);
+        _setupBackgroundNotifications();
+      } else {
+        // Wait for user to be loaded if session is still recovering
+        authService.addListener(_onAuthChanged);
       }
 
       authService.onYearAutoUpdated = (newYear) {
         _showCongratulationPopup(newYear);
       };
-
-      _setupBackgroundNotifications();
     });
+  }
+
+  @override
+  void dispose() {
+    _connectivity.dispose();
+    super.dispose();
+  }
+
+  void _onAuthChanged() {    final authService = context.read<AuthService>();
+    if (authService.currentUser != null) {
+      authService.removeListener(_onAuthChanged);
+      final themeProvider = context.read<ThemeProvider>();
+      themeProvider.setUserId(authService.currentUser!.id);
+      themeProvider.setUserTheme(authService.currentUser!);
+      _setupBackgroundNotifications();
+    }
   }
 
   void _setupBackgroundNotifications() {
@@ -206,11 +254,13 @@ class _DashboardPageState extends State<DashboardPage> {
               if (value == 'profile') Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfilePage()));
               else if (value == 'settings') Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsPage()));
               else if (value == 'updates') Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdatesPage()));
+              else if (value == 'feedback') Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackPage()));
               else if (value == 'logout') _showLogoutConfirmation(context, authService);
             },
             itemBuilder: (context) => [
               const PopupMenuItem(value: 'profile', child: Row(children: [Icon(Icons.person_outline, size: 20), SizedBox(width: 8), Text('My Profile')])),
               const PopupMenuItem(value: 'updates', child: Row(children: [Icon(Icons.campaign_outlined, size: 20), SizedBox(width: 8), Text('Updates')])),
+              const PopupMenuItem(value: 'feedback', child: Row(children: [Icon(Icons.bug_report_outlined, size: 20), SizedBox(width: 8), Text('Report a Bug')])),
               const PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings_outlined, size: 20), SizedBox(width: 8), Text('Settings')])),
               const PopupMenuDivider(),
               PopupMenuItem(value: 'logout', child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Row(children: [Icon(Icons.logout_rounded, size: 20, color: Colors.red), SizedBox(width: 8), Text('SIGN OUT', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))]))),
@@ -219,51 +269,79 @@ class _DashboardPageState extends State<DashboardPage> {
           const SizedBox(width: 12),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Workspace Hub', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
-              const SizedBox(height: 8),
-              Text('Quick access to your academic tools', style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.5))),
-              const SizedBox(height: 32),
-              Expanded(
-                child: ListView(
+      body: Column(
+        children: [
+          // Offline banner — shown only when connectivity is lost
+          ValueListenableBuilder<bool>(
+            valueListenable: _connectivity.isOnline,
+            builder: (context, online, _) {
+              if (online) return const SizedBox.shrink();
+              return Material(
+                color: Colors.orange.shade700,
+                child: const SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.wifi_off_rounded, color: Colors.white, size: 18),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'You\'re offline — some features may be unavailable',
+                            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildHubCard(
-                      context,
-                      'Academic Notes',
-                      'Access and share study materials',
-                      Icons.menu_book_rounded,
-                      Colors.blue,
-                      () => Navigator.push(context, MaterialPageRoute(builder: (context) => const NotesPage())),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildHubCard(
-                      context,
-                      'Communication',
-                      'Chat with friends and study groups',
-                      Icons.chat_bubble_outline_rounded,
-                      Colors.orange,
-                      () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ChatsListPage())),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildHubCard(
-                      context,
-                      'AI Assistant',
-                      'Personal AI tutor for complex concepts',
-                      Icons.auto_awesome_rounded,
-                      Colors.purple,
-                      () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AiChatPage())),
+                    Text('Workspace Hub', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
+                    const SizedBox(height: 8),
+                    Text('Quick access to your academic tools', style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.5))),
+                    const SizedBox(height: 32),
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          _buildHubCard(
+                            context,
+                            'Academic Notes',
+                            'Access and share study materials',
+                            Icons.menu_book_rounded,
+                            Colors.blue,
+                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => const NotesPage())),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildHubCard(
+                            context,
+                            'Communication',
+                            'Chat with friends and study groups',
+                            Icons.chat_bubble_outline_rounded,
+                            Colors.orange,
+                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ChatsListPage())),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildNotesyMemoryCard(context),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -301,6 +379,98 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
               ),
               Icon(Icons.chevron_right_rounded, color: theme.colorScheme.onSurface.withOpacity(0.2)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotesyMemoryCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = const Color(0xFF7C3AED);
+    final warm = const Color(0xFFF59E0B);
+
+    return Card(
+      elevation: 0,
+      color: theme.cardColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: BorderSide(color: accent.withOpacity(0.18)),
+      ),
+      child: InkWell(
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AiChatPage())),
+        borderRadius: BorderRadius.circular(24),
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(Icons.psychology_alt_rounded, color: accent, size: 34),
+                  ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text('Notesy Memory Lab', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: warm.withOpacity(0.14),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text('NEW', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: warm)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          'Flashcards, quizzes, recall drills, mind maps',
+                          style: TextStyle(fontSize: 13, height: 1.3, color: theme.colorScheme.onSurface.withOpacity(0.58)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: const [
+                  _FeaturePill(icon: Icons.style_outlined, label: 'Flashcards'),
+                  _FeaturePill(icon: Icons.quiz_outlined, label: 'Quiz me'),
+                  _FeaturePill(icon: Icons.repeat_outlined, label: 'Recall'),
+                  _FeaturePill(icon: Icons.lock_clock, label: 'Private'),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Paste a topic and let Notesy turn it into something you can actually remember.',
+                      style: TextStyle(fontSize: 12, height: 1.35, color: theme.colorScheme.onSurface.withOpacity(0.52)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Icon(Icons.arrow_forward_rounded, color: accent),
+                ],
+              ),
             ],
           ),
         ),
