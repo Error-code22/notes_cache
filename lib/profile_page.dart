@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:io';
 import 'services.dart';
 import 'models.dart';
 import 'admin_dashboard_page.dart';
+import 'feedback_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -20,6 +23,10 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   late TextEditingController _nameController;
   Duration _selectedPeriod = const Duration(days: 7);
   bool _isProfilePublic = true;
+  bool _isUploadingAvatar = false;
+  bool _isSaving = false;
+  bool _isDeleting = false;
+  Map<String, String> _appConfig = {};
 
   @override
   void initState() {
@@ -29,11 +36,17 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     final user = authService.currentUser!;
     _bioController = TextEditingController(text: user.bio);
     _nameController = TextEditingController(text: user.fullName);
-    
-    // Generate code if missing
+    _isProfilePublic = user.isProfilePublic;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       authService.ensureFriendCode();
+      _loadAppConfig();
     });
+  }
+
+  Future<void> _loadAppConfig() async {
+    final noteService = context.read<NoteService>();
+    final config = await noteService.getAppConfig();
+    if (mounted) setState(() => _appConfig = config);
   }
 
   @override
@@ -45,30 +58,47 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   }
 
   Future<void> _pickAndUploadImage() async {
+    final authService = context.read<AuthService>();
+    final online = await authService.isOnline();
+    if (!online) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No internet connection'), backgroundColor: Colors.orange),
+        );
+      }
+      return;
+    }
+
     try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.image,
-        allowMultiple: false,
-      );
-      
+      final result = await FilePicker.pickFiles(type: FileType.image, allowMultiple: false);
       if (result != null && result.files.single.path != null && mounted) {
-        final authService = context.read<AuthService>();
+        setState(() => _isUploadingAvatar = true);
         final success = await authService.updateProfileImage(File(result.files.single.path!));
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(success ? '✅ Profile photo updated!' : '❌ Failed to update photo'),
-              backgroundColor: success ? Colors.green : Colors.red,
-            ),
-          );
+          setState(() => _isUploadingAvatar = false);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(success ? 'Profile photo updated!' : 'Failed — max 2MB, JPG/PNG/WebP only'),
+            backgroundColor: success ? Colors.green : Colors.red,
+          ));
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ Error picking image: $e'), backgroundColor: Colors.red),
-        );
+        setState(() => _isUploadingAvatar = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
       }
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    setState(() => _isSaving = true);
+    final authService = context.read<AuthService>();
+    await authService.updateProfileDetails(fullName: _nameController.text, bio: _bioController.text);
+    if (mounted) {
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile updated!'), backgroundColor: Colors.green),
+      );
     }
   }
 
@@ -89,41 +119,25 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
           if (user.hasRole(UserRole.admin))
             IconButton(
               icon: const Icon(Icons.admin_panel_settings_outlined),
-              tooltip: 'Admin Panel',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const AdminDashboardPage()),
-                );
-              },
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AdminDashboardPage())),
             ),
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () {
-              authService.signOut();
-              Navigator.pushReplacementNamed(context, '/login');
-            },
+            onPressed: () => _showLogoutDialog(context, authService),
           ),
         ],
       ),
       body: SafeArea(
-        bottom: true,
-        top: false,
         child: Column(
           children: [
-            // Header Card
+            // Profile Header
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 color: theme.cardColor,
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(32),
-                  bottomRight: Radius.circular(32),
-                ),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
-                ],
+                borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(32), bottomRight: Radius.circular(32)),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
               ),
               child: Column(
                 children: [
@@ -137,22 +151,26 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                             decoration: BoxDecoration(
                               color: primaryColor.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(20),
-                              image: user.avatarUrl != null 
-                                  ? DecorationImage(image: NetworkImage(user.avatarUrl!), fit: BoxFit.cover)
-                                  : null,
+                              image: DecorationImage(
+                                image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
+                                fit: BoxFit.cover,
+                              ),
                             ),
-                            child: user.avatarUrl == null 
-                                ? Icon(Icons.person, size: 40, color: primaryColor)
+                            child: _isUploadingAvatar
+                                ? Container(
+                                    decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)),
+                                    child: const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                                  )
                                 : null,
                           ),
                           Positioned(
                             bottom: -4,
                             right: -4,
                             child: InkWell(
-                              onTap: _pickAndUploadImage,
+                              onTap: _isUploadingAvatar ? null : _pickAndUploadImage,
                               child: CircleAvatar(
                                 radius: 14,
-                                backgroundColor: primaryColor,
+                                backgroundColor: _isUploadingAvatar ? Colors.grey : primaryColor,
                                 child: const Icon(Icons.edit, size: 14, color: Colors.white),
                               ),
                             ),
@@ -164,90 +182,40 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              user.fullName ?? 'Student',
-                              style: TextStyle(
-                                fontSize: 22, 
-                                fontWeight: FontWeight.bold,
-                                color: theme.colorScheme.onSurface,
-                              ),
+                            Text(user.fullName ?? 'Student', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
+                            Text(user.email, style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6), fontSize: 14)),
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(color: _getRoleColor(user).withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                              child: Text(_getRoleLabel(user), style: TextStyle(fontSize: 11, color: _getRoleColor(user), fontWeight: FontWeight.w600)),
                             ),
-                            Text(
-                              user.email,
-                              style: TextStyle(
-                                color: theme.colorScheme.onSurface.withOpacity(0.6), 
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _buildFriendCodeBadge(context, user.friendCode ?? '------'),
                             const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Container(
-                                  width: 10,
-                                  height: 10,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.green,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    'Online • Synced with NotesCache',
-                                    style: TextStyle(
-                                      color: Colors.green, 
-                                      fontSize: 12, 
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
+                            _buildFriendCodeBadge(context, user.friendCode ?? '------'),
                           ],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  Text(
-                    user.bio ?? 'No bio set. Add one to tell others about yourself!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: user.bio == null 
-                          ? theme.colorScheme.onSurface.withOpacity(0.5) 
-                          : theme.colorScheme.onSurface.withOpacity(0.9),
-                      fontStyle: user.bio == null ? FontStyle.italic : FontStyle.normal,
-                    ),
-                  ),
+                  if (user.bio != null && user.bio!.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(user.bio!, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.8))),
+                  ],
                 ],
               ),
             ),
-            
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: TabBar(
-                controller: _tabController,
-                labelColor: primaryColor,
-                unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
-                indicatorColor: primaryColor,
-                indicatorWeight: 3,
-                tabs: const [
-                  Tab(text: 'Edit Profile'),
-                  Tab(text: 'Activity'),
-                  Tab(text: 'Settings'),
-                ],
-              ),
+            // Tabs
+            TabBar(
+              controller: _tabController,
+              labelColor: primaryColor,
+              unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
+              tabs: const [Tab(text: 'Edit'), Tab(text: 'Activity'), Tab(text: 'Settings')],
             ),
-            
             Expanded(
               child: TabBarView(
                 controller: _tabController,
                 children: [
-                  _buildProfileEditTab(context),
+                  _buildProfileEditTab(context, user),
                   _buildActivityTab(context, user),
                   _buildAccountSettingsTab(context, user),
                 ],
@@ -259,64 +227,164 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildProfileEditTab(BuildContext context) {
+  // ==================== EDIT TAB ====================
+
+  Widget _buildProfileEditTab(BuildContext context, UserProfile user) {
     final theme = Theme.of(context);
-    final primaryColor = theme.colorScheme.primary;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildInputField(context, 'Full Name', _nameController, Icons.person_outline),
-          const SizedBox(height: 20),
-          _buildInputField(context, 'Bio / About Me', _bioController, Icons.edit_note_outlined, maxLines: 3),
-          const SizedBox(height: 30),
+          const SizedBox(height: 16),
+          _buildInputField(context, 'Bio', _bioController, Icons.edit_note_outlined, maxLines: 3),
+          const SizedBox(height: 16),
+          // Year Level Selector
+          Text('Year Level', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<int>(
+            value: user.yearLevel ?? 1,
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.school_outlined),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            items: const [
+              DropdownMenuItem(value: 1, child: Text('Year 1')),
+              DropdownMenuItem(value: 2, child: Text('Year 2')),
+              DropdownMenuItem(value: 3, child: Text('Year 3')),
+              DropdownMenuItem(value: 4, child: Text('Year 4')),
+            ],
+            onChanged: user.yearChanged ? null : (val) {
+              if (val != null) _changeYearLevel(val);
+            },
+          ),
+          if (user.yearChanged)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('Year level can only be changed once', style: TextStyle(fontSize: 12, color: Colors.orange[700])),
+            ),
+          const SizedBox(height: 24),
+          // Save Button
           SizedBox(
             width: double.infinity,
-            height: 50,
-            child: ElevatedButton(
-              onPressed: () async {
-                final authService = context.read<AuthService>();
-                await authService.updateProfileDetails(
-                  fullName: _nameController.text,
-                  bio: _bioController.text,
-                );
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('✅ Profile updated successfully!')),
-                  );
-                }
-              },
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _isSaving ? null : _saveProfile,
+              icon: _isSaving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.save),
+              label: Text(_isSaving ? 'Saving...' : 'Save Changes'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: primaryColor,
-                foregroundColor: theme.colorScheme.onPrimary,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              child: const Text('Save Changes'),
             ),
           ),
+          const SizedBox(height: 16),
+          // Theme Settings
+          _buildThemeSection(context),
         ],
       ),
     );
   }
 
-  Widget _buildActivityTab(BuildContext context, UserProfile user) {
+  Widget _buildThemeSection(BuildContext context) {
+    final themeProvider = context.watch<ThemeProvider>();
     final theme = Theme.of(context);
-    final primaryColor = theme.colorScheme.primary;
-    final noteService = context.read<NoteService>();
+    final colors = [
+      const Color(0xFF1A237E), const Color(0xFF1565C0), const Color(0xFF00838F),
+      const Color(0xFF2E7D32), const Color(0xFF6A1B9A), const Color(0xFFC62828),
+      const Color(0xFFE65100), const Color(0xFF4E342E),
+    ];
+    final fonts = ['Inter', 'Roboto', 'Poppins', 'Open Sans'];
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const Divider(height: 32),
+        Text('THEME', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2, color: theme.colorScheme.onSurface.withOpacity(0.6))),
+        const SizedBox(height: 12),
+        // Theme Mode
+        SegmentedButton<ThemeMode>(
+          segments: const [
+            ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode, size: 16), label: Text('Light')),
+            ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto, size: 16), label: Text('Auto')),
+            ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode, size: 16), label: Text('Dark')),
+          ],
+          selected: {themeProvider.themeMode},
+          onSelectionChanged: (s) => themeProvider.setThemeMode(s.first),
+        ),
+        const SizedBox(height: 16),
+        // Color Picker
+        Text('Accent Color', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: colors.map((c) {
+            final selected = themeProvider.seedColor.value == c.value;
+            return GestureDetector(
+              onTap: () => themeProvider.setSeedColor(c),
+              child: Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(
+                  color: c,
+                  shape: BoxShape.circle,
+                  border: selected ? Border.all(color: theme.colorScheme.onSurface, width: 3) : null,
+                  boxShadow: selected ? [BoxShadow(color: c.withOpacity(0.4), blurRadius: 8)] : null,
+                ),
+                child: selected ? const Icon(Icons.check, color: Colors.white, size: 18) : null,
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+        // Font Picker
+        Text('Font', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: fonts.map((f) {
+            final selected = themeProvider.fontFamily == f;
+            return ChoiceChip(
+              label: Text(f),
+              selected: selected,
+              onSelected: (_) => themeProvider.setFontFamily(f),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _changeYearLevel(int year) async {
+    final authService = context.read<AuthService>();
+    final success = await authService.updateYearLevel(year);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(success ? 'Year level updated!' : 'Year level can only be changed once'),
+        backgroundColor: success ? Colors.green : Colors.orange,
+      ));
+    }
+  }
+
+  // ==================== ACTIVITY TAB ====================
+
+  Widget _buildActivityTab(BuildContext context, UserProfile user) {
+    final noteService = context.read<NoteService>();
+    return Column(
+      children: [
+        // Period selector
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _buildPeriodChip('1 Day', const Duration(days: 1)),
+              const Text('Show: '),
+              ChoiceChip(label: const Text('7 days'), selected: _selectedPeriod == const Duration(days: 7), onSelected: (_) => setState(() => _selectedPeriod = const Duration(days: 7))),
               const SizedBox(width: 8),
-              _buildPeriodChip('1 Week', const Duration(days: 7)),
+              ChoiceChip(label: const Text('30 days'), selected: _selectedPeriod == const Duration(days: 30), onSelected: (_) => setState(() => _selectedPeriod = const Duration(days: 30))),
               const SizedBox(width: 8),
-              _buildPeriodChip('1 Month', const Duration(days: 30)),
+              ChoiceChip(label: const Text('All'), selected: _selectedPeriod == const Duration(days: 365), onSelected: (_) => setState(() => _selectedPeriod = const Duration(days: 365))),
             ],
           ),
         ),
@@ -324,57 +392,33 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
           child: FutureBuilder<List<UserActivity>>(
             future: noteService.getUserActivity(user.id, period: _selectedPeriod),
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              
-              final activities = snapshot.data ?? [];
-              
-              if (activities.isEmpty) {
+              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+              if (!snapshot.hasData || snapshot.data!.isEmpty) {
                 return Center(
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.history_toggle_off_rounded, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No recent activity found.', 
-                        style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4)),
-                      ),
+                      Icon(Icons.history, size: 48, color: Colors.grey[400]),
+                      const SizedBox(height: 12),
+                      Text('No activity yet', style: TextStyle(color: Colors.grey[600])),
                     ],
                   ),
                 );
               }
-
+              final activities = snapshot.data!;
               return ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.all(16),
                 itemCount: activities.length,
-                itemBuilder: (context, index) {
-                  final activity = activities[index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    color: theme.cardColor,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: theme.dividerColor.withOpacity(0.1)),
+                itemBuilder: (context, i) {
+                  final a = activities[i];
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: _getActivityColor(a.type).withOpacity(0.1),
+                      child: Icon(_getActivityIcon(a.type), color: _getActivityColor(a.type), size: 20),
                     ),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: primaryColor.withOpacity(0.1),
-                        child: Icon(
-                          activity.type == 'upload' ? Icons.cloud_upload_outlined : Icons.edit_note_outlined,
-                          color: primaryColor,
-                          size: 20,
-                        ),
-                      ),
-                      title: Text(activity.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      subtitle: Text(activity.description, style: const TextStyle(fontSize: 12)),
-                      trailing: Text(
-                        _formatTimestamp(activity.timestamp),
-                        style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4), fontSize: 10),
-                      ),
-                    ),
+                    title: Text(a.title),
+                    subtitle: Text(a.description),
+                    trailing: Text(_formatTime(a.timestamp), style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   );
                 },
               );
@@ -385,307 +429,373 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     );
   }
 
+  // ==================== SETTINGS TAB ====================
+
   Widget _buildAccountSettingsTab(BuildContext context, UserProfile user) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSettingsSectionTitle(context, 'Account Verification'),
-          _buildSettingsItem(
-            context,
-            'Email Address',
-            user.email,
-            Icons.alternate_email_rounded,
-            null,
-          ),
-          const SizedBox(height: 24),
-          
-          _buildSettingsSectionTitle(context, 'Academic Status'),
-          _buildSettingsItem(
-            context,
-            'Current Year',
-            'Year ${user.yearLevel ?? "1"}${user.yearChanged ? " (Locked)" : ""}',
-            Icons.school_outlined,
-            user.yearChanged ? null : () => _showYearChangeDialog(context, user),
-            subtitle: user.yearChanged ? 'Permanently locked in.' : 'Tap to update (One-time change)',
-          ),
-          const SizedBox(height: 24),
-
-          _buildSettingsSectionTitle(context, 'Privacy & Security'),
-          _buildSettingsToggle(
-            context,
-            'Public Profile',
-            'Allow others to see your friend code',
-            _isProfilePublic,
-            (val) => setState(() => _isProfilePublic = val),
-          ),
-          _buildSettingsItem(
-            context,
-            'Change Password',
-            'Update your login credentials',
-            Icons.lock_reset_rounded,
-            () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Reset link sent to your email!')),
-              );
+          // Privacy & Security
+          _sectionHeader('Privacy & Security'),
+          _settingsTile(Icons.lock_outline, 'Change Password', 'Update your account password', () => _showChangePasswordDialog(context)),
+          SwitchListTile(
+            secondary: const Icon(Icons.public),
+            title: const Text('Public Profile'),
+            subtitle: const Text('Allow others to find you by friend code'),
+            value: _isProfilePublic,
+            onChanged: (v) {
+              setState(() => _isProfilePublic = v);
+              context.read<AuthService>().updateProfilePublic(v);
             },
           ),
-          const SizedBox(height: 32),
-          
-          Center(
-            child: TextButton(
-              onPressed: () {},
-              child: const Text('Delete Account', style: TextStyle(color: Colors.redAccent, fontSize: 13)),
-            ),
+          _settingsTile(Icons.copy, 'Copy Friend Code', user.friendCode ?? '------', () {
+            if (user.friendCode != null) {
+              Clipboard.setData(ClipboardData(text: user.friendCode!));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Friend code copied!')));
+            }
+          }),
+          const Divider(height: 32),
+
+          // Help & Feedback
+          _sectionHeader('Help & Feedback'),
+          _settingsTile(Icons.bug_report_outlined, 'Report a Bug', 'Let us know if something is broken', () {
+            Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackPage()));
+          }),
+          _settingsTile(Icons.help_outline, 'Help Center', 'Get help using NotesCache', () {
+            final url = _appConfig['help_center_url'];
+            if (url != null && url.isNotEmpty) _launchUrl(url);
+          }),
+          _settingsTile(Icons.email_outlined, 'Contact Support', _appConfig['support_email'] ?? 'support@notescache.com', () {
+            final email = _appConfig['support_email'] ?? 'support@notescache.com';
+            _launchUrl('mailto:$email');
+          }),
+          _settingsTile(Icons.phone_outlined, 'Call Support', _appConfig['support_phone'] ?? '', () {
+            final phone = _appConfig['support_phone'];
+            if (phone != null && phone.isNotEmpty) _launchUrl('tel:$phone');
+          }),
+          _settingsTile(Icons.chat_outlined, 'WhatsApp Support', _appConfig['support_whatsapp'] ?? '', () {
+            final wa = _appConfig['support_whatsapp'];
+            if (wa != null && wa.isNotEmpty) _launchUrl('https://wa.me/$wa');
+          }),
+          _settingsTile(Icons.group_add, 'Join WhatsApp Group', 'Connect with other students', () {
+            final link = _appConfig['whatsapp_group_link'];
+            if (link != null && link.isNotEmpty) {
+              _launchUrl(link);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('No WhatsApp group link configured yet'), backgroundColor: Colors.orange),
+              );
+            }
+          }),
+          const Divider(height: 32),
+
+          // About
+          _sectionHeader('About'),
+          _settingsTile(Icons.info_outline, 'About NotesCache', _appConfig['about_text'] ?? 'NotesCache v1.0.0', () => _showInfoDialog(context, 'About', _appConfig['about_text'] ?? 'NotesCache v1.0.0')),
+          _settingsTile(Icons.description_outlined, 'Terms & Conditions', 'View our terms of service', () => _showInfoDialog(context, 'Terms & Conditions', _appConfig['terms_and_conditions'] ?? 'No terms available.')),
+          _settingsTile(Icons.privacy_tip_outlined, 'Privacy Policy', 'How we handle your data', () => _showInfoDialog(context, 'Privacy Policy', _appConfig['privacy_policy'] ?? 'No policy available.')),
+          const Divider(height: 32),
+
+          // Danger Zone
+          _sectionHeader('Danger Zone'),
+          ListTile(
+            leading: const Icon(Icons.delete_forever, color: Colors.redAccent),
+            title: const Text('Delete Account', style: TextStyle(color: Colors.redAccent)),
+            subtitle: const Text('Permanently delete your account and all data'),
+            onTap: () => _showDeleteAccountDialog(context),
           ),
+          const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  void _showYearChangeDialog(BuildContext context, UserProfile user) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Permanent Year Update'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Choose your correct year level. WARNING: Once you save this, it will be PERMANENTLY LOCKED.'),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [1, 2, 3, 4].map((y) => ChoiceChip(
-                label: Text('Yr $y'),
-                selected: false,
-                onSelected: (_) async {
-                  final authService = context.read<AuthService>();
-                  final messenger = ScaffoldMessenger.of(context);
-                  Navigator.pop(context);
-                  
-                  final success = await authService.updateYearLevel(y);
-                  
-                  if (success) {
-                    messenger.showSnackBar(
-                      SnackBar(content: Text('✅ Year successfully locked to Year $y!')),
-                    );
-                  } else {
-                    messenger.showSnackBar(
-                      const SnackBar(content: Text('❌ Failed to update. Please try again.')),
-                    );
-                  }
-                },
-              )).toList(),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL')),
-        ],
-      ),
-    );
-  }
+  // ==================== HELPERS ====================
 
-  Widget _buildSettingsSectionTitle(BuildContext context, String title) {
-    final theme = Theme.of(context);
+  Widget _sectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 12),
-      child: Text(
-        title.toUpperCase(),
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: theme.colorScheme.onSurface.withOpacity(0.4),
-          letterSpacing: 1.2,
-        ),
-      ),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(title.toUpperCase(), style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2, color: Colors.grey[600])),
     );
   }
 
-  Widget _buildSettingsItem(BuildContext context, String title, String value, IconData icon, VoidCallback? onTap, {String? subtitle}) {
-    final theme = Theme.of(context);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.dividerColor.withOpacity(0.05)),
-      ),
-      child: ListTile(
-        leading: Icon(icon, color: theme.colorScheme.primary, size: 20),
-        title: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-        subtitle: Text(subtitle ?? value, style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
-        trailing: onTap != null ? const Icon(Icons.chevron_right_rounded, size: 20) : null,
-        onTap: onTap,
-      ),
+  Widget _settingsTile(IconData icon, String title, String subtitle, VoidCallback onTap) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      subtitle: subtitle.isNotEmpty ? Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis) : null,
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
     );
-  }
-
-  Widget _buildSettingsToggle(BuildContext context, String title, String subtitle, bool value, Function(bool) onChanged) {
-    final theme = Theme.of(context);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.dividerColor.withOpacity(0.05)),
-      ),
-      child: SwitchListTile(
-        title: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-        subtitle: Text(subtitle, style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
-        value: value,
-        onChanged: onChanged,
-        activeColor: theme.colorScheme.primary,
-      ),
-    );
-  }
-
-  Widget _buildPeriodChip(String label, Duration period) {
-    final isSelected = _selectedPeriod == period;
-    final theme = Theme.of(context);
-    final primaryColor = theme.colorScheme.primary;
-
-    return ChoiceChip(
-      label: Text(label, style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : theme.colorScheme.onSurface)),
-      selected: isSelected,
-      onSelected: (selected) {
-        if (selected) {
-          setState(() => _selectedPeriod = period);
-        }
-      },
-      selectedColor: primaryColor,
-      backgroundColor: theme.cardColor,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      showCheckmark: false,
-    );
-  }
-
-  String _formatTimestamp(DateTime timestamp) {
-    final now = DateTime.now();
-    final diff = now.difference(timestamp);
-    if (diff.inDays > 0) return '${diff.inDays}d ago';
-    if (diff.inHours > 0) return '${diff.inHours}h ago';
-    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
-    return 'Just now';
   }
 
   Widget _buildInputField(BuildContext context, String label, TextEditingController controller, IconData icon, {int maxLines = 1}) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label, 
-          style: TextStyle(
-            fontWeight: FontWeight.bold, 
-            fontSize: 14,
-            color: theme.colorScheme.onSurface.withOpacity(0.8),
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: controller,
-          maxLines: maxLines,
-          style: TextStyle(color: theme.colorScheme.onSurface),
-          decoration: InputDecoration(
-            prefixIcon: Icon(icon, color: theme.colorScheme.onSurface.withOpacity(0.6)),
-            filled: true,
-            fillColor: theme.cardColor,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: theme.dividerColor.withOpacity(0.1)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: theme.dividerColor.withOpacity(0.1)),
-            ),
-          ),
-        ),
-      ],
+    return TextField(
+      controller: controller,
+      maxLines: maxLines,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
     );
   }
 
   Widget _buildFriendCodeBadge(BuildContext context, String code) {
-    final theme = Theme.of(context);
-    final primaryColor = theme.colorScheme.primary;
-    final isLoading = context.watch<AuthService>().isLoading;
-    final isMissing = code == '------';
-
-    return InkWell(
-      onTap: isMissing ? null : () {
+    return GestureDetector(
+      onTap: () {
         Clipboard.setData(ClipboardData(text: code));
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend code copied!'), duration: Duration(seconds: 1)),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Friend code copied!'), duration: Duration(seconds: 1)));
       },
-      borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: primaryColor.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: primaryColor.withOpacity(0.2)),
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (isMissing && isLoading)
-               SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: primaryColor),
-              )
-            else
-               Icon(Icons.qr_code_2_rounded, size: 18, color: primaryColor),
-            const SizedBox(width: 8),
-            Text(
-              () {
-                if (isMissing && isLoading) return 'GENERATING...';
-                String c = code.toUpperCase();
-                if (c.length == 6 && !c.contains('-')) return '${c.substring(0, 3)}-${c.substring(3)}';
-                return c;
-              }(),
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                letterSpacing: isMissing ? 1.0 : 1.5,
-                color: primaryColor,
-              ),
-            ),
-            if (!isMissing) ...[
-              const SizedBox(width: 8),
-              Icon(Icons.copy_all_rounded, size: 16, color: theme.colorScheme.onSurface.withOpacity(0.4)),
-            ],
+            Text(code, style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.5, fontSize: 13)),
+            const SizedBox(width: 6),
+            Icon(Icons.copy, size: 14, color: Colors.blue[700]),
           ],
         ),
       ),
     );
   }
 
+  String _getRoleLabel(UserProfile user) {
+    if (user.hasRole(UserRole.admin)) return 'Admin';
+    if (user.hasRole(UserRole.lecturer)) return 'Lecturer';
+    if (user.hasRole(UserRole.moderator)) return 'Moderator';
+    return 'Year ${user.yearLevel ?? 1} Student';
+  }
 
-  Widget _buildPlaceholderTab(BuildContext context, String title) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.construction, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
-          const SizedBox(height: 16),
-          Text(
-            title, 
-            style: TextStyle(
-              color: theme.colorScheme.onSurface.withOpacity(0.4), 
-              fontSize: 18, 
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          Text(
-            'Coming soon from the Kotlin version!', 
-            style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.3)),
+  Color _getRoleColor(UserProfile user) {
+    if (user.hasRole(UserRole.admin)) return Colors.red;
+    if (user.hasRole(UserRole.lecturer)) return Colors.purple;
+    if (user.hasRole(UserRole.moderator)) return Colors.orange;
+    return Colors.blue;
+  }
+
+  IconData _getActivityIcon(String type) {
+    switch (type) {
+      case 'upload': return Icons.upload_file;
+      case 'chat': return Icons.chat;
+      case 'search': return Icons.search;
+      case 'ai': return Icons.smart_toy;
+      default: return Icons.circle;
+    }
+  }
+
+  Color _getActivityColor(String type) {
+    switch (type) {
+      case 'upload': return Colors.green;
+      case 'chat': return Colors.blue;
+      case 'search': return Colors.orange;
+      case 'ai': return Colors.purple;
+      default: return Colors.grey;
+    }
+  }
+
+  String _formatTime(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.day}/${dt.month}/${dt.year}';
+  }
+
+  Future<void> _launchUrl(String url) async {
+    try {
+      // Ensure URL has a scheme
+      String urlToLaunch = url;
+      if (!url.contains('://')) {
+        if (url.contains('@')) {
+          urlToLaunch = 'mailto:$url';
+        } else if (url.startsWith('+') || url.startsWith('0')) {
+          urlToLaunch = 'tel:$url';
+        } else {
+          urlToLaunch = 'https://$url';
+        }
+      }
+      final uri = Uri.parse(urlToLaunch);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        // Fallback: copy to clipboard
+        if (mounted) {
+          Clipboard.setData(ClipboardData(text: url));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Copied to clipboard: $url'), backgroundColor: Colors.blue),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Clipboard.setData(ClipboardData(text: url));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Copied to clipboard: $url'), backgroundColor: Colors.blue),
+        );
+      }
+    }
+  }
+
+  // ==================== DIALOGS ====================
+
+  void _showLogoutDialog(BuildContext context, AuthService authService) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              authService.signOut();
+              Navigator.pushReplacementNamed(context, '/login');
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Logout', style: TextStyle(color: Colors.white)),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showChangePasswordDialog(BuildContext context) {
+    final currentPwController = TextEditingController();
+    final newPwController = TextEditingController();
+    final confirmPwController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Change Password'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: currentPwController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Current Password', border: OutlineInputBorder()),
+                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: newPwController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'New Password', border: OutlineInputBorder()),
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'Required';
+                  if (v.length < 6) return 'Min 6 characters';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: confirmPwController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Confirm New Password', border: OutlineInputBorder()),
+                validator: (v) => v != newPwController.text ? 'Passwords do not match' : null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (!formKey.currentState!.validate()) return;
+              try {
+                final supabase = Supabase.instance.client;
+                await supabase.auth.updateUser(UserAttributes(password: newPwController.text));
+                if (ctx.mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Password updated!'), backgroundColor: Colors.green),
+                  );
+                }
+              } catch (e) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDeleteAccountDialog(BuildContext context) {
+    final confirmController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Delete Account', style: TextStyle(color: Colors.red)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('This action is permanent and cannot be undone. All your notes, chats, and data will be deleted.'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: confirmController,
+                decoration: const InputDecoration(
+                  labelText: 'Type DELETE to confirm',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (_) => setDialogState(() {}),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: confirmController.text != 'DELETE' || _isDeleting ? null : () async {
+                setDialogState(() => _isDeleting = true);
+                final authService = context.read<AuthService>();
+                final success = await authService.deleteAccount();
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
+                  if (success) {
+                    Navigator.pushReplacementNamed(context, '/login');
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Failed to delete account. Please contact support.'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: _isDeleting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('Delete Account', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showInfoDialog(BuildContext context, String title, String content) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(child: Text(content)),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
       ),
     );
   }
