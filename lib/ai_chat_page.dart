@@ -82,10 +82,14 @@ class _AiChatPageState extends State<AiChatPage> {
     ),
   ];
 
+  String? _currentUserId;
+
   @override
   void initState() {
     super.initState();
+    _currentUserId = context.read<AuthService>().currentUser?.id;
     _loadDailyCount();
+    _loadChatHistory();
   }
 
   Future<void> _loadDailyCount() async {
@@ -97,9 +101,47 @@ class _AiChatPageState extends State<AiChatPage> {
     if (mounted) setState(() => _dailyMessageCount = count);
   }
 
+  Future<void> _loadChatHistory() async {
+    try {
+      if (_currentUserId == null) return;
+      final aiService = AiChatService();
+      final history = await aiService.loadChatHistory(_currentUserId!);
+      if (mounted && history.isNotEmpty) {
+        setState(() {
+          _messages.clear();
+          _messages.addAll(history);
+        });
+      }
+    } catch (e) {
+      debugPrint('Load chat history error: $e');
+    }
+  }
+
+  Future<void> _saveChatHistory() async {
+    try {
+      if (_currentUserId == null) return;
+      final aiService = AiChatService();
+      await aiService.saveChatHistory(_currentUserId!, _messages);
+    } catch (e) {
+      debugPrint('Save chat history error: $e');
+    }
+  }
+
+  Future<void> _clearChatHistory() async {
+    try {
+      if (_currentUserId != null) {
+        final aiService = AiChatService();
+        await aiService.clearChatHistory(_currentUserId!);
+      }
+      setState(() => _messages.clear());
+    } catch (e) {
+      debugPrint('Clear chat history error: $e');
+    }
+  }
+
   @override
   void dispose() {
-    _messages.clear();
+    // Don't save here — already saved after each message exchange
     _controller.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -141,12 +183,16 @@ class _AiChatPageState extends State<AiChatPage> {
       }
       await _loadDailyCount();
 
-      final history = _messages.take(_messages.length - 1).toList();
-      final response = await aiService.getResponse(text, history);
+      // Send only last 5 messages to Groq for context (keeps quota low)
+      final allHistory = _messages.take(_messages.length - 1).toList();
+      final contextHistory = aiService.getContextMessages(allHistory);
+      final response = await aiService.getResponse(text, contextHistory);
       setState(() { _messages.add({'role': 'assistant', 'content': response}); _isLoading = false; });
+      _saveChatHistory();
       _scrollToBottom();
     } catch (e) {
       setState(() { _isLoading = false; _messages.add({'role': 'assistant', 'content': 'Error: $e'}); });
+      _saveChatHistory();
       _scrollToBottom();
     }
   }
@@ -168,8 +214,11 @@ class _AiChatPageState extends State<AiChatPage> {
         final fileName = result.files.single.name;
         setState(() { _messages.add({'role': 'user', 'content': 'Shared file: $fileName\n\n$content'}); _isLoading = true; });
         _scrollToBottom();
-        final response = await AiChatService().getResponse('Shared file "$fileName".', _messages.take(_messages.length - 1).toList());
+        final aiSvc = AiChatService();
+        final ctx = aiSvc.getContextMessages(_messages.take(_messages.length - 1).toList());
+        final response = await aiSvc.getResponse('Shared file "$fileName".', ctx);
         setState(() { _messages.add({'role': 'assistant', 'content': response}); _isLoading = false; });
+        _saveChatHistory();
         _scrollToBottom();
       }
     } catch (e) {}
@@ -182,8 +231,11 @@ class _AiChatPageState extends State<AiChatPage> {
         final base64Image = base64Encode(await image.readAsBytes());
         setState(() { _messages.add({'role': 'user', 'content': 'Shared an image.'}); _isLoading = true; });
         _scrollToBottom();
-        final response = await AiChatService().getResponse('Analyze image.', _messages.take(_messages.length - 1).toList(), imageBase64: base64Image);
+        final aiSvc = AiChatService();
+        final ctx = aiSvc.getContextMessages(_messages.take(_messages.length - 1).toList());
+        final response = await aiSvc.getResponse('Analyze image.', ctx, imageBase64: base64Image);
         setState(() { _messages.add({'role': 'assistant', 'content': response}); _isLoading = false; });
+        _saveChatHistory();
         _scrollToBottom();
       }
     } catch (e) {}
@@ -207,6 +259,33 @@ class _AiChatPageState extends State<AiChatPage> {
         backgroundColor: theme.colorScheme.surface,
         elevation: 0,
         actions: [
+          if (_messages.isNotEmpty)
+            Tooltip(
+              message: 'Clear chat history',
+              child: IconButton(
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Clear Chat'),
+                      content: const Text('Delete all chat history? This cannot be undone.'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                        ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _clearChatHistory();
+                          },
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                          child: const Text('Clear', style: TextStyle(color: Colors.white)),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
           Tooltip(
             message: _privateStudyMode ? 'End private study session' : 'Start private study session',
             child: IconButton(
@@ -250,7 +329,7 @@ class _AiChatPageState extends State<AiChatPage> {
                     child: Text(
                       isLimitReached
                           ? (isGuest ? 'Demo limit reached! Sign up for more.' : 'Daily limit reached! Come back tomorrow.')
-                          : '${isGuest ? "Guest" : "Daily"} Limit: ${limit - _dailyMessageCount} messages remaining.',
+                          : '${isGuest ? "Guest" : "Daily"} Limit: ${(limit - _dailyMessageCount).clamp(0, limit)} messages remaining.',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isLimitReached ? Colors.red : theme.colorScheme.primary),
                     ),
                   ),
@@ -428,7 +507,8 @@ class _AiChatPageState extends State<AiChatPage> {
                       : (_privateStudyMode ? 'Private study question...' : 'Paste a topic, note title, or homework question...'),
                   border: InputBorder.none,
                 ),
-                onSubmitted: (_) => _sendMessage(),
+                textInputAction: TextInputAction.send,
+                onSubmitted: isLimitReached ? null : (_) => _sendMessage(),
               ),
             ),
             Tooltip(
