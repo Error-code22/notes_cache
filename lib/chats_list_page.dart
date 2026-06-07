@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:ui' show ImageFilter;
 import 'package:provider/provider.dart';
 import 'services.dart';
 import 'models.dart';
@@ -18,15 +19,23 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
   final TextEditingController _groupNameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _bulkCodesController = TextEditingController();
-  
+  final TextEditingController _searchController = TextEditingController();
+
   String _activeGroupTab = 'MY'; // 'MY' or 'PUBLIC'
   bool _isGroupPublic = false;
   bool _isFriendBarExpanded = true;
+  int _badgeRefreshKey = 0;
+  bool _codeBlurred = false;         // Bar 1: eye toggle
+  bool _isSearching = false;         // Bar 1: search mode
+  String _filterChip = 'all';        // Bar 3: 'all' | 'unread' | 'archived'
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -36,6 +45,7 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
     _groupNameController.dispose();
     _descriptionController.dispose();
     _bulkCodesController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -190,34 +200,30 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
       body: SafeArea(
         child: Column(
           children: [
-            // Custom Unified Header
+            // ── BAR 1: Friend code + search + eye ──────────────────────────
+            _buildBar1(context, user, theme, primaryColor),
+
+            // ── BAR 2: GROUPS | CHATS tabs (no back arrow — it's in Bar 1) ──
             Container(
               color: theme.colorScheme.surface,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  Expanded(
-                    child: TabBar(
-                      controller: _tabController,
-                      labelColor: primaryColor,
-                      unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
-                      indicatorColor: primaryColor,
-                      indicatorSize: TabBarIndicatorSize.label,
-                      labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                      tabs: const [
-                        Tab(text: 'GROUPS'),
-                        Tab(text: 'FRIENDS'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 48), // Balancing space for the back button
+              child: TabBar(
+                controller: _tabController,
+                labelColor: primaryColor,
+                unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
+                indicatorColor: primaryColor,
+                indicatorSize: TabBarIndicatorSize.label,
+                labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                tabs: const [
+                  Tab(text: 'GROUPS'),
+                  Tab(text: 'CHATS'),
                 ],
               ),
             ),
+
+            // ── BAR 3: All | Unread | Archived filter chips ─────────────────
+            _buildBar3(context, theme, primaryColor),
+
+            // ── Content ─────────────────────────────────────────────────────
             Expanded(
               child: TabBarView(
                 controller: _tabController,
@@ -240,6 +246,212 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
         },
         backgroundColor: primaryColor,
         child: Icon(_tabController.index == 0 ? Icons.group_add : Icons.person_add, color: Colors.white),
+      ),
+    );
+  }
+
+  // ── BAR 1 ──────────────────────────────────────────────────────────────────
+  Widget _buildBar1(BuildContext context, UserProfile user, ThemeData theme, Color primaryColor) {
+    String rawCode = (user.friendCode ?? '------').toUpperCase();
+    if (rawCode.length == 6 && !rawCode.contains('-')) {
+      rawCode = '${rawCode.substring(0, 3)}-${rawCode.substring(3)}';
+    }
+
+    return Container(
+      color: theme.colorScheme.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Row(
+        children: [
+          // Back arrow in top bar
+          IconButton(
+            icon: const Icon(Icons.arrow_back, size: 20),
+            onPressed: () => Navigator.pop(context),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          ),
+          const SizedBox(width: 4),
+          // Friend code — tap to copy
+          GestureDetector(
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: rawCode));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Friend code copied!'), duration: Duration(seconds: 1)),
+              );
+            },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('MY CODE  ', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: primaryColor, letterSpacing: 1.1)),
+                ImageFiltered(
+                  imageFilter: _codeBlurred
+                      ? ImageFilter.blur(sigmaX: 6, sigmaY: 6)
+                      : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+                  child: Text(rawCode, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: 1.5, color: theme.colorScheme.onSurface)),
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          // Eye toggle
+          IconButton(
+            icon: Icon(_codeBlurred ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18),
+            onPressed: () => setState(() => _codeBlurred = !_codeBlurred),
+            tooltip: _codeBlurred ? 'Show code' : 'Hide code',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+          const SizedBox(width: 4),
+          // Search pill — compact, fits mobile
+          GestureDetector(
+            onTap: () => _showSearchPopup(context, user),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurface.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.search, size: 14, color: theme.colorScheme.onSurface.withOpacity(0.5)),
+                  const SizedBox(width: 4),
+                  Text('Search', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.5))),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSearchPopup(BuildContext context, UserProfile user) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    final chatService = context.read<ChatService>();
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (ctx) {
+        String query = '';
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => Dialog(
+            insetPadding: const EdgeInsets.fromLTRB(16, 60, 16, 0),
+            alignment: Alignment.topCenter,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: TextField(
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: 'Search groups, chats, people...',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                      filled: true,
+                      fillColor: theme.colorScheme.surface,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                    ),
+                    onChanged: (v) => setDialogState(() => query = v.toLowerCase()),
+                  ),
+                ),
+                // Results
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 360),
+                  child: query.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(
+                            children: [
+                              Icon(Icons.search, size: 48, color: theme.colorScheme.onSurface.withOpacity(0.15)),
+                              const SizedBox(height: 12),
+                              Text('Type to search groups and chats', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4), fontSize: 13)),
+                            ],
+                          ),
+                        )
+                      : StreamBuilder<List<ChatRoom>>(
+                          stream: chatService.getChatRoomsStream(user.id),
+                          builder: (ctx2, snapshot) {
+                            final allRooms = snapshot.data ?? [];
+                            final filtered = allRooms.where((r) => r.name.toLowerCase().contains(query)).toList();
+                            if (filtered.isEmpty) {
+                              return Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Text('No results for "$query"', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4))),
+                              );
+                            }
+                            return ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: filtered.length,
+                              itemBuilder: (_, i) {
+                                final room = filtered[i];
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: primaryColor.withOpacity(0.1),
+                                    child: Icon(room.isGroup ? Icons.groups : Icons.person, color: primaryColor, size: 20),
+                                  ),
+                                  title: Text(room.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  subtitle: Text(room.lastMessage ?? (room.isGroup ? 'Group' : 'Direct message'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  onTap: () {
+                                    Navigator.pop(ctx);
+                                    _openRoom(room);
+                                  },
+                                );
+                              },
+                            );
+                          },
+                        ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ── BAR 3 ──────────────────────────────────────────────────────────────────
+  Widget _buildBar3(BuildContext context, ThemeData theme, Color primaryColor) {
+    return Container(
+      color: theme.colorScheme.surface,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Row(
+        children: [
+          _filterChipWidget('all', 'All', theme, primaryColor),
+          const SizedBox(width: 8),
+          _filterChipWidget('unread', 'Unread', theme, primaryColor),
+          const SizedBox(width: 8),
+          _filterChipWidget('archived', 'Archived', theme, primaryColor),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterChipWidget(String value, String label, ThemeData theme, Color primaryColor) {
+    final isSelected = _filterChip == value;
+    return GestureDetector(
+      onTap: () => setState(() => _filterChip = value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? primaryColor : theme.cardColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: isSelected ? primaryColor : theme.dividerColor.withOpacity(0.3)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: isSelected ? Colors.white : theme.colorScheme.onSurface.withOpacity(0.6),
+          ),
+        ),
       ),
     );
   }
@@ -321,47 +533,75 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
         final rooms = snapshot.data ?? [];
         final groups = rooms.where((r) => r.isGroup).toList();
 
+        // Archived chip — no archive system yet
+        if (_filterChip == 'archived') {
+          return _buildEmptyState('No archived groups yet.', Icons.archive_outlined);
+        }
+
+        // Unread chip — use FutureBuilder to async-filter by unread count
+        if (_filterChip == 'unread') {
+          return FutureBuilder<List<ChatRoom>>(
+            key: ValueKey('unread_groups_$_badgeRefreshKey'),
+            future: Future.wait(
+              groups.map((r) async {
+                final count = await chatService.getUnreadCount(r.id, user.id);
+                return count > 0 ? r : null;
+              }),
+            ).then((list) => list.whereType<ChatRoom>().toList()),
+            builder: (context, snap) {
+              if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+              final unread = snap.data!;
+              if (unread.isEmpty) return _buildEmptyState('No unread groups.', Icons.done_all_rounded);
+              return _buildGroupList(unread, chatService, user, theme);
+            },
+          );
+        }
+
         if (groups.isEmpty) {
           return _buildEmptyState('You haven\'t joined any groups yet.', Icons.groups_outlined);
         }
+        return _buildGroupList(groups, chatService, user, theme);
+      },
+    );
+  }
 
-        return ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: groups.length,
-          itemBuilder: (context, index) {
-            final room = groups[index];
-            return ListTile(
-              leading: CircleAvatar(
-                backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
-                child: Icon(Icons.groups, color: theme.colorScheme.primary),
-              ),
-              title: Text(room.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text(room.lastMessage ?? room.description ?? 'No activity yet', maxLines: 1),
-              trailing: FutureBuilder<int>(
-                future: chatService.getUnreadCount(room.id, user.id),
-                builder: (context, snapshot) {
-                  final count = snapshot.data ?? 0;
-                  return Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (count > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
-                          child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                        ),
-                      const SizedBox(height: 4),
-                      const Icon(Icons.chevron_right_rounded, size: 20),
-                    ],
-                  );
-                },
-              ),
-              onTap: () => _openRoom(room),
-            );
-          },
+  Widget _buildGroupList(List<ChatRoom> groups, ChatService chatService, UserProfile user, ThemeData theme) {
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: groups.length,
+      itemBuilder: (context, index) {
+        final room = groups[index];
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+            child: Icon(Icons.groups, color: theme.colorScheme.primary),
+          ),
+          title: Text(room.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: Text(room.lastMessage ?? room.description ?? 'No activity yet', maxLines: 1),
+          trailing: FutureBuilder<int>(
+            key: ValueKey('badge_${room.id}_$_badgeRefreshKey'),
+            future: chatService.getUnreadCount(room.id, user.id),
+            builder: (context, snapshot) {
+              final count = snapshot.data ?? 0;
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (count > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
+                      child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                    ),
+                  const SizedBox(height: 4),
+                  const Icon(Icons.chevron_right_rounded, size: 20),
+                ],
+              );
+            },
+          ),
+          onTap: () => _openRoom(room),
         );
       },
     );
@@ -400,9 +640,11 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
                 trailing: ElevatedButton(
                   onPressed: user.isGuest ? () => _showGuestNotice(context, 'Public Groups') : () async {
                     final success = await chatService.joinChatRoom(room.id, user.id);
-                    if (success) {
+                    if (success && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Joined ${room.name}!')));
-                      setState(() => _activeGroupTab = 'MY');
+                      // Switch to My Groups tab
+                      _tabController.animateTo(0);
+                      setState(() {});
                     }
                   },
                   style: ElevatedButton.styleFrom(
@@ -426,7 +668,7 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
       context,
       MaterialPageRoute(builder: (context) => ChatRoomPage(room: room)),
     ).then((_) {
-      if (mounted) setState(() {});
+      if (mounted) setState(() => _badgeRefreshKey++);
     });
   }
 
@@ -436,46 +678,146 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
 
     return Column(
       children: [
-        _buildCollapsibleFriendBar(user),
-        Expanded(
-          child: StreamBuilder<List<FriendRelation>>(
-            stream: chatService.getFriendsStream(user.id),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final friends = snapshot.data ?? [];
-              if (friends.isEmpty) {
-                return _buildEmptyState('Add friends using their code!', Icons.people_outline_rounded);
-              }
-              return ListView.builder(
-                itemCount: friends.length,
-                itemBuilder: (context, index) {
-                  final friend = friends[index].friendProfile!;
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundImage: friend.avatarUrl != null ? NetworkImage(friend.avatarUrl!) : null,
-                      child: friend.avatarUrl == null ? const Icon(Icons.person) : null,
-                    ),
-                    title: Text(friend.fullName ?? 'Student', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(friend.hasRole(UserRole.lecturer) ? 'Lecturer' : 'Year ${friend.yearLevel}'),
-                    trailing: const Icon(Icons.chat_outlined, size: 20),
-                    onTap: () async {
-                       final room = await chatService.createChatRoom(
-                         creatorId: user.id,
-                         name: friend.fullName ?? 'Chat',
-                         isGroup: false,
-                         members: [user.id, friend.id],
-                       );
-                       if (room != null && mounted) {
-                         _openRoom(room);
-                       }
-                    },
+        // Active DM conversations
+        StreamBuilder<List<ChatRoom>>(
+          stream: chatService.getDmRoomsStream(user.id),
+          builder: (context, dmSnapshot) {
+            final dmRooms = dmSnapshot.data ?? [];
+            return Expanded(
+              child: StreamBuilder<List<FriendRelation>>(
+                stream: chatService.getFriendsStream(user.id),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting && dmRooms.isEmpty) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final friends = snapshot.data ?? [];
+
+                  // Show DM rooms with messages at top, then friends without a DM below
+                  final dmRoomsByMembers = {
+                    for (final r in dmRooms)
+                      r.memberIds.firstWhere((id) => id != user.id, orElse: () => ''): r
+                  };
+
+                  if (friends.isEmpty && dmRooms.isEmpty) {
+                    return _buildEmptyState('Add friends using their code!', Icons.people_outline_rounded);
+                  }
+
+                  // Archived chip — no archive system yet
+                  if (_filterChip == 'archived') {
+                    return _buildEmptyState('No archived chats yet.', Icons.archive_outlined);
+                  }
+
+                  // Merge: friends with a DM room get the room's last message shown
+                  final friendIds = friends.map((f) => f.friendId).toSet();
+                  // DM rooms with unknown friends (recipient added you but you haven't added them back)
+                  final unknownDms = dmRooms.where((r) {
+                    final otherId = r.memberIds.firstWhere((id) => id != user.id, orElse: () => '');
+                    return otherId.isNotEmpty && !friendIds.contains(otherId);
+                  }).toList();
+
+                  // For Unread chip: only show friends/DMs with unread messages
+                  // We use the last_message_read_by column stored in the room
+                  List<FriendRelation> visibleFriends = friends;
+                  List<ChatRoom> visibleUnknownDms = unknownDms;
+
+                  if (_filterChip == 'unread') {
+                    visibleFriends = friends.where((rel) {
+                      final dmRoom = dmRoomsByMembers[rel.friendId];
+                      if (dmRoom == null) return false;
+                      // Unread = last_message_read_by does not contain this user
+                      return !(dmRoom.lastMessageReadBy?.contains(user.id) ?? true);
+                    }).toList();
+                    visibleUnknownDms = unknownDms.where((r) {
+                      return !(r.lastMessageReadBy?.contains(user.id) ?? true);
+                    }).toList();
+                    if (visibleFriends.isEmpty && visibleUnknownDms.isEmpty) {
+                      return _buildEmptyState('All caught up! No unread chats.', Icons.done_all_rounded);
+                    }
+                  }
+
+                  return ListView(
+                    children: [
+                      if (dmRooms.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                          child: Text('CONVERSATIONS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: theme.colorScheme.primary, letterSpacing: 1.1)),
+                        ),
+                      // Friends with existing DM rooms
+                      ...visibleFriends.map((rel) {
+                        final friend = rel.friendProfile;
+                        if (friend == null) return const SizedBox.shrink();
+                        final dmRoom = dmRoomsByMembers[friend.id];
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundImage: NetworkImage(friend.avatarUrl ?? AuthService.getDefaultAvatarUrl(friend.fullName, friend.id)),
+                          ),
+                          title: Text(friend.fullName ?? 'Student', style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text(
+                            dmRoom?.lastMessage ?? (friend.hasRole(UserRole.lecturer) ? 'Lecturer' : 'Year ${friend.yearLevel}'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(dmRoom?.lastMessage != null ? 0.7 : 0.4)),
+                          ),
+                          trailing: dmRoom != null
+                              ? FutureBuilder<int>(
+                                  key: ValueKey('dm_badge_${dmRoom.id}_$_badgeRefreshKey'),
+                                  future: chatService.getUnreadCount(dmRoom.id, user.id),
+                                  builder: (context, snapshot) {
+                                    final count = snapshot.data ?? 0;
+                                    return count > 0
+                                        ? Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
+                                            child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                          )
+                                        : const Icon(Icons.chat_outlined, size: 20);
+                                  },
+                                )
+                              : const Icon(Icons.chat_outlined, size: 20),
+                          onTap: () async {
+                            final existing = dmRoom ?? await chatService.findExistingDm(user.id, friend.id);
+                            final room = existing ?? await chatService.createChatRoom(
+                              creatorId: user.id,
+                              name: friend.fullName ?? 'Chat',
+                              isGroup: false,
+                              members: [user.id, friend.id],
+                            );
+                            if (room != null && mounted) _openRoom(room);
+                          },
+                        );
+                      }),
+                      // DM rooms from people who messaged you but aren't in your friends list
+                      ...visibleUnknownDms.map((room) {
+                        final otherId = room.memberIds.firstWhere((id) => id != user.id, orElse: () => '');
+                        return ListTile(
+                          leading: const CircleAvatar(child: Icon(Icons.person)),
+                          title: Text(room.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text(room.lastMessage ?? 'New conversation', maxLines: 1),
+                          trailing: FutureBuilder<int>(
+                            key: ValueKey('unk_badge_${room.id}_$_badgeRefreshKey'),
+                            future: chatService.getUnreadCount(room.id, user.id),
+                            builder: (context, snap) {
+                              final count = snap.data ?? 0;
+                              return count > 0
+                                  ? Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
+                                      child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    )
+                                  : const Icon(Icons.chat_outlined, size: 20);
+                            },
+                          ),
+                          onTap: () => _openRoom(room),
+                        );
+                      }),
+                      if (visibleFriends.isEmpty && visibleUnknownDms.isEmpty)
+                        _buildEmptyState('Add friends using their code!', Icons.people_outline_rounded),
+                    ],
                   );
                 },
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
       ],
     );
