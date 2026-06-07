@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui' show ImageFilter;
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'services.dart';
 import 'models.dart';
 import 'chat_room_page.dart';
@@ -20,14 +21,21 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _bulkCodesController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _betaPasswordController = TextEditingController();
 
-  String _activeGroupTab = 'MY'; // 'MY' or 'PUBLIC'
+  String _activeGroupTab = 'MY';
   bool _isGroupPublic = false;
   bool _isFriendBarExpanded = true;
   int _badgeRefreshKey = 0;
-  bool _codeBlurred = false;         // Bar 1: eye toggle
-  bool _isSearching = false;         // Bar 1: search mode
-  String _filterChip = 'all';        // Bar 3: 'all' | 'unread' | 'archived'
+  bool _codeBlurred = false;
+  bool _isSearching = false;
+  String _filterChip = 'all';
+
+  // Beta gate state
+  bool _betaLocked = false;      // from app_config
+  bool _betaUnlocked = false;    // from SharedPreferences (device-local)
+  bool _betaLoading = true;
+  String _betaPasswordError = '';
 
   @override
   void initState() {
@@ -36,6 +44,28 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
+    _checkBetaGate();
+  }
+
+  Future<void> _checkBetaGate() async {
+    final noteService = context.read<NoteService>();
+    final prefs = await SharedPreferences.getInstance();
+    final config = await noteService.getAppConfig();
+    final locked = config['chat_beta_locked'] == 'true';
+    final unlocked = prefs.getBool('chat_beta_unlocked') ?? false;
+    if (mounted) setState(() { _betaLocked = locked; _betaUnlocked = unlocked; _betaLoading = false; });
+  }
+
+  Future<void> _submitBetaPassword() async {
+    final entered = _betaPasswordController.text.trim();
+    if (entered == 'preview') {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('chat_beta_unlocked', true);
+      _betaPasswordController.clear();
+      if (mounted) setState(() { _betaUnlocked = true; _betaPasswordError = ''; });
+    } else {
+      setState(() => _betaPasswordError = 'Incorrect password. Contact the dev for access.');
+    }
   }
 
   @override
@@ -46,6 +76,7 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
     _descriptionController.dispose();
     _bulkCodesController.dispose();
     _searchController.dispose();
+    _betaPasswordController.dispose();
     super.dispose();
   }
 
@@ -195,6 +226,14 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
     final primaryColor = theme.colorScheme.primary;
     final user = context.watch<AuthService>().currentUser!;
 
+    // Beta gate — show blocker if locked and not unlocked on this device
+    if (_betaLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_betaLocked && !_betaUnlocked) {
+      return _buildBetaBlocker(theme, primaryColor, user);
+    }
+
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
@@ -246,6 +285,114 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
         },
         backgroundColor: primaryColor,
         child: Icon(_tabController.index == 0 ? Icons.group_add : Icons.person_add, color: Colors.white),
+      ),
+    );
+  }
+
+  // ── BETA BLOCKER ───────────────────────────────────────────────────────────
+  Widget _buildBetaBlocker(ThemeData theme, Color primaryColor, UserProfile user) {
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Back button
+            Align(
+              alignment: Alignment.topLeft,
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(32, 16, 32, 32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 32),
+                    // Construction icon
+                    Container(
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.construction_rounded, size: 72, color: Colors.orange),
+                    ),
+                    const SizedBox(height: 32),
+                    Text(
+                      'Under Construction',
+                      style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'The Communications feature is being polished and will be available soon.\n\nAre you a beta tester? Enter the access password below.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14, height: 1.6, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                    ),
+                    const SizedBox(height: 40),
+                    // Password field
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: theme.cardColor,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: primaryColor.withOpacity(0.15)),
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 4))],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.lock_outline_rounded, size: 18, color: primaryColor),
+                              const SizedBox(width: 8),
+                              Text('Beta Access', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: primaryColor, letterSpacing: 0.5)),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _betaPasswordController,
+                            obscureText: true,
+                            decoration: InputDecoration(
+                              hintText: 'Enter beta password',
+                              prefixIcon: const Icon(Icons.vpn_key_outlined, size: 20),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              errorText: _betaPasswordError.isEmpty ? null : _betaPasswordError,
+                            ),
+                            onSubmitted: (_) => _submitBetaPassword(),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: _submitBetaPassword,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryColor,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: const Text('Unlock Preview', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Contact the dev to get your beta access password.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.35)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

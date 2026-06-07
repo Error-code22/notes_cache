@@ -127,6 +127,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> {
     final authService = context.read<AuthService>();
     await chatService.updateLastRead(widget.room.id, authService.currentUser!.id);
     _scrollToBottom();
+
+    // Trigger archiving if room has too many messages (async, don't await)
+    chatService.archiveOldMessages(widget.room.id);
   }
 
   @override
