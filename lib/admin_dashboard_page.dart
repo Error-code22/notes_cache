@@ -15,10 +15,13 @@ class AdminDashboardPage extends StatefulWidget {
 
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
   // AI Settings
-  String _selectedModel = 'llama-3.1-70b-versatile';
+  String _selectedModel = 'llama-3.3-70b-versatile';
   bool _webSearchEnabled = true;
   final _textLimitController = TextEditingController();
   final _imageLimitController = TextEditingController();
+
+  // Feature Gates
+  bool _chatBetaLocked = true;
 
   // Support & Links
   final _helpUrlController = TextEditingController();
@@ -51,10 +54,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     if (mounted) {
       setState(() {
         // AI
-        _selectedModel = config['ai_model'] ?? 'llama-3.1-70b-versatile';
+        _selectedModel = config['ai_model'] ?? 'llama-3.3-70b-versatile';
         _webSearchEnabled = config['ai_web_search'] != 'false';
         _textLimitController.text = config['ai_daily_text_limit'] ?? '50';
         _imageLimitController.text = config['ai_daily_image_limit'] ?? '10';
+        // Feature gates
+        _chatBetaLocked = config['chat_beta_locked'] != 'false';
         // Support
         _helpUrlController.text = config['help_center_url'] ?? '';
         _supportEmailController.text = config['support_email'] ?? '';
@@ -144,7 +149,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             const SizedBox(height: 8),
             SegmentedButton<String>(
               segments: const [
-                ButtonSegment(value: 'llama-3.1-70b-versatile', label: Text('70B'), icon: Icon(Icons.speed)),
+                ButtonSegment(value: 'llama-3.3-70b-versatile', label: Text('70B'), icon: Icon(Icons.speed)),
                 ButtonSegment(value: 'llama-3.1-8b-instant', label: Text('8B'), icon: Icon(Icons.bolt)),
               ],
               selected: {_selectedModel},
@@ -155,7 +160,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
             const SizedBox(height: 4),
             Text(
-              _selectedModel == 'llama-3.1-70b-versatile'
+              _selectedModel == 'llama-3.3-70b-versatile'
                   ? '70B: Smarter, slower, better for complex questions'
                   : '8B: Faster, lighter, good for quick answers',
               style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
@@ -211,6 +216,36 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
           const SizedBox(height: 12),
 
+          // ===== FEATURE GATES =====
+          _sectionCard(theme, Icons.toggle_on_outlined, 'Feature Gates', [
+            SwitchListTile(
+              title: const Text('Communications Page — Beta Lock'),
+              subtitle: Text(
+                _chatBetaLocked
+                    ? 'Locked: users see "Under Construction" + password gate'
+                    : 'Unlocked: all users can access Communications',
+                style: const TextStyle(fontSize: 12),
+              ),
+              value: _chatBetaLocked,
+              onChanged: (val) {
+                setState(() => _chatBetaLocked = val);
+                _saveConfig('chat_beta_locked', val.toString());
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(val ? 'Communications locked (beta only)' : 'Communications unlocked for all users'),
+                    backgroundColor: val ? Colors.orange : Colors.green,
+                  ),
+                );
+              },
+              secondary: Icon(
+                _chatBetaLocked ? Icons.lock_outline_rounded : Icons.lock_open_rounded,
+                color: _chatBetaLocked ? Colors.orange : Colors.green,
+              ),
+            ),
+          ]),
+
+          const SizedBox(height: 12),
+
           // ===== ADMIN ACTIONS =====
           _sectionCard(theme, Icons.admin_panel_settings, 'Admin Actions', [
             _buildAdminAction(context, 'Manage Users', 'Promote, demote, or remove accounts', Icons.manage_accounts, Colors.blue),
@@ -218,12 +253,48 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             _buildAdminAction(context, 'Feedback Explorer', 'View user bug reports and suggestions', Icons.feedback_outlined, Colors.teal),
             _buildAdminAction(context, 'Push Update', 'Send an announcement to all users', Icons.campaign, Colors.purple),
             _buildAdminAction(context, 'Pricing & Plans', 'View and manage subscription tiers', Icons.monetization_on, Colors.amber),
+            _buildAdminAction(context, 'Archive Chats', 'Move old messages to storage to free DB space', Icons.archive, Colors.brown),
           ]),
 
           const SizedBox(height: 32),
         ],
       ),
     );
+  }
+
+  Future<void> _archiveChats(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Archive Old Messages'),
+        content: const Text('This will move messages older than 50 per room to Supabase Storage. Recent messages stay in the database. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Archive Now')),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Archiving started...'), backgroundColor: Colors.blue),
+      );
+      try {
+        final chatService = ChatService();
+        await chatService.archiveAllRooms();
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Archiving complete! Old messages moved to storage.'), backgroundColor: Colors.green),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Archive error: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
   }
 
   // ===== Reusable Widgets =====
@@ -300,6 +371,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         else if (title == 'Feedback Explorer') Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackExplorerPage()));
         else if (title == 'Push Update') _showPushUpdateDialog(context);
         else if (title == 'Pricing & Plans') Navigator.push(context, MaterialPageRoute(builder: (context) => const PricingPage()));
+        else if (title == 'Archive Chats') _archiveChats(context);
       },
     );
   }

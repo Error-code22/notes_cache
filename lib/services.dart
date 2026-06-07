@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -753,6 +755,134 @@ class ChatService {
       return false;
     }
   }
+
+  // ============================================================
+  // CHAT MESSAGE ARCHIVING
+  // Keeps DB under 500MB by moving old messages to Supabase Storage
+  // ============================================================
+  static const int _maxMessagesPerRoom = 50; // Keep last 50 in DB
+  static const int _archiveThreshold = 60; // Trigger archive at 60
+
+  /// Archive old messages for a room if it exceeds the threshold
+  Future<void> archiveOldMessages(String roomId) async {
+    try {
+      // Count messages in room
+      final countResult = await _supabase
+          .from('chat_messages')
+          .select('id')
+          .eq('room_id', roomId);
+
+      if (countResult.length <= _archiveThreshold) return; // Not enough to archive
+
+      // Get messages to archive (oldest first, keep last 50)
+      final messagesToArchive = await _supabase
+          .from('chat_messages')
+          .select()
+          .eq('room_id', roomId)
+          .order('created_at', ascending: true)
+          .limit(countResult.length - _maxMessagesPerRoom);
+
+      if (messagesToArchive.isEmpty) return;
+
+      // Get existing archive path
+      final existingArchive = await _supabase
+          .from('chat_archives')
+          .select('archive_path, message_count')
+          .eq('room_id', roomId)
+          .maybeSingle();
+
+      String archivePath;
+      List<Map<String, dynamic>> existingMessages = [];
+
+      if (existingArchive != null) {
+        archivePath = existingArchive['archive_path'];
+        // Download existing archive
+        try {
+          final bytes = await _supabase.storage
+              .from('chat-archives')
+              .download(archivePath);
+          final content = String.fromCharCodes(bytes);
+          existingMessages = List<Map<String, dynamic>>.from(
+            (jsonDecode(content) as List).map((m) => Map<String, dynamic>.from(m))
+          );
+        } catch (_) {
+          // Archive file doesn't exist yet, start fresh
+        }
+      } else {
+        archivePath = '$roomId/archive_${DateTime.now().millisecondsSinceEpoch}.json';
+      }
+
+      // Merge with existing archived messages
+      existingMessages.addAll(messagesToArchive);
+
+      // Upload to Supabase Storage
+      final jsonContent = jsonEncode(existingMessages);
+      final bytes = utf8.encode(jsonContent);
+
+      await _supabase.storage
+          .from('chat-archives')
+          .uploadBinary(archivePath, bytes);
+
+      // Delete archived messages from DB
+      final idsToDelete = messagesToArchive.map((m) => m['id']).toList();
+      for (var i = 0; i < idsToDelete.length; i += 50) {
+        final batch = idsToDelete.sublist(i, (i + 50).clamp(0, idsToDelete.length));
+        await _supabase
+            .from('chat_messages')
+            .delete()
+            .inFilter('id', batch);
+      }
+
+      // Update or create archive record
+      await _supabase.from('chat_archives').upsert({
+        'room_id': roomId,
+        'archive_path': archivePath,
+        'message_count': existingMessages.length,
+        'last_archived_at': DateTime.now().toIso8601String(),
+      });
+
+      debugPrint('Archived ${messagesToArchive.length} messages for room $roomId');
+    } catch (e) {
+      debugPrint('archiveOldMessages error: $e');
+    }
+  }
+
+  /// Load archived messages for a room (when scrolling up)
+  Future<List<Map<String, dynamic>>> loadArchivedMessages(String roomId) async {
+    try {
+      final archive = await _supabase
+          .from('chat_archives')
+          .select('archive_path')
+          .eq('room_id', roomId)
+          .maybeSingle();
+
+      if (archive == null) return [];
+
+      final bytes = await _supabase.storage
+          .from('chat-archives')
+          .download(archive['archive_path']);
+
+      final content = String.fromCharCodes(bytes);
+      return List<Map<String, dynamic>>.from(
+        (jsonDecode(content) as List).map((m) => Map<String, dynamic>.from(m))
+      );
+    } catch (e) {
+      debugPrint('loadArchivedMessages error: $e');
+      return [];
+    }
+  }
+
+  /// Run archiving for all rooms that need it (call periodically)
+  Future<void> archiveAllRooms() async {
+    try {
+      final rooms = await _supabase.from('chat_rooms').select('id');
+      for (final room in rooms) {
+        await archiveOldMessages(room['id']);
+      }
+    } catch (e) {
+      debugPrint('archiveAllRooms error: $e');
+    }
+  }
 }
 
 class AiChatService {
@@ -778,6 +908,62 @@ class AiChatService {
     final today = DateTime.now().toIso8601String().split('T')[0];
     final current = await getDailyMessageCount(userId);
     await prefs.setInt('ai_daily_${userId}_$today', current + 1);
+  }
+
+  // --- AI Chat History (Supabase) ---
+  static const int _maxHistoryMessages = 50; // Keep last 50 in DB
+  static const int _contextMessages = 5; // Send last 5 to Groq
+
+  Future<List<Map<String, String>>> loadChatHistory(String userId) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final result = await supabase
+          .from('ai_chat_history')
+          .select('messages')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+      if (result != null && result['messages'] != null) {
+        final List<dynamic> messages = result['messages'];
+        return messages.map((m) => Map<String, String>.from(m)).toList();
+      }
+    } catch (e) {
+      debugPrint('Load AI history error: $e');
+    }
+    return [];
+  }
+
+  Future<void> saveChatHistory(String userId, List<Map<String, String>> messages) async {
+    try {
+      final supabase = Supabase.instance.client;
+      // Keep only last N messages
+      final toSave = messages.length > _maxHistoryMessages
+          ? messages.sublist(messages.length - _maxHistoryMessages)
+          : messages;
+
+      await supabase.from('ai_chat_history').upsert({
+        'user_id': userId,
+        'messages': toSave,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      debugPrint('Save AI history error: $e');
+    }
+  }
+
+  Future<void> clearChatHistory(String userId) async {
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase.from('ai_chat_history').delete().eq('user_id', userId);
+    } catch (e) {
+      debugPrint('Clear AI history error: $e');
+    }
+  }
+
+  /// Get last N messages for sending to Groq (context window)
+  List<Map<String, String>> getContextMessages(List<Map<String, String>> allMessages) {
+    if (allMessages.length <= _contextMessages) return allMessages;
+    return allMessages.sublist(allMessages.length - _contextMessages);
   }
 
   Future<String> getResponse(String msg, List<Map<String, String>> history, {String? imageBase64}) async {
