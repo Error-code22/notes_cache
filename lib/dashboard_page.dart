@@ -13,6 +13,7 @@ import 'chats_list_page.dart';
 import 'ai_chat_page.dart';
 import 'updates_page.dart';
 import 'feedback_page.dart';
+import 'donate_notes_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -52,11 +53,13 @@ class _FeaturePill extends StatelessWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   final ConnectivityService _connectivity = ConnectivityService();
+  final SupabaseKeepAliveService _keepAlive = SupabaseKeepAliveService();
 
   @override
   void initState() {
     super.initState();
     _connectivity.start();
+    _keepAlive.start();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final authService = context.read<AuthService>();
       final themeProvider = context.read<ThemeProvider>();
@@ -81,6 +84,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     _connectivity.dispose();
+    _keepAlive.dispose();
     super.dispose();
   }
 
@@ -255,9 +259,14 @@ class _DashboardPageState extends State<DashboardPage> {
               else if (value == 'settings') Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsPage()));
               else if (value == 'updates') Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdatesPage()));
               else if (value == 'feedback') Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackPage()));
+              else if (value == 'signin') Navigator.pushNamed(context, '/login');
               else if (value == 'logout') _showLogoutConfirmation(context, authService);
             },
             itemBuilder: (context) => [
+              if (user.isGuest) ...[
+                const PopupMenuItem(value: 'signin', child: Row(children: [Icon(Icons.login_rounded, size: 20), SizedBox(width: 8), Text('Sign In')])),
+                const PopupMenuDivider(),
+              ],
               const PopupMenuItem(value: 'profile', child: Row(children: [Icon(Icons.person_outline, size: 20), SizedBox(width: 8), Text('My Profile')])),
               const PopupMenuItem(value: 'updates', child: Row(children: [Icon(Icons.campaign_outlined, size: 20), SizedBox(width: 8), Text('Updates')])),
               const PopupMenuItem(value: 'feedback', child: Row(children: [Icon(Icons.bug_report_outlined, size: 20), SizedBox(width: 8), Text('Report a Bug')])),
@@ -320,7 +329,16 @@ class _DashboardPageState extends State<DashboardPage> {
                             'Access and share study materials',
                             Icons.menu_book_rounded,
                             Colors.blue,
-                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => const NotesPage())),
+                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => NotesPage(connectivity: _connectivity))),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildHubCard(
+                            context,
+                            'Donate Notes',
+                            'Share your notes with fellow students',
+                            Icons.volunteer_activism,
+                            Colors.pink,
+                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DonateNotesPage())),
                           ),
                           const SizedBox(height: 16),
                           _buildHubCard(
@@ -437,40 +455,14 @@ class _DashboardPageState extends State<DashboardPage> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 5),
-                        Text(
-                          'Flashcards, quizzes, recall drills, mind maps',
-                          style: TextStyle(fontSize: 13, height: 1.3, color: theme.colorScheme.onSurface.withOpacity(0.58)),
-                        ),
+
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: const [
-                  _FeaturePill(icon: Icons.style_outlined, label: 'Flashcards'),
-                  _FeaturePill(icon: Icons.quiz_outlined, label: 'Quiz me'),
-                  _FeaturePill(icon: Icons.repeat_outlined, label: 'Recall'),
-                  _FeaturePill(icon: Icons.lock_clock, label: 'Private'),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Paste a topic and let Notesy turn it into something you can actually remember.',
-                      style: TextStyle(fontSize: 12, height: 1.35, color: theme.colorScheme.onSurface.withOpacity(0.52)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Icon(Icons.arrow_forward_rounded, color: accent),
-                ],
-              ),
+
+
             ],
           ),
         ),
@@ -490,7 +482,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ElevatedButton(
             onPressed: () async {
               await authService.signOut();
-              if (context.mounted) Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+              if (context.mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
             child: const Text('SIGN OUT'),

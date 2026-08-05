@@ -9,7 +9,9 @@ import 'upload_note_page.dart';
 enum NoteViewMode { list, details, compact }
 
 class NotesPage extends StatefulWidget {
-  const NotesPage({super.key});
+  final ConnectivityService? connectivity;
+
+  const NotesPage({super.key, this.connectivity});
 
   @override
   State<NotesPage> createState() => _NotesPageState();
@@ -30,18 +32,26 @@ class _NotesPageState extends State<NotesPage> {
     });
   }
 
-  void _refreshNotes() {
+  void _refreshNotes({bool? forceOffline}) {
     final noteService = context.read<NoteService>();
     final user = context.read<AuthService>().currentUser!;
-    setState(() {
-      _notesFuture = noteService.getNotesForUser(
-        user, 
-        searchQuery: _searchQuery.isEmpty ? null : _searchQuery,
-        semester: _selectedFilter.startsWith('Semester') 
-            ? int.tryParse(_selectedFilter.split(' ').last) 
-            : null,
-      );
-    });
+    final semester = _selectedFilter.startsWith('Semester')
+        ? int.tryParse(_selectedFilter.split(' ').last)
+        : null;
+    final isOffline = forceOffline ?? !(widget.connectivity?.isOnline.value ?? true);
+    if (isOffline) {
+      setState(() {
+        _notesFuture = noteService.getCachedNotes(user.id, semester: semester);
+      });
+    } else {
+      setState(() {
+        _notesFuture = noteService.getNotesForUser(
+          user,
+          searchQuery: _searchQuery.isEmpty ? null : _searchQuery,
+          semester: semester,
+        );
+      });
+    }
   }
 
 
@@ -130,7 +140,36 @@ class _NotesPageState extends State<NotesPage> {
             ),
   
             const SizedBox(height: 24),
-  
+
+            // Offline banner
+            if (widget.connectivity != null)
+              ValueListenableBuilder<bool>(
+                valueListenable: widget.connectivity!.isOnline,
+                builder: (context, online, _) {
+                  if (online) return const SizedBox.shrink();
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade700.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.wifi_off_rounded, color: Colors.orange.shade700, size: 18),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'You are offline - showing cached notes',
+                            style: TextStyle(color: Colors.orange.shade700, fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+
             // Notes List
             Expanded(
               child: Padding(
@@ -297,7 +336,7 @@ class _NotesPageState extends State<NotesPage> {
           dense: true,
           leading: Icon(fileIcon, color: fileColor, size: 20),
           title: Text(note.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-          subtitle: Text('By ${note.lecturerName}', style: const TextStyle(fontSize: 11)),
+          subtitle: Text('By ${note.lecturerName}${note.isFromCache ? ' • Cached' : ''}', style: const TextStyle(fontSize: 11)),
           trailing: _buildBadge(typeLabel, fileColor),
           onTap: () async {
             await Navigator.push(context, MaterialPageRoute(builder: (context) => NoteDetailPage(note: note)));
@@ -338,6 +377,10 @@ class _NotesPageState extends State<NotesPage> {
                         _buildBadge(typeLabel, fileColor),
                         const SizedBox(width: 8),
                         _buildBadge('Year ${note.targetYear}', Colors.blueGrey),
+                        if (note.isFromCache) ...[
+                          const SizedBox(width: 8),
+                          _buildBadge('CACHED', Colors.orange),
+                        ],
                         const Spacer(),
                         Text(
                           '${note.createdAt.day}/${note.createdAt.month}/${note.createdAt.year}',
@@ -387,6 +430,10 @@ class _NotesPageState extends State<NotesPage> {
                 _buildBadge(typeLabel, fileColor),
                 const SizedBox(width: 8),
                 _buildBadge('Year ${note.targetYear}', Colors.blueGrey),
+                if (note.isFromCache) ...[
+                  const SizedBox(width: 8),
+                  _buildBadge('CACHED', Colors.orange),
+                ],
               ],
             ),
           ],

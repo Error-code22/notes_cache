@@ -25,9 +25,6 @@ void main() async {
   final notificationService = NotificationService();
   await notificationService.init();
 
-  // Load the current session to check if user is already logged in
-  final session = Supabase.instance.client.auth.currentSession;
-  
   runApp(
     MultiProvider(
       providers: [
@@ -37,7 +34,8 @@ void main() async {
         Provider(create: (_) => ChatService()),
         Provider(create: (_) => notificationService),
       ],
-      child: MyApp(initialRoute: session != null ? '/dashboard' : '/login'),
+      // Always open straight to the dashboard; guests are auto-created by AuthService.
+      child: const MyApp(initialRoute: '/dashboard'),
     ),
   );
 }
@@ -60,6 +58,14 @@ class MyApp extends StatelessWidget {
       routes: {
         '/login': (context) => const LoginPage(),
         '/dashboard': (context) => const DashboardPage(),
+      },
+      builder: (context, child) {
+        // Apply user's text scale preference globally
+        final scale = themeProvider.textScale;
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaleFactor: scale),
+          child: child!,
+        );
       },
     );
   }

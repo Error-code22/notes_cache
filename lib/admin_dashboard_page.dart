@@ -254,6 +254,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             _buildAdminAction(context, 'Push Update', 'Send an announcement to all users', Icons.campaign, Colors.purple),
             _buildAdminAction(context, 'Pricing & Plans', 'View and manage subscription tiers', Icons.monetization_on, Colors.amber),
             _buildAdminAction(context, 'Archive Chats', 'Move old messages to storage to free DB space', Icons.archive, Colors.brown),
+            _buildAdminAction(context, 'Re-index Notes', 'Add all old notes to the AI search pile', Icons.auto_awesome, Colors.indigo),
           ]),
 
           const SizedBox(height: 32),
@@ -372,7 +373,39 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         else if (title == 'Push Update') _showPushUpdateDialog(context);
         else if (title == 'Pricing & Plans') Navigator.push(context, MaterialPageRoute(builder: (context) => const PricingPage()));
         else if (title == 'Archive Chats') _archiveChats(context);
+        else if (title == 'Re-index Notes') _reindexAllNotes(context);
       },
+    );
+  }
+
+  Future<void> _reindexAllNotes(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Re-index All Notes'),
+        content: const Text('Downloads every PDF/text note and adds it to the AI search pile so Notesy can answer questions about them. Notes already indexed are skipped. This can take a few minutes. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Start')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    if (!context.mounted) return;
+    final noteService = context.read<NoteService>();
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Re-indexing notes... this may take a while'), backgroundColor: Colors.blue),
+    );
+
+    final result = await noteService.indexAllNotesForAi();
+    if (!context.mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Re-index done: ${result.indexed} indexed, ${result.skipped} already indexed/skipped, ${result.failed} failed'),
+        backgroundColor: result.failed == 0 ? Colors.green : Colors.orange,
+      ),
     );
   }
 

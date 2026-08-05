@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'models.dart';
 import 'services.dart';
-import 'google_drive_auth_service.dart';
+import 'r2_service.dart';
 import 'file_viewer_page.dart';
 
 class NoteDetailPage extends StatefulWidget {
@@ -142,29 +144,27 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     
     try {
       final noteService = context.read<NoteService>();
-      final driveAuth = GoogleDriveAuthService();
       final appDirPath = await noteService.getAppDirectory();
       
+      // Determine file extension from title or URL
       String ext = '';
-      if (widget.note.gDriveId != null) {
-        final metadata = await driveAuth.getFileMetadata(widget.note.gDriveId!);
-        if (metadata != null) {
-          if (metadata.fileExtension != null) {
-            ext = '.${metadata.fileExtension}';
-          } else if (metadata.mimeType != null) {
-            if (metadata.mimeType!.contains('pdf')) ext = '.pdf';
-            else if (metadata.mimeType!.contains('word')) ext = '.docx';
-            else if (metadata.mimeType!.contains('presentation')) ext = '.pptx';
-            else if (metadata.mimeType!.contains('text/plain')) ext = '.txt';
-          }
+      if (widget.note.gDriveId != null && widget.note.gDriveId!.isNotEmpty) {
+        // Extract extension from URL
+        final url = Uri.parse(widget.note.gDriveId!);
+        final pathParts = url.path.split('.');
+        if (pathParts.length > 1) {
+          ext = '.${pathParts.last}';
         }
       }
       
-      // Final fallback if metadata failed or it's a text-only note
+      // Fallback: extract from title
       if (ext.isEmpty) {
         final lowerTitle = widget.note.title.toLowerCase();
         final hasExtension = lowerTitle.contains(RegExp(r'\.(pdf|docx|doc|pptx|ppt|txt|md|jpg|png|jpeg|mp4|mp3|wav|mov|mkv|py|java|cpp|dart|csv|xlsx|xls|json|html)$'));
-        if (!hasExtension) {
+        if (hasExtension) {
+          final match = RegExp(r'\.([a-zA-Z0-9]+)$').firstMatch(lowerTitle);
+          if (match != null) ext = '.${match.group(1)}';
+        } else {
           ext = (widget.note.category ?? '').toLowerCase().contains('pdf') ? '.pdf' : '.txt';
         }
       }
@@ -174,13 +174,19 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       final file = File(filePath);
 
       if (!await file.exists()) {
-        if (widget.note.gDriveId != null) {
-          final bytes = await driveAuth.downloadFile(widget.note.gDriveId!);
-          if (bytes == null) throw Exception('Could not fetch file from Google Drive');
-          await file.writeAsBytes(bytes);
+        if (widget.note.gDriveId != null && widget.note.gDriveId!.isNotEmpty) {
+          // Download from R2 via public URL
+          final response = await http.get(Uri.parse(widget.note.gDriveId!));
+          if (response.statusCode != 200) throw Exception('Could not fetch file from storage');
+          await file.writeAsBytes(response.bodyBytes);
         } else {
           await file.writeAsString(widget.note.content);
         }
+      }
+
+      // Auto-index for AI search the first time this note is opened
+      if (['.pdf', '.txt', '.md'].contains(ext.toLowerCase())) {
+        unawaited(context.read<NoteService>().ensureIndexedForAi(file, widget.note.title));
       }
 
       if (mounted) {
@@ -232,14 +238,22 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
 
     setState(() => _isLoading = true);
     
-    // 1. Delete from Google Drive if it exists
+    // 1. Delete from Cloudinary if it exists
     if (widget.note.gDriveId != null && widget.note.gDriveId!.isNotEmpty) {
-      final driveAuth = GoogleDriveAuthService();
-      await driveAuth.deleteFile(widget.note.gDriveId!);
+      final cloudinaryService = CloudinaryService();
+      final publicId = CloudinaryService.extractPublicIdFromUrl(widget.note.gDriveId!);
+      if (publicId != null) {
+        await cloudinaryService.deleteFile(publicId);
+      }
     }
     
     // 2. Delete from Supabase Database
-    final success = await context.read<NoteService>().deleteNote(widget.note.id);
+    final user = context.read<AuthService>().currentUser;
+    final success = await context.read<NoteService>().deleteNote(
+      widget.note.id,
+      userId: user?.id,
+      isAdmin: user?.hasRole(UserRole.admin) ?? false,
+    );
     
     setState(() => _isLoading = false);
 

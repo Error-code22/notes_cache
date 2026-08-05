@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum UserRole { student, lecturer, admin, moderator }
@@ -89,6 +89,7 @@ class Note {
   final String? gDriveId;
   final String? category;
   final String? summary;
+  final bool isFromCache;
 
   Note({
     required this.id,
@@ -101,9 +102,10 @@ class Note {
     this.gDriveId,
     this.category,
     this.summary,
+    this.isFromCache = false,
   });
 
-  factory Note.fromMap(Map<String, dynamic> map) {
+  factory Note.fromMap(Map<String, dynamic> map, {bool isFromCache = false}) {
     return Note(
       id: map['id'].toString(),
       title: map['title'] ?? '',
@@ -115,6 +117,7 @@ class Note {
       gDriveId: map['gdrive_id'],
       category: map['category'],
       summary: map['summary'],
+      isFromCache: isFromCache,
     );
   }
 }
