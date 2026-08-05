@@ -5,6 +5,7 @@ import 'services.dart';
 import 'models.dart';
 import 'note_detail_page.dart';
 import 'upload_note_page.dart';
+import 'local_docs_page.dart';
 
 enum NoteViewMode { list, details, compact }
 
@@ -131,8 +132,8 @@ class _NotesPageState extends State<NotesPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 children: [
                   _buildFilterChip(context, 'All Notes'),
-                  _buildFilterChip(context, 'Semester 1'),
-                  _buildFilterChip(context, 'Semester 2'),
+                  _buildLocalDocsChip(context),
+                  _buildSemesterDropdown(context),
                   _buildFilterChip(context, 'Past Papers'),
                   _buildFilterChip(context, 'Exam Solutions'),
                 ],
@@ -224,6 +225,78 @@ class _NotesPageState extends State<NotesPage> {
               label: const Text('UPLOAD NOTE', style: TextStyle(fontWeight: FontWeight.bold)),
             )
           : null,
+    );
+  }
+
+  /// "Local Docs" action next to All Notes — opens the device's imported docs.
+  Widget _buildLocalDocsChip(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      child: ActionChip(
+        avatar: Icon(Icons.folder_open_rounded, size: 16, color: primaryColor),
+        label: const Text('Local Docs'),
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const LocalDocsPage()),
+        ),
+        backgroundColor: theme.cardColor,
+        labelStyle: TextStyle(color: primaryColor, fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: primaryColor.withOpacity(0.25)),
+        ),
+      ),
+    );
+  }
+
+  /// Semester chips merged into a single dropdown.
+  Widget _buildSemesterDropdown(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    final isSemester = _selectedFilter.startsWith('Semester');
+    final semesterNum = isSemester ? _selectedFilter.split(' ').last : 'All';
+
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: isSemester ? primaryColor.withOpacity(0.1) : theme.cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: isSemester ? primaryColor.withOpacity(0.2) : Colors.transparent),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.school_rounded, size: 16, color: isSemester ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7)),
+          const SizedBox(width: 6),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: semesterNum,
+              dropdownColor: theme.cardColor,
+              icon: Icon(Icons.arrow_drop_down_rounded, color: isSemester ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7)),
+              style: TextStyle(
+                fontSize: 13,
+                color: isSemester ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7),
+                fontWeight: isSemester ? FontWeight.bold : FontWeight.normal,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'All', child: Text('Semester: All')),
+                DropdownMenuItem(value: '1', child: Text('Semester 1')),
+                DropdownMenuItem(value: '2', child: Text('Semester 2')),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _selectedFilter = value == 'All' ? 'All Notes' : 'Semester $value';
+                });
+                _refreshNotes();
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 

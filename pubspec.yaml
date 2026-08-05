@@ -54,8 +54,19 @@ dependencies:
   flutter_markdown: ^0.7.5
   path: ^1.9.1
   share_plus: ^10.0.1
-  flutter_quill: ^11.2.0
+  flutter_quill: 11.5.1
   local_notifier: ^0.1.6
+  flutter_code_editor: ^0.3.5
+  highlight: ^0.7.0
+  excel: ^4.0.6
+  video_player: ^2.13.0
+  chewie: ^1.13.1
+  audioplayers: ^6.8.1
+  archive: ^3.6.1
+  xml: ^6.6.1
+  csv: ^8.0.0
+  open_filex: ^4.7.0
+  permission_handler: ^13.0.0
 
 
 dev_dependencies:

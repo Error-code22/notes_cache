@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'models.dart';
@@ -20,6 +21,120 @@ class NoteDetailPage extends StatefulWidget {
 
 class _NoteDetailPageState extends State<NoteDetailPage> {
   bool _isLoading = false;
+  bool _isSummarizing = false;
+  String? _summary;
+
+  @override
+  void initState() {
+    super.initState();
+    _summary = widget.note.summary;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_summary == null || _summary!.isEmpty) {
+        unawaited(_generateSummary(silent: true));
+      }
+    });
+  }
+
+  /// Resolves a note's stored file reference to a downloadable URL.
+  /// Handles both Cloudinary URLs and legacy bare Google Drive file IDs.
+  String _resolveFileUrl() {
+    final raw = widget.note.gDriveId?.trim() ?? '';
+    if (raw.isEmpty) return '';
+    if (raw.contains('://')) return raw;
+    // Legacy Google Drive file ID (no URL scheme) -> public download link
+    return 'https://drive.google.com/uc?export=download&id=$raw';
+  }
+
+  /// Determines the real file extension from the note title first
+  /// (Cloudinary URLs usually have no extension), falling back to the URL.
+  String _resolveFileExt() {
+    final lowerTitle = widget.note.title.toLowerCase();
+    final titleMatch = RegExp(r'\.(pdf|docx|doc|pptx|ppt|txt|md|csv|xlsx|xls|jpg|jpeg|png|mp4|mp3|wav|mov|mkv|m4a)$').firstMatch(lowerTitle);
+    if (titleMatch != null) return '.${titleMatch.group(1)}';
+    final url = _resolveFileUrl();
+    if (url.isNotEmpty) {
+      final pathParts = Uri.parse(url).path.split('.');
+      if (pathParts.length > 1) return '.${pathParts.last}';
+    }
+    return '.pdf';
+  }
+
+  /// Downloads the note file (if needed) and returns the local File.
+  Future<File?> _downloadNoteFile() async {
+    final url = _resolveFileUrl();
+    if (url.isEmpty) return null;
+    final noteService = context.read<NoteService>();
+    final appDirPath = await noteService.getAppDirectory();
+    final file = File('$appDirPath\\ai_doc_${widget.note.id}${_resolveFileExt()}');
+    if (!await file.exists()) {
+      final response = await http.get(Uri.parse(url));
+      debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
+      if (response.statusCode != 200) {
+        throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $url');
+      }
+      await file.writeAsBytes(response.bodyBytes);
+    }
+    return file;
+  }
+
+  /// Generates an AI summary for this note (if missing) and caches it in the DB.
+  Future<String?> _generateSummary({bool silent = false}) async {
+    if (_summary != null && _summary!.isNotEmpty) return _summary;
+    final user = context.read<AuthService>().currentUser;
+    if (user == null || user.isGuest) return null;
+    try {
+      final noteService = context.read<NoteService>();
+      String text = widget.note.content.trim();
+      if (text.isEmpty) {
+        final file = await _downloadNoteFile();
+        if (file != null) text = await noteService.extractNoteText(file);
+      }
+      if (text.length < 20) return null;
+
+      final summary = await AiChatService().summarizeNote(widget.note.title, text);
+      if (summary.isNotEmpty) {
+        await noteService.updateNoteSummary(widget.note.id, summary);
+        if (mounted) setState(() => _summary = summary);
+      }
+      return summary.isEmpty ? null : summary;
+    } catch (e) {
+      debugPrint('Summary generation error: $e');
+      if (!silent && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not generate summary right now.'), backgroundColor: Colors.orange),
+        );
+      }
+      return null;
+    }
+  }
+
+  void _showSummaryDialog(String summary) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('AI Summary'),
+        content: SingleChildScrollView(
+          child: SelectableText(summary, style: const TextStyle(fontSize: 15, height: 1.5)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleSummaryButton() async {
+    if (_summary != null && _summary!.isNotEmpty) {
+      _showSummaryDialog(_summary!);
+      return;
+    }
+    setState(() => _isSummarizing = true);
+    final summary = await _generateSummary();
+    if (mounted) setState(() => _isSummarizing = false);
+    if (summary != null && summary.isNotEmpty && mounted) {
+      _showSummaryDialog(summary);
+    }
+  }
 
   Future<void> _handleOpenNote() async {
     final user = context.read<AuthService>().currentUser!;
@@ -174,15 +289,20 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       final file = File(filePath);
 
       if (!await file.exists()) {
-        if (widget.note.gDriveId != null && widget.note.gDriveId!.isNotEmpty) {
-          // Download from R2 via public URL
-          final response = await http.get(Uri.parse(widget.note.gDriveId!));
-          if (response.statusCode != 200) throw Exception('Could not fetch file from storage');
+        final url = _resolveFileUrl();
+        if (url.isNotEmpty) {
+          // Download from Cloudinary / Google Drive
+          final response = await http.get(Uri.parse(url));
+          debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
+          if (response.statusCode != 200) throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $url');
           await file.writeAsBytes(response.bodyBytes);
         } else {
           await file.writeAsString(widget.note.content);
         }
       }
+
+      // Log the download for admin usage stats (best-effort)
+      unawaited(context.read<NoteService>().logDownload(widget.note.id, await file.length()));
 
       // Auto-index for AI search the first time this note is opened
       if (['.pdf', '.txt', '.md'].contains(ext.toLowerCase())) {
@@ -194,16 +314,30 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
           if (Platform.isWindows) {
             // This is the most reliable way to open files with their default app on Windows
             await Process.run('explorer', [file.path]);
+          } else if (Platform.isAndroid || Platform.isIOS) {
+            // open_filex uses a FileProvider content:// URI — passing a raw
+            // file:// URI to an intent crashes Android 7+ (FileUriExposedException)
+            final result = await OpenFilex.open(file.path);
+            if (mounted && result.type != ResultType.done) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(result.type == ResultType.noAppToOpen
+                      ? 'No app installed on this device can open ${ext.toUpperCase()} files.'
+                      : 'Could not open externally: ${result.message}'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
           } else {
             final uri = Uri.file(file.path);
             if (await canLaunchUrl(uri)) {
               await launchUrl(uri, mode: LaunchMode.externalApplication);
             } else {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => FileViewerPage(file: file, title: widget.note.title)));
+              Navigator.push(context, MaterialPageRoute(builder: (context) => FileViewerPage(file: file, title: widget.note.title, onSave: _uploadEditedFile)));
             }
           }
         } else {
-          Navigator.push(context, MaterialPageRoute(builder: (context) => FileViewerPage(file: file, title: widget.note.title)));
+          Navigator.push(context, MaterialPageRoute(builder: (context) => FileViewerPage(file: file, title: widget.note.title, onSave: _uploadEditedFile)));
         }
       }
     } catch (e) {
@@ -214,6 +348,26 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Save-back: re-uploads an edited file to Cloudinary and updates the note.
+  Future<void> _uploadEditedFile(File file) async {
+    try {
+      final authService = context.read<AuthService>();
+      final url = await CloudinaryService().uploadFile(
+        file: file,
+        userId: authService.currentUser?.id ?? 'guest',
+        folder: 'notes',
+      );
+      if (url == null) {
+        debugPrint('Edit save-back: Cloudinary upload failed');
+        return;
+      }
+      final updated = await context.read<NoteService>().updateNoteFileUrl(widget.note.id, url);
+      debugPrint('Edit save-back: ${updated ? 'note URL updated' : 'note URL update FAILED'}');
+    } catch (e) {
+      debugPrint('Edit save-back error: $e');
     }
   }
 
@@ -287,13 +441,11 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
               onPressed: () => _deleteNote(context),
             ),
           IconButton(
-            icon: const Icon(Icons.auto_awesome, color: Colors.amber),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(widget.note.summary != null ? 'This summary was provided by the uploader.' : 'AI Summary feature coming soon!')),
-              );
-            },
-            tooltip: widget.note.summary != null ? 'Uploader Summary' : 'AI Summary',
+            icon: _isSummarizing
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.auto_awesome, color: Colors.amber),
+            onPressed: _isSummarizing ? null : _handleSummaryButton,
+            tooltip: (_summary != null && _summary!.isNotEmpty) ? 'View AI Summary' : 'Generate AI Summary',
           ),
         ],
       ),
@@ -346,8 +498,8 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
               ],
             ),
             const Divider(height: 40),
-            if (widget.note.summary != null && widget.note.summary!.isNotEmpty) ...[
-              _buildSummaryCard(theme, widget.note.summary!),
+            if (_summary != null && _summary!.isNotEmpty) ...[
+              _buildSummaryCard(theme, _summary!),
               const SizedBox(height: 24),
             ],
             Text(
