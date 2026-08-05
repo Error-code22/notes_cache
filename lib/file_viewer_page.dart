@@ -8,15 +8,29 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'editors/text_code_editor.dart';
+import 'editors/rich_text_editor.dart';
+import 'editors/docx_editor_page.dart';
+import 'editors/pptx_viewer_page.dart';
+import 'editors/spreadsheet_editor.dart';
+import 'editors/image_editor_page.dart';
+import 'editors/video_player_page.dart';
+import 'editors/audio_player_page.dart';
+
+enum _FileKind { pdf, text, markdown, code, csv, docx, pptx, xlsx, image, video, audio, unsupported }
 
 // ─────────────────────────────────────────────────────────────
-// Main Viewer Page — entry point from NoteDetailPage
+// Main Viewer/Editor Page — entry point from NoteDetailPage.
+// Dispatches to the right editor for every supported format.
 // ─────────────────────────────────────────────────────────────
 class FileViewerPage extends StatefulWidget {
   final File file;
   final String title;
+  final Future<void> Function(File file)? onSave;
 
-  const FileViewerPage({super.key, required this.file, required this.title});
+  const FileViewerPage({super.key, required this.file, required this.title, this.onSave});
 
   @override
   State<FileViewerPage> createState() => _FileViewerPageState();
@@ -24,8 +38,6 @@ class FileViewerPage extends StatefulWidget {
 
 class _FileViewerPageState extends State<FileViewerPage> {
   late String _extension;
-  bool _isEditing = false;
-  late TextEditingController _textController;
   final PdfViewerController _pdfController = PdfViewerController();
   int _currentPage = 1;
   int _totalPages = 0;
@@ -35,13 +47,10 @@ class _FileViewerPageState extends State<FileViewerPage> {
   void initState() {
     super.initState();
     _extension = p.extension(widget.file.path).toLowerCase();
-    _textController = TextEditingController();
-    if (_isTextFile()) _loadTextContent();
   }
 
   @override
   void dispose() {
-    _textController.dispose();
     // Reset to portrait when leaving
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     super.dispose();
@@ -56,41 +65,81 @@ class _FileViewerPageState extends State<FileViewerPage> {
     );
   }
 
-  bool _isTextFile() => ['.txt', '.md', '.py', '.java', '.cpp', '.dart', '.json', '.html', '.csv'].contains(_extension);
-  bool _isPdf() => _extension == '.pdf';
-  bool _isImage() => ['.jpg', '.jpeg', '.png'].contains(_extension);
-
-  Future<void> _loadTextContent() async {
-    final content = await widget.file.readAsString();
-    if (mounted) setState(() => _textController.text = content);
-  }
-
-  Future<void> _saveTextContent() async {
-    await widget.file.writeAsString(_textController.text);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Changes saved locally')));
-      setState(() => _isEditing = false);
-    }
-  }
-
-  void _openGallery(int pageNumber) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PdfGalleryPage(
-          file: widget.file,
-          initialPage: pageNumber,
-          title: widget.title,
-        ),
-      ),
-    );
+  _FileKind get _kind {
+    if (_extension == '.pdf') return _FileKind.pdf;
+    if (['.docx'].contains(_extension)) return _FileKind.docx;
+    if (['.pptx', '.ppt'].contains(_extension)) return _FileKind.pptx;
+    if (['.xlsx'].contains(_extension)) return _FileKind.xlsx;
+    if (['.md', '.markdown'].contains(_extension)) return _FileKind.markdown;
+    if (['.py', '.java', '.cpp', '.cc', '.c', '.h', '.dart', '.json', '.html', '.htm', '.css', '.js', '.ts', '.sql', '.sh', '.bash', '.yaml', '.yml', '.xml', '.svg', '.log'].contains(_extension)) return _FileKind.code;
+    if (['.csv'].contains(_extension)) return _FileKind.csv;
+    if (['.txt'].contains(_extension)) return _FileKind.text;
+    if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].contains(_extension)) return _FileKind.image;
+    if (['.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v'].contains(_extension)) return _FileKind.video;
+    if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'].contains(_extension)) return _FileKind.audio;
+    return _FileKind.unsupported;
   }
 
   @override
   Widget build(BuildContext context) {
+    switch (_kind) {
+      case _FileKind.docx:
+        return DocxEditorPage(file: widget.file, title: widget.title, onSave: widget.onSave);
+      case _FileKind.pptx:
+        return PptxViewerPage(file: widget.file, title: widget.title);
+      case _FileKind.xlsx:
+        return SpreadsheetEditorPage(file: widget.file, title: widget.title, onSave: widget.onSave);
+      case _FileKind.markdown:
+      case _FileKind.text:
+      case _FileKind.code:
+      case _FileKind.csv:
+        return TextCodeEditorPage(file: widget.file, title: widget.title, onSave: widget.onSave);
+      case _FileKind.video:
+        return VideoPlayerPage(file: widget.file, title: widget.title);
+      case _FileKind.audio:
+        return AudioPlayerPage(file: widget.file, title: widget.title);
+      case _FileKind.image:
+        return _buildImageScaffold(context);
+      case _FileKind.pdf:
+        return _buildPdfScaffold(context);
+      case _FileKind.unsupported:
+        return _buildUnsupportedScaffold(context);
+    }
+  }
+
+  // ── IMAGES ────────────────────────────────────────────────
+  Widget _buildImageScaffold(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: Text(widget.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+        backgroundColor: theme.colorScheme.surface,
+        elevation: 0,
+        actions: [
+          IconButton(
+            tooltip: 'Edit Image',
+            icon: Icon(Icons.edit_rounded, color: theme.colorScheme.primary),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ImageEditorPage(file: widget.file, title: widget.title, onSave: widget.onSave),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: PhotoView(
+        imageProvider: FileImage(widget.file),
+        backgroundDecoration: BoxDecoration(color: theme.scaffoldBackgroundColor),
+      ),
+    );
+  }
+
+  // ── PDF ───────────────────────────────────────────────────
+  Widget _buildPdfScaffold(BuildContext context) {
     final theme = Theme.of(context);
     final primaryColor = theme.colorScheme.primary;
-
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -98,32 +147,34 @@ class _FileViewerPageState extends State<FileViewerPage> {
         backgroundColor: theme.colorScheme.surface,
         elevation: 0,
         actions: [
-          if (_isTextFile())
-            IconButton(
-              icon: Icon(_isEditing ? Icons.save_rounded : Icons.edit_rounded, color: primaryColor),
-              onPressed: () => _isEditing ? _saveTextContent() : setState(() => _isEditing = true),
+          IconButton(
+            tooltip: 'Gallery Mode',
+            icon: Icon(Icons.photo_library_rounded, color: primaryColor),
+            onPressed: () => _openGallery(_currentPage),
+          ),
+          IconButton(
+            tooltip: _isLandscape ? 'Switch to Portrait' : 'Switch to Landscape',
+            icon: Icon(
+              _isLandscape ? Icons.stay_current_portrait : Icons.stay_current_landscape,
+              color: primaryColor,
             ),
-          if (_isPdf()) ...[
-            IconButton(
-              tooltip: 'Gallery Mode',
-              icon: Icon(Icons.photo_library_rounded, color: primaryColor),
-              onPressed: () => _openGallery(_currentPage),
-            ),
-            IconButton(
-              tooltip: _isLandscape ? 'Switch to Portrait' : 'Switch to Landscape',
-              icon: Icon(
-                _isLandscape ? Icons.stay_current_portrait : Icons.stay_current_landscape,
-                color: primaryColor,
-              ),
-              onPressed: _toggleOrientation,
-            ),
-          ],
+            onPressed: _toggleOrientation,
+          ),
         ],
       ),
       body: Stack(
         children: [
-          _buildViewer(theme, primaryColor),
-          if (_isPdf()) _buildPdfControls(theme, primaryColor),
+          PdfViewer.file(
+            widget.file.path,
+            controller: _pdfController,
+            params: PdfViewerParams(
+              onDocumentChanged: (doc) => setState(() => _totalPages = doc?.pages.length ?? 0),
+              onPageChanged: (page) => setState(() => _currentPage = page ?? 1),
+              backgroundColor: theme.scaffoldBackgroundColor,
+              margin: 16.0,
+            ),
+          ),
+          _buildPdfControls(theme, primaryColor),
         ],
       ),
     );
@@ -170,84 +221,50 @@ class _FileViewerPageState extends State<FileViewerPage> {
     );
   }
 
-  Widget _buildViewer(ThemeData theme, Color primaryColor) {
-    if (_isPdf()) {
-      return PdfViewer.file(
-        widget.file.path,
-        controller: _pdfController,
-        params: PdfViewerParams(
-          onDocumentChanged: (doc) => setState(() => _totalPages = doc?.pages.length ?? 0),
-          onPageChanged: (page) => setState(() => _currentPage = page ?? 1),
-          backgroundColor: theme.scaffoldBackgroundColor,
-          margin: 16.0,
+  void _openGallery(int pageNumber) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PdfGalleryPage(
+          file: widget.file,
+          initialPage: pageNumber,
+          title: widget.title,
         ),
-      );
-    } else if (_isImage()) {
-      return PhotoView(
-        imageProvider: FileImage(widget.file),
-        backgroundDecoration: BoxDecoration(color: theme.scaffoldBackgroundColor),
-      );
-    } else if (_isTextFile()) {
-      if (_isEditing) {
-        return Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: TextField(
-            controller: _textController,
-            maxLines: null,
-            expands: true,
-            style: TextStyle(color: theme.colorScheme.onSurface, fontFamily: 'monospace'),
-            decoration: const InputDecoration(border: InputBorder.none, hintText: 'Start writing...'),
-          ),
-        );
-      } else {
-        return Markdown(
-          data: _textController.text,
-          styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-            p: TextStyle(color: theme.colorScheme.onSurface, fontSize: 16, height: 1.6),
-            h1: TextStyle(color: primaryColor, fontWeight: FontWeight.bold),
-            h2: TextStyle(color: primaryColor, fontWeight: FontWeight.bold),
-            code: TextStyle(backgroundColor: primaryColor.withOpacity(0.1), fontFamily: 'monospace'),
-          ),
-        );
-      }
-    } else {
-      final isOffice = _extension.contains(RegExp(r'\.(doc|docx|ppt|pptx|xls|xlsx)$'));
-      final isMedia = _extension.contains(RegExp(r'\.(mp4|mp3|wav|mov|mkv|m4a)$'));
-      
-      IconData icon = Icons.insert_drive_file_outlined;
-      String typeTitle = 'Unsupported format';
-      String typeDesc = 'This format ($_extension) cannot be viewed inside the app.';
+      ),
+    );
+  }
 
-      if (isOffice) {
-        icon = Icons.description_rounded;
-        typeTitle = 'Office Document';
-        typeDesc = 'Word, Excel, and PowerPoint files must be opened in their native apps.';
-      } else if (isMedia) {
-        icon = Icons.play_circle_fill_rounded;
-        typeTitle = 'Media File';
-        typeDesc = 'Audio and video files should be played using your device\'s media player.';
-      }
-
-      return Center(
+  // ── UNSUPPORTED ───────────────────────────────────────────
+  Widget _buildUnsupportedScaffold(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: Text(widget.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        backgroundColor: theme.colorScheme.surface,
+        elevation: 0,
+      ),
+      body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 80, color: theme.colorScheme.primary.withOpacity(0.2)),
+              Icon(Icons.insert_drive_file_outlined, size: 80, color: primaryColor.withOpacity(0.2)),
               const SizedBox(height: 24),
-              Text(typeTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const Text('Unsupported format', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
               Text(
-                typeDesc,
+                'This format ($_extension) cannot be opened inside the app.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6)),
               ),
               const SizedBox(height: 32),
               ElevatedButton.icon(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('GO BACK & USE DEVICE VIEWER'),
+                onPressed: _openExternal,
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('OPEN WITH DEVICE VIEWER'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -256,7 +273,42 @@ class _FileViewerPageState extends State<FileViewerPage> {
             ],
           ),
         ),
-      );
+      ),
+    );
+  }
+
+  Future<void> _openExternal() async {
+    try {
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        await Process.run('explorer', [widget.file.path], runInShell: true);
+      } else if (Platform.isAndroid || Platform.isIOS) {
+        // open_filex exposes a content:// URI via FileProvider —
+        // raw file:// intents crash Android 7+ (FileUriExposedException)
+        final result = await OpenFilex.open(widget.file.path);
+        if (mounted && result.type != ResultType.done) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.type == ResultType.noAppToOpen
+                  ? 'No app installed on this device can open $_extension files.'
+                  : 'Could not open externally: ${result.message}'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      } else {
+        final uri = Uri.file(widget.file.path);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          throw Exception('No app can open this file');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open externally: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 }
@@ -277,6 +329,7 @@ class PdfGalleryPage extends StatefulWidget {
   });
 
   @override
+
   State<PdfGalleryPage> createState() => _PdfGalleryPageState();
 }
 

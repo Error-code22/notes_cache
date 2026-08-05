@@ -42,10 +42,48 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   bool _isSaving = false;
 
+  // Cloudinary usage tracking
+  Map<String, dynamic>? _cloudinaryUsage;
+  bool _usageLoading = true;
+
+  // Usage charts (from DB)
+  List<Map<String, dynamic>> _downloadStats = [];
+  List<Map<String, dynamic>> _storageGrowth = [];
+  bool _statsLoading = true;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+    _loadCloudinaryUsage();
+    _loadUsageCharts();
+  }
+
+  Future<void> _loadCloudinaryUsage() async {
+    try {
+      final response = await Supabase.instance.client.functions.invoke('cloudinary-usage');
+      final data = response.data;
+      if (!mounted) return;
+      setState(() {
+        _cloudinaryUsage = data is Map ? Map<String, dynamic>.from(data) : null;
+        _usageLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Cloudinary usage fetch error: $e');
+      if (mounted) setState(() => _usageLoading = false);
+    }
+  }
+
+  Future<void> _loadUsageCharts() async {
+    final noteService = context.read<NoteService>();
+    final downloads = await noteService.getDownloadStats();
+    final growth = await noteService.getStorageGrowth();
+    if (!mounted) return;
+    setState(() {
+      _downloadStats = downloads;
+      _storageGrowth = growth;
+      _statsLoading = false;
+    });
   }
 
   Future<void> _loadData() async {
@@ -184,6 +222,139 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 Expanded(child: _numberField('Daily Image Limit', _imageLimitController)),
               ],
             ),
+          ]),
+
+          const SizedBox(height: 12),
+
+          // ===== CLOUDINARY STORAGE =====
+          _sectionCard(theme, Icons.cloud_outlined, 'Cloudinary Storage', [
+            if (_usageLoading)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_cloudinaryUsage == null || _cloudinaryUsage!['error'] != null)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Text(
+                      _cloudinaryUsage?['error']?.toString() ?? 'Could not load usage data.',
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () {
+                        setState(() => _usageLoading = true);
+                        _loadCloudinaryUsage();
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              _usageBar(
+                'Monthly credits used',
+                '${(_cloudinaryUsage!['creditsUsedPercent'] ?? 0).toStringAsFixed(2)}%',
+                (_cloudinaryUsage!['creditsUsedPercent'] ?? 0).toDouble() / 100,
+                Icons.account_balance_wallet_outlined,
+                Colors.indigo,
+              ),
+              const SizedBox(height: 8),
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Text(
+                  'Free tier = 25 credits/month. Each credit = 1GB storage OR 1GB bandwidth (shared pool).',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _usageBar(
+                'Storage',
+                '${((_cloudinaryUsage!['storageBytes'] ?? 0) / 1000000000).toStringAsFixed(2)} GB',
+                (_cloudinaryUsage!['storageCreditsPercent'] ?? 0).toDouble() / 100,
+                Icons.storage_rounded,
+                Colors.blue,
+              ),
+              const SizedBox(height: 16),
+              _usageBar(
+                'Bandwidth (this month)',
+                '${((_cloudinaryUsage!['bandwidthBytes'] ?? 0) / 1000000000).toStringAsFixed(2)} GB',
+                (_cloudinaryUsage!['bandwidthCreditsPercent'] ?? 0).toDouble() / 100,
+                Icons.network_check_rounded,
+                Colors.green,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Icon(Icons.workspace_premium_outlined, size: 16, color: theme.colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Text('Plan: ${_cloudinaryUsage!['plan'] ?? 'Free'}',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: theme.colorScheme.primary)),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _loadCloudinaryUsage,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Refresh', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ],
+          ]),
+
+          const SizedBox(height: 12),
+
+          // ===== USAGE CHARTS (last 14 days) =====
+          _sectionCard(theme, Icons.bar_chart_rounded, 'Usage Charts (last 14 days)', [
+            if (_statsLoading)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else ...[
+              const Text('Downloads & Bandwidth', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              _barChart(
+                values: [
+                  for (final d in _downloadStats)
+                    (d['day'].toString().substring(5), (d['bandwidth_bytes'] ?? 0).toDouble()),
+                ],
+                format: (v) => v >= 1000000
+                    ? '${(v / 1000000).toStringAsFixed(1)} MB'
+                    : v >= 1000
+                        ? '${(v / 1000).toStringAsFixed(0)} KB'
+                        : '${v.round()} B',
+                color: Colors.green,
+              ),
+              const SizedBox(height: 16),
+              const Text('Uploads & Storage Growth', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              _barChart(
+                values: [
+                  for (final d in _storageGrowth)
+                    (d['day'].toString().substring(5), (d['storage_bytes'] ?? 0).toDouble()),
+                ],
+                format: (v) => v >= 1000000
+                    ? '${(v / 1000000).toStringAsFixed(1)} MB'
+                    : v >= 1000
+                        ? '${(v / 1000).toStringAsFixed(0)} KB'
+                        : '${v.round()} B',
+                color: Colors.blue,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _loadUsageCharts,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Refresh', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ],
           ]),
 
           const SizedBox(height: 12),
@@ -357,6 +528,91 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         alignLabelWithHint: true,
         contentPadding: const EdgeInsets.all(12),
+      ),
+    );
+  }
+
+  Widget _usageBar(String label, String valueText, double fraction, IconData icon, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            Text(valueText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: fraction.clamp(0.0, 1.0),
+            minHeight: 8,
+            backgroundColor: color.withOpacity(0.12),
+            valueColor: AlwaysStoppedAnimation(fraction >= 0.8 ? Colors.red : color),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${(fraction * 100).toStringAsFixed(2)}% of monthly credits',
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  /// Simple dependency-free bar chart: one bar per day.
+  Widget _barChart({
+    required List<(String label, double value)> values,
+    required String Function(double) format,
+    required Color color,
+  }) {
+    if (values.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: Text('No data yet', style: TextStyle(fontSize: 12, color: Colors.grey)),
+      );
+    }
+    final maxValue = values.map((v) => v.$2).fold(0.0, (a, b) => a > b ? a : b);
+    final chartHeight = 140.0;
+
+    return SizedBox(
+      height: chartHeight + 30,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (final (label, value) in values)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Tooltip(
+                  message: '$label: ${format(value)}',
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Container(
+                        height: maxValue == 0 ? 2 : (chartHeight * (value / maxValue)).clamp(2.0, chartHeight),
+                        decoration: BoxDecoration(
+                          color: value > 0 ? color.withOpacity(0.75) : color.withOpacity(0.12),
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        label,
+                        style: const TextStyle(fontSize: 9, color: Colors.grey),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
