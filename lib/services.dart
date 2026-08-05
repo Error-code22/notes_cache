@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'editors/office_docx.dart';
+import 'editors/office_pptx.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -577,6 +579,98 @@ class NoteService {
       });
       return true;
     } catch (e) { debugPrint('saveNote error: $e'); return false; }
+  }
+
+  /// Updates a note's stored file URL after an edit re-upload.
+  Future<bool> updateNoteFileUrl(String noteId, String gDriveId) async {
+    try {
+      await _supabase.from('notes').update({'gdrive_id': gDriveId}).eq('id', noteId);
+      return true;
+    } catch (e) {
+      debugPrint('updateNoteFileUrl error: $e');
+      return false;
+    }
+  }
+
+  /// Updates a note's AI-generated summary.
+  Future<bool> updateNoteSummary(String noteId, String summary) async {
+    try {
+      await _supabase.from('notes').update({'summary': summary}).eq('id', noteId);
+      return true;
+    } catch (e) {
+      debugPrint('updateNoteSummary error: $e');
+      return false;
+    }
+  }
+
+  /// Logs a note download for the admin usage charts. Best-effort.
+  Future<void> logDownload(String noteId, int fileSize) async {
+    try {
+      await _supabase.rpc('log_download', params: {'p_note_id': noteId, 'p_file_size': fileSize});
+    } catch (e) {
+      debugPrint('logDownload error: $e');
+    }
+  }
+
+  /// Daily download/bandwidth buckets for the admin charts.
+  Future<List<Map<String, dynamic>>> getDownloadStats({int days = 14}) async {
+    try {
+      final data = await _supabase.rpc('get_download_stats', params: {'p_days': days});
+      return (data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('getDownloadStats error: $e');
+      return [];
+    }
+  }
+
+  /// Daily upload/storage-growth buckets from the notes table.
+  Future<List<Map<String, dynamic>>> getStorageGrowth({int days = 14}) async {
+    try {
+      final data = await _supabase.rpc('get_storage_growth', params: {'p_days': days});
+      return (data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('getStorageGrowth error: $e');
+      return [];
+    }
+  }
+
+  /// Extracts up to [maxChars] of text from a downloaded note file
+  /// (used for AI summaries). Supports PDF, docx, pptx and text files.
+  /// Falls back to raw text if the structured parser fails.
+  Future<String> extractNoteText(File file, {int maxChars = 9000}) async {
+    try {
+      final ext = file.path.split('.').last.toLowerCase();
+      String text;
+      if (ext == 'pdf') {
+        try {
+          final doc = await PdfDocument.openFile(file.path);
+          try {
+            final buffer = StringBuffer();
+            for (var i = 0; i < doc.pages.length; i++) {
+              buffer.writeln((await doc.pages[i].loadText()).fullText);
+              if (buffer.length >= maxChars) break;
+            }
+            text = buffer.toString();
+          } finally {
+            await doc.dispose();
+          }
+        } catch (e) {
+          debugPrint('PDF text extract failed (trying raw text): $e');
+          text = await file.readAsString();
+        }
+      } else if (ext == 'docx') {
+        text = (await DocxService.readParagraphs(file)).map((p) => p.map((r) => r.text).join()).join('\n');
+      } else if (ext == 'pptx' || ext == 'ppt') {
+        text = await PptxService.toMarkdown(file);
+      } else {
+        text = await file.readAsString();
+      }
+      final trimmed = text.trim();
+      return trimmed.length > maxChars ? trimmed.substring(0, maxChars) : trimmed;
+    } catch (e) {
+      debugPrint('extractNoteText error: $e');
+      return '';
+    }
   }
 
   /// Adds a document's text to the AI search pile (chunks table) so Notesy
@@ -1154,11 +1248,26 @@ class AiChatService {
     await prefs.setInt('ai_daily_${userId}_$today', current + 1);
   }
 
-  // --- AI Chat History (Supabase) ---
+  // --- AI Chat History (Supabase for signed-in, local for guests) ---
   static const int _maxHistoryMessages = 50; // Keep last 50 in DB
   static const int _contextMessages = 5; // Send last 5 to Groq
+  static const String _guestHistoryKey = 'guest_ai_history';
+
+  bool _isGuest(String userId) => userId == 'guest_user';
 
   Future<List<Map<String, String>>> loadChatHistory(String userId) async {
+    if (_isGuest(userId)) {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_guestHistoryKey);
+      if (raw == null) return [];
+      try {
+        final list = jsonDecode(raw) as List<dynamic>;
+        return list.map((m) => Map<String, String>.from(m)).toList();
+      } catch (e) {
+        debugPrint('Load guest AI history error: $e');
+        return [];
+      }
+    }
     try {
       final supabase = Supabase.instance.client;
       final result = await supabase
@@ -1178,13 +1287,18 @@ class AiChatService {
   }
 
   Future<void> saveChatHistory(String userId, List<Map<String, String>> messages) async {
+    // Keep only last N messages
+    final toSave = messages.length > _maxHistoryMessages
+        ? messages.sublist(messages.length - _maxHistoryMessages)
+        : messages;
+
+    if (_isGuest(userId)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_guestHistoryKey, jsonEncode(toSave));
+      return;
+    }
     try {
       final supabase = Supabase.instance.client;
-      // Keep only last N messages
-      final toSave = messages.length > _maxHistoryMessages
-          ? messages.sublist(messages.length - _maxHistoryMessages)
-          : messages;
-
       await supabase.from('ai_chat_history').upsert({
         'user_id': userId,
         'messages': toSave,
@@ -1196,6 +1310,11 @@ class AiChatService {
   }
 
   Future<void> clearChatHistory(String userId) async {
+    if (_isGuest(userId)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_guestHistoryKey);
+      return;
+    }
     try {
       final supabase = Supabase.instance.client;
       await supabase.from('ai_chat_history').delete().eq('user_id', userId);
@@ -1232,6 +1351,31 @@ class AiChatService {
     } catch (e) {
       debugPrint('Notesy error: $e');
       rethrow;
+    }
+  }
+
+  /// Requests an AI summary of a document's text from the Notesy function.
+  /// Returns '' on failure — summaries are best-effort.
+  Future<String> summarizeNote(String title, String text) async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      final response = await Supabase.instance.client.functions.invoke(
+        'notesy',
+        body: {
+          'action': 'summarize',
+          'title': title,
+          'content': text,
+          'userId': user?.id ?? 'guest_user',
+        },
+      );
+
+      final rawData = response.data;
+      final data = rawData is String ? jsonDecode(rawData) : rawData;
+      if (data is Map && data['content'] is String) return data['content'] as String;
+      return '';
+    } catch (e) {
+      debugPrint('Notesy summary error: $e');
+      return '';
     }
   }
 }

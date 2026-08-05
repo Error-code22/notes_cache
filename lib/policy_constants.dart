@@ -25,7 +25,12 @@ By accessing or using NotesCache, you agree to be bound by these terms. If you a
 - No harassment, spam, or unauthorized "scraping" of notes.
 - Do not attempt to bypass security or AI limits.
 
-6. Termination
+6. Device Documents (Local Docs)
+- The app can connect to your device storage (with your explicit, one-time permission) to find and open your own documents.
+- Opened documents are read and edited in place on your device. The app never uploads or copies them unless you explicitly choose to.
+- "Share to library" uploads a document you selected to the shared NotesCache library. This is a deliberate, per-file action you confirm before it happens. By sharing, you confirm you own the document and agree to it being visible to other app users.
+
+7. Termination
 NotesCache reserves the right to suspend accounts that violate these terms.
 """;
 
@@ -51,10 +56,15 @@ Effective Date: April 28, 2026
 4. Security
 We use industry-standard encryption (via Supabase) to protect your data. Your files are stored in secure cloud buckets.
 
-5. Your Choices
+5. Device Documents (Local Docs)
+- With your explicit permission, the app may scan your device for documents (PDF, Word, PowerPoint, Excel, text files). Photos and media are never read.
+- Documents you open are processed on your device. They are not uploaded, copied, or shared unless you take a specific action to do so.
+- You can revoke device access at any time in your device settings.
+
+6. Your Choices
 You can update your profile information in the settings or contact support to request account deletion.
 
-6. Updates
+7. Updates
 We may update this policy periodically. Continued use of the app implies acceptance of any changes.
 """;
 }
