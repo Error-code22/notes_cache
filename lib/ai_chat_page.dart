@@ -221,7 +221,9 @@ class _AiChatPageState extends State<AiChatPage> {
         _saveChatHistory();
         _scrollToBottom();
       }
-    } catch (e) {}
+    } catch (e) {
+      debugPrint('Error picking or processing file: $e');
+    }
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -238,7 +240,9 @@ class _AiChatPageState extends State<AiChatPage> {
         _saveChatHistory();
         _scrollToBottom();
       }
-    } catch (e) {}
+    } catch (e) {
+      debugPrint('Error picking or processing image: $e');
+    }
   }
 
   @override
@@ -383,12 +387,10 @@ class _AiChatPageState extends State<AiChatPage> {
         ),
         const SizedBox(height: 12),
         Text(
-          'Pick a study tool below or ask for homework help, summaries, quizzes, revision plans, and note-based explanations.',
+          'Ask me anything about your notes, homework, or study topics.',
           textAlign: TextAlign.center,
           style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.65)),
         ),
-        const SizedBox(height: 28),
-        _buildMemoryPanel(theme, isEnabled: isEnabled && !_isLoading),
       ],
     );
   }
@@ -480,18 +482,6 @@ class _AiChatPageState extends State<AiChatPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: _studyActions
-                  .map((action) => Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _studyActionChip(action, theme, isEnabled: !isLimitReached && !_isLoading),
-                      ))
-                  .toList(),
-            ),
-          ),
-          const SizedBox(height: 10),
           Row(children: [
             Expanded(
               child: TextField(

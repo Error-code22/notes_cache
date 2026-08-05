@@ -4,13 +4,15 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:pdfrx/pdfrx.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:local_notifier/local_notifier.dart';
-import 'dart:convert';
 import 'google_drive_auth_service.dart';
 import 'models.dart';
 
@@ -18,15 +20,18 @@ class ThemeProvider extends ChangeNotifier {
   static const String _themeKey = 'theme_mode';
   static const String _colorKey = 'theme_color';
   static const String _fontKey = 'theme_font';
+  static const String _textScaleKey = 'settings_text_scale';
 
   ThemeMode _themeMode = ThemeMode.system;
   Color _seedColor = const Color(0xFF1A237E);
   String _fontFamily = 'Inter';
+  double _textScale = 1.0;
   String? _currentUserId;
 
   ThemeMode get themeMode => _themeMode;
   Color get seedColor => _seedColor;
   String get fontFamily => _fontFamily;
+  double get textScale => _textScale;
 
   ThemeProvider() { _loadSettings(); }
   void setUserId(String? id) { _currentUserId = id; }
@@ -46,6 +51,7 @@ class ThemeProvider extends ChangeNotifier {
     final colorVal = prefs.getInt(_colorKey);
     if (colorVal != null) _seedColor = Color(colorVal);
     _fontFamily = prefs.getString(_fontKey) ?? 'Inter';
+    _textScale = prefs.getDouble(_textScaleKey) ?? 1.0;
     notifyListeners();
   }
 
@@ -65,6 +71,11 @@ class ThemeProvider extends ChangeNotifier {
     _fontFamily = f; notifyListeners();
     (await SharedPreferences.getInstance()).setString(_fontKey, f);
     _syncToSupabase();
+  }
+
+  Future<void> setTextScale(double s) async {
+    _textScale = s; notifyListeners();
+    (await SharedPreferences.getInstance()).setDouble(_textScaleKey, s);
   }
 
   Future<void> _syncToSupabase() async {
@@ -103,7 +114,13 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _recoverSession() async {
     final session = _supabase.auth.currentSession;
-    if (session != null) await _fetchUserProfile(session.user);
+    if (session != null) {
+      await _fetchUserProfile(session.user);
+    } else {
+      // No signed-in user: drop straight into guest mode so the app opens
+      // to the dashboard instead of a sign-in screen.
+      _enterGuestMode();
+    }
   }
 
   Future<void> signIn(String e, String p) async {
@@ -176,24 +193,24 @@ class AuthService extends ChangeNotifier {
 
   Future<void> signOut() async {
     await _supabase.auth.signOut();
-    _currentUser = null;
-    if (_themeProvider != null) _themeProvider!.setUserId(null);
-    notifyListeners();
+    _enterGuestMode();
   }
 
   Future<List<UserProfile>> getAllUsers() async {
+    if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin)) return [];
     try {
       final List<dynamic> data = await _supabase.from('profiles').select();
       return data.map((item) => UserProfile.fromMap(item, item['email'] ?? '')).toList();
-    } catch (e) { return []; }
+    } catch (e) { debugPrint('getAllUsers error: $e'); return []; }
   }
 
   Future<bool> updateUserRoles(String uid, List<UserRole> roles) async {
+    if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin)) return false;
     try {
       final roleString = roles.map((r) => r.name).join(',');
       await _supabase.from('profiles').update({'role': roleString}).eq('id', uid);
       return true;
-    } catch (e) { return false; }
+    } catch (e) { debugPrint('updateUserRoles error: $e'); return false; }
   }
 
   Future<void> ensureFriendCode() async {
@@ -223,7 +240,9 @@ class AuthService extends ChangeNotifier {
       final data = await _supabase.from('profiles').select().eq('id', _currentUser!.id).single();
       _currentUser = UserProfile.fromMap(data, _currentUser!.email);
       notifyListeners();
-    } catch (e) {}
+    } catch (e) {
+      debugPrint('updateProfileDetails error: $e');
+    }
   }
 
   Future<void> updateProfilePublic(bool isPublic) async {
@@ -238,29 +257,53 @@ class AuthService extends ChangeNotifier {
 
   Future<bool> deleteAccount() async {
     if (_currentUser == null) return false;
+    final uid = _currentUser!.id;
     try {
       // Delete avatar from storage
       try {
         final ext = ['jpg', 'jpeg', 'png', 'webp'];
         for (final e in ext) {
-          await _supabase.storage.from('avatars').remove(['${_currentUser!.id}/avatar.$e']);
+          await _supabase.storage.from('avatars').remove(['$uid/avatar.$e']);
         }
-      } catch (_) {}
+      } catch (_) { /* Safe to ignore: avatar may not exist yet */ }
 
-      // Delete profile data
-      await _supabase.from('profiles').delete().eq('id', _currentUser!.id);
+      // Delete AI chat history
+      try {
+        await _supabase.from('ai_chat_history').delete().eq('user_id', uid);
+      } catch (_) { /* Table may not exist */ }
+
+      // Delete friend relationships
+      try {
+        await _supabase.from('friends').delete().eq('user_id', uid);
+        await _supabase.from('friends').delete().eq('friend_id', uid);
+      } catch (_) { /* Table may not exist */ }
+
+      // Remove user from chat room memberships
+      try {
+        final rooms = await _supabase.from('chat_rooms').select('id, member_ids');
+        for (final room in rooms) {
+          final members = List<String>.from(room['member_ids'] ?? []);
+          if (members.contains(uid)) {
+            members.remove(uid);
+            await _supabase.from('chat_rooms').update({'member_ids': members}).eq('id', room['id']);
+          }
+        }
+      } catch (_) { /* Best effort */ }
 
       // Delete user notes
-      await _supabase.from('notes').delete().eq('user_id', _currentUser!.id);
+      await _supabase.from('notes').delete().eq('user_id', uid);
 
       // Delete chat messages sent by user
-      await _supabase.from('chat_messages').delete().eq('sender_id', _currentUser!.id);
+      await _supabase.from('chat_messages').delete().eq('sender_id', uid);
 
       // Delete AI usage
-      await _supabase.from('user_ai_usage').delete().eq('user_id', _currentUser!.id);
+      await _supabase.from('user_ai_usage').delete().eq('user_id', uid);
 
       // Delete feedback
-      await _supabase.from('app_feedback').delete().eq('user_id', _currentUser!.id);
+      await _supabase.from('app_feedback').delete().eq('user_id', uid);
+
+      // Delete profile data
+      await _supabase.from('profiles').delete().eq('id', uid);
 
       // Sign out
       await _supabase.auth.signOut();
@@ -281,7 +324,7 @@ class AuthService extends ChangeNotifier {
       _currentUser = UserProfile.fromMap(data, _currentUser!.email);
       notifyListeners();
       return true;
-    } catch (e) { return false; }
+    } catch (e) { debugPrint('updateYearLevel error: $e'); return false; }
   }
 
   Future<bool> updateProfileImage(File f) async {
@@ -314,10 +357,10 @@ class AuthService extends ChangeNotifier {
       final userId = _currentUser!.id;
       final storagePath = '$userId/avatar.$ext';
 
-      // Delete old avatar if exists (ignore errors)
+      // Delete old avatar if exists (ignore errors — file may not exist)
       try {
         await _supabase.storage.from('avatars').remove([storagePath]);
-      } catch (_) {}
+      } catch (_) { /* Safe to ignore: upsert will overwrite anyway */ }
 
       // Upload new avatar
       await _supabase.storage.from('avatars').upload(
@@ -361,22 +404,26 @@ class AuthService extends ChangeNotifier {
   Future<void> signInAsGuest() async {
     _setLoading(true);
     try {
-      // Create a dummy guest profile
-      _currentUser = UserProfile(
-        id: 'guest_user',
-        email: 'guest@notescache.demo',
-        fullName: 'Demo Student',
-        roles: [UserRole.student],
-        yearLevel: 1,
-        isGuest: true,
-      );
-      if (_themeProvider != null) {
-        _themeProvider!.setUserId('guest_user');
-      }
-      notifyListeners();
+      _enterGuestMode();
     } finally {
       _setLoading(false);
     }
+  }
+
+  void _enterGuestMode() {
+    // Create a dummy guest profile
+    _currentUser = UserProfile(
+      id: 'guest_user',
+      email: 'guest@notescache.demo',
+      fullName: 'Demo Student',
+      roles: [UserRole.student],
+      yearLevel: 1,
+      isGuest: true,
+    );
+    if (_themeProvider != null) {
+      _themeProvider!.setUserId('guest_user');
+    }
+    notifyListeners();
   }
 
   void _setLoading(bool v) { _isLoading = v; notifyListeners(); }
@@ -391,7 +438,7 @@ class AuthService extends ChangeNotifier {
         'created_at': DateTime.now().toIso8601String(),
       });
       return true;
-    } catch (e) { return false; }
+    } catch (e) { debugPrint('submitFeedback error: $e'); return false; }
   }
 }
 
@@ -407,13 +454,20 @@ class NoteService {
       // Only restrict by yearLevel if they are strictly a student
       final isStrictlyStudent = u.hasRole(UserRole.student) && !u.hasRole(UserRole.admin) && !u.hasRole(UserRole.moderator) && !u.hasRole(UserRole.lecturer);
       
+      debugPrint('[NotesDebug] user=${u.email} roles=${u.roles} yearLevel=${u.yearLevel} isStrictlyStudent=$isStrictlyStudent semester=$semester search=$searchQuery');
+      
       if (isStrictlyStudent && u.yearLevel != null) {
         q = q.eq('target_year', u.yearLevel!);
+        debugPrint('[NotesDebug] Filtering by target_year=${u.yearLevel}');
       }
       if (semester != null) q = q.eq('semester', semester);
       if (searchQuery != null) q = q.ilike('title', '%$searchQuery%');
       
       final List<dynamic> data = await q.order('created_at', ascending: false).timeout(const Duration(seconds: 5));
+      debugPrint('[NotesDebug] Raw results: ${data.length} notes');
+      if (data.isNotEmpty) {
+        debugPrint('[NotesDebug] First note: ${data.first}');
+      }
       
       // Save to cache
       if (searchQuery == null) { // Only cache full lists
@@ -422,14 +476,26 @@ class NoteService {
       
       return data.map((item) => Note.fromMap(item)).toList();
     } catch (e, st) {
-      debugPrint('Note fetch error: $e\n$st');
+      debugPrint('[NotesDebug] ERROR: $e\n$st');
       final cachedData = prefs.getString(cacheKey);
       if (cachedData != null) {
+        debugPrint('[NotesDebug] Falling back to cache (${jsonDecode(cachedData).length} notes)');
         final List<dynamic> data = jsonDecode(cachedData);
         return data.map((item) => Note.fromMap(item)).toList();
       }
       return [];
     }
+  }
+
+  Future<List<Note>> getCachedNotes(String userId, {int? semester}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final cacheKey = 'notes_cache_${userId}_${semester ?? "all"}';
+    final cachedData = prefs.getString(cacheKey);
+    if (cachedData != null) {
+      final List<dynamic> data = jsonDecode(cachedData);
+      return data.map((item) => Note.fromMap(item, isFromCache: true)).toList();
+    }
+    return [];
   }
 
   Future<List<UserActivity>> getUserActivity(String uid, {required Duration period}) async {
@@ -475,12 +541,18 @@ class NoteService {
         }
       }
       return null;
-    } catch (e) { return null; }
+    } catch (e) { debugPrint('findDuplicateNote error: $e'); return null; }
   }
 
-  Future<bool> deleteNote(String id) async {
+  Future<bool> deleteNote(String id, {String? userId, bool isAdmin = false}) async {
     try {
-      await _supabase.from('notes').delete().eq('id', id);
+      if (isAdmin) {
+        await _supabase.from('notes').delete().eq('id', id);
+      } else if (userId != null) {
+        await _supabase.from('notes').delete().eq('id', id).eq('user_id', userId);
+      } else {
+        return false;
+      }
       return true;
     } catch (e) {
       debugPrint('Error deleting note: $e');
@@ -488,7 +560,7 @@ class NoteService {
     }
   }
 
-  Future<bool> saveNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, String? summary, int? fileSize}) async {
+  Future<bool> saveNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, String? summary, int? fileSize, String? userId}) async {
     try {
       await _supabase.from('notes').insert({
         'title': title,
@@ -500,10 +572,178 @@ class NoteService {
         'category': category ?? 'Note',
         'summary': summary,
         'created_at': DateTime.now().toIso8601String(),
-        'file_size': fileSize ?? 0
+        'file_size': fileSize ?? 0,
+        if (userId != null) 'user_id': userId,
       });
       return true;
-    } catch (e) { return false; }
+    } catch (e) { debugPrint('saveNote error: $e'); return false; }
+  }
+
+  /// Adds a document's text to the AI search pile (chunks table) so Notesy
+  /// can answer questions about it. Supports PDFs and plain text files.
+  /// Best-effort: never throws, failures are logged and skipped.
+  Future<void> indexForAi(File file, String sourceName) async {
+    try {
+      final ext = file.path.split('.').last.toLowerCase();
+      if (ext == 'pdf') {
+        final doc = await PdfDocument.openFile(file.path);
+        try {
+          final chunks = <Map<String, dynamic>>[];
+          for (var i = 0; i < doc.pages.length; i++) {
+            final text = (await doc.pages[i].loadText()).fullText.trim();
+            if (text.length < 40) continue; // skip near-blank pages
+            chunks.add({
+              'source': sourceName,
+              'page': i + 1,
+              'preview': text.length > 4000 ? text.substring(0, 4000) : text,
+            });
+            if (chunks.length >= 10) {
+              await _insertChunks(chunks);
+              chunks.clear();
+            }
+          }
+          if (chunks.isNotEmpty) await _insertChunks(chunks);
+          debugPrint('AI indexing complete for $sourceName');
+        } finally {
+          await doc.dispose();
+        }
+      } else if (ext == 'txt' || ext == 'md') {
+        final text = (await file.readAsString()).trim();
+        if (text.length >= 40) {
+          await _insertChunks([{
+            'source': sourceName,
+            'page': 1,
+            'preview': text.length > 4000 ? text.substring(0, 4000) : text,
+          }]);
+          debugPrint('AI indexing complete for $sourceName');
+        }
+      }
+    } catch (e) {
+      debugPrint('AI indexing skipped for $sourceName: $e');
+    }
+  }
+
+  Future<void> _insertChunks(List<Map<String, dynamic>> chunks) async {
+    await _supabase.rpc('insert_chunks', params: {'p_chunks': chunks});
+  }
+
+  /// Bulk index: downloads every PDF/text note not already in the AI pile.
+  /// Returns counts of [indexed], [skipped] (already indexed / not indexable)
+  /// and [failed]. Best-effort per note.
+  Future<({int indexed, int skipped, int failed})> indexAllNotesForAi() async {
+    var indexed = 0, skipped = 0, failed = 0;
+    try {
+      final List<dynamic> data = await _supabase
+          .from('notes')
+          .select('id, title, gdrive_id, category')
+          .timeout(const Duration(seconds: 30));
+      final appDirPath = await getAppDirectory();
+      final tmp = Directory('$appDirPath\\ai_reindex');
+      if (!await tmp.exists()) await tmp.create(recursive: true);
+
+      for (var item in data) {
+        final title = (item['title'] as String? ?? 'note');
+        final url = (item['gdrive_id'] as String? ?? '');
+        final category = (item['category'] as String? ?? '').toLowerCase();
+        final lowerTitle = title.toLowerCase();
+
+        String ext = '';
+        final titleMatch = RegExp(r'\.(pdf|txt|md)$').firstMatch(lowerTitle);
+        if (titleMatch != null) {
+          ext = '.${titleMatch.group(1)}';
+        } else if (category.contains('pdf') || url.toLowerCase().contains('.pdf')) {
+          ext = '.pdf';
+        } else if (url.toLowerCase().contains('.txt')) {
+          ext = '.txt';
+        }
+
+        if (ext.isEmpty || url.isEmpty) {
+          skipped++;
+          continue;
+        }
+
+        // Skip if already in the pile
+        final existing = await _supabase
+            .from('chunks')
+            .select('id')
+            .eq('source', title)
+            .limit(1)
+            .maybeSingle();
+        if (existing != null) {
+          skipped++;
+          continue;
+        }
+
+        try {
+          final file = File('${tmp.path}\\note_${item['id']}$ext');
+          if (!await file.exists()) {
+            final response = await http.get(Uri.parse(url))
+                .timeout(const Duration(seconds: 60));
+            if (response.statusCode != 200) throw Exception('download failed (HTTP ${response.statusCode})');
+            await file.writeAsBytes(response.bodyBytes);
+          }
+          await indexForAi(file, title);
+          indexed++;
+        } catch (e) {
+          debugPrint('Re-index failed for $title: $e');
+          failed++;
+        }
+      }
+    } catch (e) {
+      debugPrint('indexAllNotesForAi error: $e');
+      failed++;
+    }
+    return (indexed: indexed, skipped: skipped, failed: failed);
+  }
+
+  /// Checks whether a document with [sourceName] is already in the AI pile,
+  /// and only indexes it if missing. Used for older notes so they're added
+  /// to the pile the first time someone opens them.
+  Future<void> ensureIndexedForAi(File file, String sourceName) async {
+    try {
+      final existing = await _supabase
+          .from('chunks')
+          .select('id')
+          .eq('source', sourceName)
+          .limit(1)
+          .maybeSingle();
+      if (existing != null) return; // already indexed
+      await indexForAi(file, sourceName);
+    } catch (e) {
+      debugPrint('AI indexing check failed for $sourceName: $e');
+    }
+  }
+
+  Future<bool> saveDonatedNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, int? fileSize, String? userId}) async {
+    try {
+      await _supabase.from('donated_notes').insert({
+        'title': title,
+        'lecturer_name': lecturerName,
+        'target_year': targetYear,
+        'semester': semester,
+        'file_url': gDriveId,
+        'content': content ?? '',
+        'category': category ?? 'Donation',
+        'file_size': fileSize ?? 0,
+        'created_at': DateTime.now().toIso8601String(),
+        if (userId != null) 'user_id': userId,
+      });
+      return true;
+    } catch (e) { debugPrint('saveDonatedNote error: $e'); return false; }
+  }
+
+  Future<List<Note>> getDonatedNotes({String? searchQuery}) async {
+    try {
+      var q = _supabase.from('donated_notes').select();
+      if (searchQuery != null && searchQuery.isNotEmpty) {
+        q = q.ilike('title', '%$searchQuery%');
+      }
+      final List<dynamic> data = await q.order('created_at', ascending: false);
+      return data.map((item) => Note.fromMap(item)).toList();
+    } catch (e) {
+      debugPrint('getDonatedNotes error: $e');
+      return [];
+    }
   }
 
   Future<List<AppFeedback>> getAllFeedback() async {
@@ -539,14 +779,15 @@ class NoteService {
       final u = await _supabase.from('profiles').select('id').count(CountOption.exact);
       final n = await _supabase.from('notes').select('id').count(CountOption.exact);
       return {'totalUsers': u.count ?? 0, 'totalNotes': n.count ?? 0, 'storageUsed': '0.5 GB'};
-    } catch (e) { return {'totalUsers': 0, 'totalNotes': 0, 'storageUsed': 'N/A'}; }
+    } catch (e) { debugPrint('getAdminStats error: $e'); return {'totalUsers': 0, 'totalNotes': 0, 'storageUsed': 'N/A'}; }
   }
 
   Future<Map<String, String>> getAppConfig() async {
     try {
       final List<dynamic> data = await _supabase.from('app_config').select();
       return {for (var item in data) item['key']: item['value']};
-    } catch (e) { 
+    } catch (e) {
+      debugPrint('getAppConfig error, using defaults: $e');
       return {
         'about_text': 'NotesCache v1.0.0\n\nYour campus study companion. Access lecture notes, chat with classmates, and get instant AI-powered help — all in one place.\n\nBuilt for students, by students.\n\n© 2026 NotesCache. All rights reserved.',
         'terms_and_conditions': 'NOTESCACHE TERMS OF SERVICE\n\nLast Updated: June 2026\n\n1. ACCEPTANCE OF TERMS\nBy accessing or using NotesCache ("the App"), you agree to be bound by these Terms of Service. If you do not agree, do not use the App.\n\n2. ELIGIBILITY\nYou must be a currently enrolled student or staff member at a recognized educational institution. You must provide accurate registration information.\n\n3. ACCOUNT RESPONSIBILITY\nYou are responsible for maintaining the confidentiality of your account. You agree to notify us immediately of any unauthorized use. One account per person.\n\n4. USER CONTENT\n4.1 By uploading notes, documents, or other materials ("User Content"), you grant NotesCache a non-exclusive, royalty-free license to store, display, and distribute such content within the App for educational purposes.\n4.2 You retain ownership of your User Content.\n4.3 You must not upload content that infringes copyright, contains malware, or violates any law.\n4.4 NotesCache reserves the right to remove any User Content at its discretion.\n\n5. AI SERVICES\n5.1 The App provides AI-powered assistance ("Notesy") for educational purposes only.\n5.2 AI responses may contain errors. Always verify information with official course materials.\n5.3 AI usage is subject to daily limits based on your subscription tier.\n5.4 Do not attempt to manipulate, reverse-engineer, or abuse the AI system.\n\n6. PROHIBITED USES\n- Sharing account credentials\n- Scraping or automated data collection\n- Harassment, spam, or abusive behavior in chat rooms\n- Uploading copyrighted material without authorization\n- Attempting to bypass security measures or rate limits\n- Using the App for commercial purposes without a Campus License\n\n7. SUBSCRIPTION & PAYMENTS\n7.1 Free tier is available at no cost with limited features.\n7.2 Paid subscriptions (Student Pro, Campus License) are billed via M-Pesa.\n7.3 Subscriptions auto-renew unless cancelled before the billing date.\n7.4 Refunds are available within 7 days of purchase if less than 10 AI queries were made.\n\n8. TERMINATION\nWe may suspend or terminate your account for violations of these Terms. Upon termination, your right to use the App ceases immediately.\n\n9. LIMITATION OF LIABILITY\nNotesCache is provided "as is" without warranties. We are not liable for any damages arising from use of the App, including but not limited to academic consequences from relying on AI-generated content.\n\n10. GOVERNING LAW\nThese Terms are governed by the laws of the Republic of Kenya.\n\n11. CONTACT\nFor questions about these Terms, contact: support@notescache.com',
@@ -601,13 +842,16 @@ class ChatService {
   /// Returns an existing DM room between [uid] and [friendId], or null if none exists.
   Future<ChatRoom?> findExistingDm(String uid, String friendId) async {
     try {
+      // Filter server-side: non-group rooms containing both users
       final List<dynamic> data = await _supabase
           .from('chat_rooms')
           .select()
-          .eq('is_group', false);
+          .eq('is_group', false)
+          .contains('member_ids', [uid, friendId]);
+      // Return the first match with exactly 2 members (DM, not group)
       for (final item in data) {
         final members = List<String>.from(item['member_ids'] ?? []);
-        if (members.contains(uid) && members.contains(friendId) && members.length == 2) {
+        if (members.length == 2) {
           return ChatRoom.fromMap(item);
         }
       }
@@ -968,20 +1212,27 @@ class AiChatService {
 
   Future<String> getResponse(String msg, List<Map<String, String>> history, {String? imageBase64}) async {
     final user = Supabase.instance.client.auth.currentUser;
-    final response = await Supabase.instance.client.functions.invoke(
-      'notesy',
-      body: {
-        'message': msg,
-        'history': history,
-        'userId': user?.id ?? 'guest_user',
-        if (imageBase64 != null) 'imageBase64': imageBase64,
-      },
-    );
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'notesy',
+        body: {
+          'message': msg,
+          'history': history,
+          'userId': user?.id ?? 'guest_user',
+          if (imageBase64 != null) 'imageBase64': imageBase64,
+        },
+      );
 
-    final data = response.data;
-    if (data is Map && data['content'] is String) return data['content'];
-    if (data is Map && data['error'] is String) throw Exception(data['error']);
-    throw Exception('AI service is temporarily unavailable. Please try again later.');
+      final rawData = response.data;
+      final data = rawData is String ? jsonDecode(rawData) : rawData;
+
+      if (data is Map && data['content'] is String) return data['content'];
+      if (data is Map && data['error'] is String) throw Exception(data['error']);
+      throw Exception('Unexpected response: $rawData');
+    } catch (e) {
+      debugPrint('Notesy error: $e');
+      rethrow;
+    }
   }
 }
 
@@ -1010,6 +1261,48 @@ class ConnectivityService {
       if (isOnline.value != online) isOnline.value = online;
     } catch (_) {
       if (isOnline.value) isOnline.value = false;
+    }
+  }
+}
+
+/// Pings Supabase periodically so the free-tier project never goes idle and pauses.
+/// Call [start] once (e.g. in [DashboardPage.initState]) and [dispose] when done.
+class SupabaseKeepAliveService {
+  static const Duration _interval = Duration(minutes: 15);
+  Timer? _timer;
+  final ValueNotifier<bool> lastPingOk = ValueNotifier<bool>(true);
+
+  void start() {
+    _ping(); // immediate first ping
+    _timer = Timer.periodic(_interval, (_) => _ping());
+  }
+
+  void dispose() {
+    _timer?.cancel();
+    _timer = null;
+    lastPingOk.dispose();
+  }
+
+  Future<void> _ping() async {
+    try {
+      final supabaseUrl = dotenv.env['SUPABASE_URL'];
+      final anonKey = dotenv.env['SUPABASE_ANON_KEY'];
+      if (supabaseUrl == null || anonKey == null) return;
+
+      final response = await http.get(
+        Uri.parse('$supabaseUrl/rest/v1/'),
+        headers: {'apikey': anonKey, 'Authorization': 'Bearer $anonKey'},
+      ).timeout(const Duration(seconds: 15));
+
+      // 2xx/3xx/401 all mean the API is awake; only hard failures matter.
+      final ok = response.statusCode != 500;
+      if (ok != lastPingOk.value) {
+        debugPrint('Supabase keep-alive: ${ok ? 'awake' : 'unreachable'} (HTTP ${response.statusCode})');
+      }
+      lastPingOk.value = ok;
+    } catch (e) {
+      debugPrint('Supabase keep-alive ping failed: $e');
+      if (lastPingOk.value) lastPingOk.value = false;
     }
   }
 }
