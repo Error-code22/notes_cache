@@ -10,6 +10,29 @@ import 'local_docs_page.dart';
 
 enum NoteViewMode { list, details, compact }
 
+/// File-type filter options — icons/colors mirror the note cards.
+class _TypeFilter {
+  final String key;
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  const _TypeFilter(this.key, this.label, this.icon, this.color);
+}
+
+const List<_TypeFilter> _typeFilters = [
+  _TypeFilter('pdf', 'PDF', Icons.picture_as_pdf_rounded, Colors.red),
+  _TypeFilter('doc', 'DOC', Icons.article_rounded, Colors.blue),
+  _TypeFilter('ppt', 'PPT', Icons.slideshow_rounded, Colors.orange),
+  _TypeFilter('xls', 'XLS', Icons.table_chart_rounded, Colors.green),
+  _TypeFilter('vid', 'VID', Icons.play_circle_fill_rounded, Colors.indigo),
+  _TypeFilter('aud', 'AUD', Icons.audiotrack_rounded, Colors.pink),
+  _TypeFilter('img', 'IMG', Icons.image_rounded, Colors.purple),
+  _TypeFilter('code', 'CODE', Icons.code_rounded, Colors.blueGrey),
+  _TypeFilter('txt', 'TXT/MD', Icons.text_snippet_rounded, Colors.teal),
+  _TypeFilter('other', 'OTHER', Icons.description_rounded, Colors.blueGrey),
+];
+
 class NotesPage extends StatefulWidget {
   final ConnectivityService? connectivity;
 
@@ -22,6 +45,7 @@ class NotesPage extends StatefulWidget {
 class _NotesPageState extends State<NotesPage> {
   String _searchQuery = '';
   String _selectedFilter = 'All Notes';
+  String? _typeFilter;
   NoteViewMode _viewMode = NoteViewMode.list;
   Future<List<Note>>? _notesFuture;
 
@@ -56,6 +80,23 @@ class _NotesPageState extends State<NotesPage> {
     }
   }
 
+
+  /// File-type of a note, matching the card icon logic.
+  String _typeOf(Note n) {
+    final title = n.title.toLowerCase();
+    final category = (n.category ?? '').toLowerCase();
+    if (title.endsWith('.pdf') || category == 'pdf') return 'pdf';
+    if (title.endsWith('.pptx') || title.endsWith('.ppt') || category == 'slides' || category == 'presentation') return 'ppt';
+    if (title.endsWith('.docx') || title.endsWith('.doc') || category == 'document' || category == 'word') return 'doc';
+    if (title.endsWith('.xlsx') || title.endsWith('.xls') || title.endsWith('.csv') || category == 'spreadsheet') return 'xls';
+    if (title.endsWith('.mp4') || title.endsWith('.mov') || title.endsWith('.mkv') || category == 'video' || category == 'vid') return 'vid';
+    if (title.endsWith('.mp3') || title.endsWith('.wav') || title.endsWith('.m4a') || category == 'audio') return 'aud';
+    if (title.endsWith('.jpg') || title.endsWith('.jpeg') || title.endsWith('.png') || category == 'image') return 'img';
+    if (title.endsWith('.py') || title.endsWith('.java') || title.endsWith('.cpp') || title.endsWith('.dart') || title.endsWith('.json') || title.endsWith('.html') || category == 'code') return 'code';
+    if (title.endsWith('.md')) return 'txt';
+    if (title.endsWith('.txt') || category == 'text') return 'txt';
+    return 'other';
+  }
 
   Future<void> _loadViewMode() async {
     final prefs = await SharedPreferences.getInstance();
@@ -107,6 +148,36 @@ class _NotesPageState extends State<NotesPage> {
           ),
         ),
         actions: [
+          PopupMenuButton<String>(
+            icon: Icon(
+              Icons.filter_list_rounded,
+              color: _typeFilter != null ? primaryColor : null,
+            ),
+            tooltip: _typeFilter == null ? 'Filter by type' : 'Filter: ${_typeFilter!.toUpperCase()}',
+            onSelected: (value) {
+              setState(() => _typeFilter = value == 'all' ? null : value);
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'all',
+                child: Row(children: [
+                  Icon(Icons.folder_outlined, size: 20, color: _typeFilter == null ? primaryColor : Colors.grey),
+                  const SizedBox(width: 10),
+                  Text('All Files', style: TextStyle(fontWeight: _typeFilter == null ? FontWeight.bold : FontWeight.normal)),
+                ]),
+              ),
+              const PopupMenuDivider(),
+              for (final t in _typeFilters)
+                PopupMenuItem(
+                  value: t.key,
+                  child: Row(children: [
+                    Icon(t.icon, size: 20, color: t.color),
+                    const SizedBox(width: 10),
+                    Text(t.label, style: TextStyle(fontWeight: _typeFilter == t.key ? FontWeight.bold : FontWeight.normal)),
+                  ]),
+                ),
+            ],
+          ),
           PopupMenuButton<NoteViewMode>(
             icon: const Icon(Icons.view_agenda_outlined),
             onSelected: _saveViewMode,
@@ -193,8 +264,12 @@ class _NotesPageState extends State<NotesPage> {
                         }),
                       );
                     }
-                    
-                    if (notes.isEmpty) {
+
+                    final filtered = _typeFilter == null
+                        ? notes
+                        : notes.where((n) => _typeOf(n) == _typeFilter).toList();
+
+                    if (filtered.isEmpty) {
                       return Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -202,7 +277,7 @@ class _NotesPageState extends State<NotesPage> {
                             Icon(Icons.notes_rounded, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
                             const SizedBox(height: 16),
                             Text(
-                              'No matching notes found.', 
+                              notes.isEmpty ? 'No matching notes found.' : 'No ${_typeFilter?.toUpperCase()} files in this view.',
                               style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4)),
                             ),
                           ],
@@ -211,8 +286,8 @@ class _NotesPageState extends State<NotesPage> {
                     }
   
                     return ListView.builder(
-                      itemCount: notes.length,
-                      itemBuilder: (context, index) => _buildNoteCard(context, notes[index]),
+                      itemCount: filtered.length,
+                      itemBuilder: (context, index) => _buildNoteCard(context, filtered[index]),
                     );
                   },
                 ),
