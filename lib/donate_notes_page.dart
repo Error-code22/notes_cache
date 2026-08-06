@@ -135,7 +135,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
         else if (ext == 'docx' || ext == 'doc') category = 'Document';
         else if (['jpg', 'jpeg', 'png'].contains(ext)) category = 'Image';
 
-        final fileUrl = await cloudinaryService.uploadFile(
+        final uploadResult = await cloudinaryService.uploadFileWithBackup(
           file: file,
           userId: authService.currentUser?.id ?? 'guest',
           folder: 'donations',
@@ -143,7 +143,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
 
         if (!mounted) break;
 
-        if (fileUrl == null) {
+        if (!uploadResult.success) {
           setState(() => _failedCount++);
           continue;
         }
@@ -153,7 +153,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
           lecturerName: authService.currentUser?.fullName ?? 'Student Donation',
           targetYear: _selectedYear,
           semester: _selectedSemester,
-          gDriveId: fileUrl,
+          gDriveId: uploadResult.url,
           content: _descController.text,
           category: category,
           fileSize: fileSize,
