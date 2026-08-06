@@ -140,13 +140,14 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
       '/storage/emulated/0/Download',
       '/storage/emulated/0/Documents',
       '/storage/emulated/0/DCIM',
+      '/storage/emulated/0/Android/media',
       '/storage/emulated/0/',
     ];
 
     for (final root in roots) {
       final dir = Directory(root);
       if (!await dir.exists()) continue;
-      await _walk(dir, found, depth: 0, maxDepth: 5);
+      await _walk(dir, found, depth: 0, maxDepth: 8);
     }
 
     // Dedupe + sort by name
@@ -176,8 +177,12 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
       await for (final entity in dir.list(followLinks: false)) {
         if (entity is Directory) {
           final name = entity.path.split('/').last.toLowerCase();
-          if (name == 'android' || name == '.thumbnails' || name.startsWith('.')) continue;
-          if (entity.path.contains('/Android/')) continue;
+          if (name.startsWith('.')) continue;
+          // Only these two are truly inaccessible on Android 11+ (scoped
+          // storage blocks them even with all-files access). Android/media
+          // (e.g. WhatsApp received docs) is readable and must be scanned.
+          final lowerPath = entity.path.toLowerCase();
+          if (lowerPath.contains('/android/data/') || lowerPath.contains('/android/obb/')) continue;
           await _walk(entity, out, depth: depth + 1, maxDepth: maxDepth);
         } else if (entity is File) {
           final ext = p.extension(entity.path).toLowerCase();
