@@ -29,18 +29,20 @@ class PptxService {
   }
 
   /// Returns a list of slides; each slide is a list of text blocks.
+  /// Uses buffer decode — entry contents decompress lazily on access,
+  /// so large decks don't exhaust memory on phones.
   static Future<List<List<String>>> readSlides(File file) async {
     final bytes = await file.readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes);
+    final archive = ZipDecoder().decodeBuffer(InputStream(bytes));
     final slides = <List<String>>[];
 
     // ppt/slides/slide1.xml, slide2.xml ... (fall back to any slide*.xml)
     var slideEntries = archive.files
-        .where((e) => e.name.startsWith('ppt/slides/slide') && e.name.endsWith('.xml'))
+        .where((e) => e.isFile && e.name.startsWith('ppt/slides/slide') && e.name.endsWith('.xml'))
         .toList();
     if (slideEntries.isEmpty) {
       slideEntries = archive.files
-          .where((e) => RegExp(r'/slide\d+\.xml$').hasMatch(e.name) && e.name.endsWith('.xml'))
+          .where((e) => e.isFile && RegExp(r'/slide\d+\.xml$').hasMatch(e.name) && e.name.endsWith('.xml'))
           .toList();
     }
     slideEntries.sort((a, b) {
@@ -49,7 +51,8 @@ class PptxService {
     });
 
     for (final entry in slideEntries) {
-      final doc = XmlDocument.parse(utf8.decode(entry.content as Uint8List));
+      final content = Uint8List.fromList(entry.content);
+      final doc = XmlDocument.parse(utf8.decode(content));
       final blocks = <String>[];
       // Namespace-agnostic: some decks use different prefixes for the
       // drawingml text element. Match any element whose local name is 't'.

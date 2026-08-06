@@ -182,7 +182,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
           // storage blocks them even with all-files access). Android/media
           // (e.g. WhatsApp received docs) is readable and must be scanned.
           final lowerPath = entity.path.toLowerCase();
-          if (lowerPath.contains('/android/data/') || lowerPath.contains('/android/obb/')) continue;
+          if (lowerPath.contains('/android/data') || lowerPath.contains('/android/obb')) continue;
           await _walk(entity, out, depth: depth + 1, maxDepth: maxDepth);
         } else if (entity is File) {
           final ext = p.extension(entity.path).toLowerCase();
