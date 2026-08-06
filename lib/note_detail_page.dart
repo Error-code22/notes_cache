@@ -67,7 +67,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     final appDirPath = await noteService.getAppDirectory();
     final file = File('$appDirPath\\ai_doc_${widget.note.id}${_resolveFileExt()}');
     if (!await file.exists()) {
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
       debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
       if (response.statusCode != 200) {
         if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
@@ -314,7 +314,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
         final url = _resolveFileUrl();
         if (url.isNotEmpty) {
           // Download from Cloudinary / Google Drive
-          final response = await http.get(Uri.parse(url));
+          final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
           debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
           if (response.statusCode != 200) {
             if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {

@@ -98,15 +98,6 @@ class _DocxEditorPageState extends State<DocxEditorPage> {
                 )
               : Column(
                   children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      color: Theme.of(context).colorScheme.primary.withOpacity(0.06),
-                      child: const Text(
-                        'Bold: **text**    Italic: _text_    (markers shown in text)',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.all(12),

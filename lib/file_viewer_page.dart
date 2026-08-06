@@ -190,20 +190,24 @@ class _FileViewerPageState extends State<FileViewerPage> {
           Expanded(
             child: Stack(
               children: [
-                PdfViewer.file(
-                  widget.file.path,
-                  controller: _pdfController,
-                  params: PdfViewerParams(
-                    onDocumentChanged: (doc) => setState(() => _totalPages = doc?.pages.length ?? 0),
-                    onPageChanged: (page) => setState(() => _currentPage = page ?? 1),
-                    backgroundColor: theme.scaffoldBackgroundColor,
-                    margin: 16.0,
-                    enableTextSelection: true,
-                    matchTextColor: Colors.yellow.withAlpha(127),
-                    activeMatchTextColor: Colors.orange.withAlpha(160),
-                    pagePaintCallbacks: _searcher == null
-                        ? null
-                        : [_searcher!.pageTextMatchPaintCallback],
+                // Any pointer interaction (tap/scroll) dismisses the search keyboard
+                Listener(
+                  onPointerDown: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                  child: PdfViewer.file(
+                    widget.file.path,
+                    controller: _pdfController,
+                    params: PdfViewerParams(
+                      onDocumentChanged: (doc) => setState(() => _totalPages = doc?.pages.length ?? 0),
+                      onPageChanged: (page) => setState(() => _currentPage = page ?? 1),
+                      backgroundColor: theme.scaffoldBackgroundColor,
+                      margin: 16.0,
+                      enableTextSelection: true,
+                      matchTextColor: Colors.yellow.withAlpha(127),
+                      activeMatchTextColor: Colors.orange.withAlpha(160),
+                      pagePaintCallbacks: _searcher == null
+                          ? null
+                          : [_searcher!.pageTextMatchPaintCallback],
+                    ),
                   ),
                 ),
                 _buildPdfControls(theme, primaryColor),
