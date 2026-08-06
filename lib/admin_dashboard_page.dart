@@ -436,7 +436,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           // ===== ADMIN ACTIONS =====
           _sectionCard(theme, Icons.admin_panel_settings, 'Admin Actions', [
             _buildAdminAction(context, 'Manage Users', 'Promote, demote, or remove accounts', Icons.manage_accounts, Colors.blue),
-            _buildAdminAction(context, 'Storage Explorer', 'Manage your Google Drive Pool', Icons.folder_shared, Colors.orange),
             _buildAdminAction(context, 'Feedback Explorer', 'View user bug reports and suggestions', Icons.feedback_outlined, Colors.teal),
             _buildAdminAction(context, 'Push Update', 'Send an announcement to all users', Icons.campaign, Colors.purple),
             _buildAdminAction(context, 'Pricing & Plans', 'View and manage subscription tiers', Icons.monetization_on, Colors.amber),

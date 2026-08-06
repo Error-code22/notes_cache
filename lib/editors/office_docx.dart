@@ -14,24 +14,27 @@ class DocxService {
   /// (text, styleFlags) pairs where styleFlags: 'b' bold, 'i' italic.
   static Future<List<List<({String text, String flags})>>> readParagraphs(File file) async {
     final bytes = await file.readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes);
+    final archive = ZipDecoder().decodeBuffer(InputStream(bytes));
     final entry = archive.findFile('word/document.xml');
     if (entry == null) throw Exception('Not a valid .docx file (no document.xml)');
 
-    final doc = XmlDocument.parse(utf8.decode(entry.content as Uint8List));
+    final doc = XmlDocument.parse(utf8.decode(Uint8List.fromList(entry.content)));
     final paragraphs = <List<({String text, String flags})>>[];
 
-    for (final pEl in doc.findAllElements('w:p', namespace: 'w')) {
+    // Note: match by qualified name (w:p etc.) WITHOUT the namespace param —
+    // package:xml matches namespaces by URI, not prefix; passing 'w' silently
+    // matched nothing (that's why documents opened blank).
+    for (final pEl in doc.findAllElements('w:p')) {
       final runs = <({String text, String flags})>[];
-      for (final rEl in pEl.findElements('w:r', namespace: 'w')) {
+      for (final rEl in pEl.findElements('w:r')) {
         final flags = <String>[];
-        final rPr = rEl.getElement('w:rPr', namespace: 'w');
+        final rPr = rEl.getElement('w:rPr');
         if (rPr != null) {
-          if (rPr.getElement('w:b', namespace: 'w') != null) flags.add('b');
-          if (rPr.getElement('w:i', namespace: 'w') != null) flags.add('i');
+          if (rPr.getElement('w:b') != null) flags.add('b');
+          if (rPr.getElement('w:i') != null) flags.add('i');
         }
         final text = rEl
-            .findElements('w:t', namespace: 'w')
+            .findElements('w:t')
             .map((t) => t.innerText)
             .join();
         if (text.isNotEmpty) runs.add((text: text, flags: flags.join()));
