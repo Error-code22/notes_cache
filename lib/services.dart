@@ -718,6 +718,79 @@ class NoteService {
     }
   }
 
+  // --- Offline availability ---
+
+  /// Local file name for a note (mirrors the open flow's naming).
+  String localFileNameFor(Note note) {
+    var ext = '';
+    final lowerTitle = note.title.toLowerCase();
+    final titleMatch = RegExp(r'\.(pdf|docx|doc|pptx|ppt|txt|md|csv|xlsx|xls|jpg|jpeg|png|mp4|mp3|wav|mov|mkv|m4a)$').firstMatch(lowerTitle);
+    if (titleMatch != null) {
+      ext = '.${titleMatch.group(1)}';
+    } else if (note.gDriveId != null) {
+      final pathParts = Uri.parse(note.gDriveId!).path.split('.');
+      if (pathParts.length > 1) ext = '.${pathParts.last}';
+    } else if ((note.category ?? '').toLowerCase().contains('pdf')) {
+      ext = '.pdf';
+    }
+    if (ext.isEmpty) ext = '.txt';
+    return '${note.title.replaceAll(' ', '_')}$ext';
+  }
+
+  /// Whether the note's file is already stored locally (offline-readable).
+  Future<bool> isAvailableOffline(Note note) async {
+    try {
+      final appDir = await getAppDirectory();
+      return File('$appDir\\${localFileNameFor(note)}').existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Bulk-downloads note files so they're readable offline.
+  /// 5 concurrent, best-effort per file. Returns (ok, failed).
+  Future<({int ok, int failed})> downloadAllForOffline(
+    List<Note> notes, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    var ok = 0;
+    var failed = 0;
+    final appDir = await getAppDirectory();
+    final toDownload = <Note>[];
+
+    for (final n in notes) {
+      final path = '$appDir\\${localFileNameFor(n)}';
+      if (!File(path).existsSync()) toDownload.add(n);
+    }
+
+    final total = toDownload.length;
+    for (var i = 0; i < toDownload.length; i += 5) {
+      final batch = toDownload.sublist(i, i + 5 > toDownload.length ? toDownload.length : i + 5);
+      await Future.wait(batch.map((n) async {
+        try {
+          final raw = n.gDriveId?.trim() ?? '';
+          if (raw.isEmpty) {
+            failed++;
+            return;
+          }
+          final url = raw.contains('://') ? raw : 'https://drive.google.com/uc?export=download&id=$raw';
+          final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
+          if (response.statusCode == 200) {
+            await File('$appDir\\${localFileNameFor(n)}').writeAsBytes(response.bodyBytes);
+            ok++;
+          } else {
+            failed++;
+          }
+        } catch (_) {
+          failed++;
+        } finally {
+          onProgress?.call(i + batch.length, total);
+        }
+      }));
+    }
+    return (ok: ok, failed: failed);
+  }
+
   /// Logs a note download for the admin usage charts. Best-effort.
   Future<void> logDownload(String noteId, int fileSize) async {
     try {
