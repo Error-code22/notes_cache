@@ -48,6 +48,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Map<String, dynamic>? _cloudinaryUsage;
   bool _usageLoading = true;
 
+  // Backup coverage
+  int _backedUpCount = 0;
+  int _totalNoteCount = 0;
+
   // Usage charts (from DB)
   List<Map<String, dynamic>> _downloadStats = [];
   List<Map<String, dynamic>> _storageGrowth = [];
@@ -59,6 +63,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _loadData();
     _loadCloudinaryUsage();
     _loadUsageCharts();
+    _loadBackupCoverage();
+  }
+
+  Future<void> _loadBackupCoverage() async {
+    final notes = await context.read<NoteService>().fetchAllNotes();
+    if (!mounted) return;
+    setState(() {
+      _totalNoteCount = notes.length;
+      _backedUpCount = notes.where((n) => n['telegram_file_id'] != null).length;
+    });
   }
 
   Future<void> _loadCloudinaryUsage() async {
@@ -429,6 +443,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             _buildAdminAction(context, 'Archive Chats', 'Move old messages to storage to free DB space', Icons.archive, Colors.brown),
             _buildAdminAction(context, 'Re-index Notes', 'Add all old notes to the AI search pile', Icons.auto_awesome, Colors.indigo),
             _buildAdminAction(context, 'Restore from Backup', 'Revive dead notes from the Telegram backup', Icons.restore_rounded, Colors.teal),
+            ListTile(
+              leading: const CircleAvatar(backgroundColor: Colors.black12, child: Icon(Icons.shield_outlined, color: Colors.black87)),
+              title: Text('Telegram backup coverage: $_backedUpCount/$_totalNoteCount notes',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              subtitle: const Text('Notes uploaded before backups existed have no copy', style: TextStyle(fontSize: 11)),
+              onTap: _loadBackupCoverage,
+            ),
           ]),
 
           const SizedBox(height: 32),

@@ -91,12 +91,23 @@ class ThemeProvider extends ChangeNotifier {
 
   ThemeData getThemeData(Brightness b) {
     final isDark = b == Brightness.dark;
+    // Apply the user-selected font (google_fonts loads it on demand).
+    // 'Roboto' is Flutter's default — no loading needed.
+    String? fontFamily;
+    if (_fontFamily != 'Roboto') {
+      try {
+        fontFamily = GoogleFonts.getFont(_fontFamily).fontFamily;
+      } catch (_) {
+        fontFamily = null;
+      }
+    }
     return ThemeData(
       useMaterial3: true,
       brightness: b,
       colorScheme: ColorScheme.fromSeed(seedColor: _seedColor, brightness: b),
       scaffoldBackgroundColor: isDark ? const Color(0xFF121212) : null,
       cardColor: isDark ? const Color(0xFF1E1E1E) : null,
+      fontFamily: fontFamily,
     );
   }
 }
@@ -1633,6 +1644,11 @@ class NotificationService {
 
   Future<void> showNotification({required String title, required String body}) async {
     debugPrint('NOTIFICATION TRIGGERED: $title - $body');
+    // Honor the Settings toggles
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool('settings_notifications') ?? true)) return;
+    final withSound = prefs.getBool('settings_notification_sound') ?? true;
+
     if (Platform.isWindows) {
       if (!_windowsReady) {
         debugPrint('Skipping notification; Windows notifier not ready (need full restart).');
@@ -1648,14 +1664,15 @@ class NotificationService {
     }
     try {
       // Reference the pre-registered channel by its constant ID
-      const android = AndroidNotificationDetails(
+      final android = AndroidNotificationDetails(
         _channelId,
         _channelName,
         importance: Importance.max,
         priority: Priority.high,
+        playSound: withSound,
       );
       const ios = DarwinNotificationDetails();
-      await _notifications.show(0, title, body, const NotificationDetails(android: android, iOS: ios));
+      await _notifications.show(0, title, body, NotificationDetails(android: android, iOS: ios));
     } catch (e) {
       debugPrint('Notification show failed: $e');
     }
