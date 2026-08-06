@@ -54,8 +54,6 @@ node_modules/
 !assets/
 
 # Agent & Dev Files
-agents.md
-progress.md
 .gemini/
 next_fixes.md
 
