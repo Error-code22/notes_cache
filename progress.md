@@ -1,6 +1,16 @@
 # Project Progress Log 🚀📈
 
-## Latest Milestone: Infrastructure, AI RAG, Editors & Backup (2026-08-06)
+## Latest Milestone: Legacy Office → PDF Migration (2026-08-06)
+
+### Legacy .ppt/.doc files converted (12 files)
+- Problem: 12 notes (11 old binary `.ppt` + 1 `.doc`) unreadable in-app. Cloudinary conversion tested and **cannot convert** (raw assets pass through `f_pdf` unchanged; image/document types reject the bytes).
+- Solution: **one-time local conversion** using the installed Microsoft Office 2019 (PowerPoint COM SaveAs PDF=32, Word COM SaveAs2 PDF=17), re-uploaded to Cloudinary (`notes/converted/{id}.pdf`, raw type), notes updated (new `gdrive_id` + title extension → `.pdf`).
+- Notes affected: 28, 30, 33, 35, 38, 39, 42, 45, 47, 49, 50, 52. All verified: valid `%PDF` magic, delivery HTTP 200.
+- These notes now open in the pdfrx viewer with search + annotations; AI summaries now work on them too.
+- Old `.ppt`/`.doc` originals kept on Cloudinary (tiny, ~12MB) as safety; can be deleted later.
+- Future legacy uploads: app shows the honest "old binary format — open in another app" message (shrinking edge case).
+
+## Previous Milestone: Infrastructure, AI RAG, Editors & Backup (2026-08-06)
 
 ### 0. Keep-Alive — Never Sleep Again
 - `pg_cron` + `pg_net` schedule `keepalive-ping` every 5 min → hits `keepalive` edge function (real DB read). Verified HTTP 200 via `net._http_response`.
