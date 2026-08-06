@@ -316,10 +316,6 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Workspace Hub', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
-                    const SizedBox(height: 8),
-                    Text('Quick access to your academic tools', style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.5))),
-                    const SizedBox(height: 32),
                     Expanded(
                       child: ListView(
                         children: [
@@ -424,45 +420,74 @@ class _DashboardPageState extends State<DashboardPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(
-                      color: accent.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(Icons.psychology_alt_rounded, color: accent, size: 34),
-                  ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                  Row(
+                    children: [
+                      Container(
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          color: accent.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(Icons.psychology_alt_rounded, color: accent, size: 34),
+                      ),
+                      const SizedBox(width: 18),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Expanded(
-                              child: Text('Notesy Memory Lab', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            Row(
+                              children: [
+                                const Expanded(
+                                  child: Text('Notesy Memory Lab', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: warm.withOpacity(0.14),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text('NEW', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: warm)),
+                                ),
+                              ],
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: warm.withOpacity(0.14),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text('NEW', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: warm)),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Quizzes, flashcards & memory tools',
+                              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.5)),
                             ),
                           ],
                         ),
-
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-
-
+                  const SizedBox(height: 14),
+                  const Divider(height: 1),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Icon(Icons.bug_report_outlined, size: 16, color: theme.colorScheme.onSurface.withOpacity(0.5)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Found a bug or want a feature?',
+                          style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const FeedbackPage()),
+                        ),
+                        style: TextButton.styleFrom(
+                          foregroundColor: accent,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        child: const Text('REPORT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      ),
+                    ],
+                  ),
             ],
           ),
         ),
