@@ -1,6 +1,28 @@
 # Project Progress Log 🚀📈
 
-## Latest Milestone: Legacy Office → PDF Migration (2026-08-06)
+## Latest Milestone: Bug Hunt Round + First Release Build (2026-08-06)
+
+### Bug fixes (this round)
+- **docx blank editor — root cause found**: XML parser matched elements with `namespace: 'w'` (a *prefix*) but package:xml matches by namespace URI — every document silently parsed as empty. Fixed; verified with real library file (361 paragraphs extracted). New `tool/test_docs.dart` for parser regression tests.
+- **pptx spinner**: parser verified working (8 slides from real file, lazy decompression via `decodeBuffer(InputStream)`); the spin was the legacy Google Drive download (bare ID + 12MB via Drive redirects). All file downloads now have a 60s timeout with friendly errors.
+- **Scan misses WhatsApp docs**: docs live in `Android/media/...` which the scan skipped (over-aggressive `Android/` skip) + depth limit too shallow. Now scans `Android/media`, skips only `Android/data`+`Android/obb` (truly blocked), depth 8. Verified via adb: 3 PDFs found on the A207F.
+- **Search keyboard** now dismisses on scroll/tap (PDF viewer + notes list).
+- **Dashboard**: Workspace Hub header removed; separate "Report Bug / Suggest Feature" card under Notesy Memory Lab (→ FeedbackPage); dead "Storage Explorer" admin tile removed.
+- **Android 10 permission path** added for legacy devices (kept for safety; minSdk is now 30 anyway).
+- `android:allowBackup="false"` (blocks adb backup extraction); `fullBackupContent="false"`.
+
+### Offline-first
+- Notes list was cached offline, **files weren't**. Added: "Download All for Offline" (5 concurrent, persisted to app dir), green **OFFLINE** badge when a file exists locally, friendly offline error instead of raw SocketException.
+- Offline model: first run needs internet once; then full offline reading/editing/annotating.
+
+### Release build
+- `minSdk = 30` (Android 11+ only) — simplifies permissions.
+- `flutter build apk --release --split-per-abi` → arm64 (41.6MB) / armeabi-v7a (38MB) / x86_64 (44.1MB). AOT = no more debug jank.
+
+### Quota answers (for the record)
+- Supabase free: edge functions 500K calls/mo ≈ 5-8K users; DB 500MB (chat archiving buys headroom); egress tiny (files served by Cloudinary). Cloudinary 25-credit pool is the first real ceiling (~a few hundred active students with downloads).
+
+## Previous Milestone: Legacy Office → PDF Migration (2026-08-06)
 
 ### Legacy .ppt/.doc files converted (12 files)
 - Problem: 12 notes (11 old binary `.ppt` + 1 `.doc`) unreadable in-app. Cloudinary conversion tested and **cannot convert** (raw assets pass through `f_pdf` unchanged; image/document types reject the bytes).
