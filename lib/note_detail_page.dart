@@ -369,8 +369,14 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       }
     } catch (e) {
       if (mounted) {
+        final offline = e is SocketException || (e.toString().contains('SocketException'));
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to open: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(offline
+                ? "You're offline and this note hasn't been downloaded yet. Go online once to download it, then it works offline."
+                : 'Failed to open: $e'),
+            backgroundColor: offline ? Colors.orange : Colors.red,
+          ),
         );
       }
     } finally {
