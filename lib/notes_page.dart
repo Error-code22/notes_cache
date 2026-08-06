@@ -252,7 +252,10 @@ class _NotesPageState extends State<NotesPage> {
         elevation: 0,
       ),
       body: SafeArea(
-        child: Column(
+        child: Listener(
+          // Scrolling/tapping the list dismisses the search keyboard
+          onPointerDown: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+          child: Column(
           children: [
             const SizedBox(height: 16),
   
@@ -357,6 +360,7 @@ class _NotesPageState extends State<NotesPage> {
               ),
             ),
           ],
+          ),
         ),
       ),
       floatingActionButton: (user.hasRole(UserRole.lecturer) || user.hasRole(UserRole.admin) || user.isGuest)
