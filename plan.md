@@ -24,8 +24,10 @@ Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
 
 ## ⏳ In progress / queued
 
-- [ ] **Phone test pass** of the current APK (search, annotations, local docs scan, type filter).
+- [ ] **Phone test pass** of the release APK (`app-arm64-v8a-release.apk`) — search, annotations, scan, offline, editors.
+- [ ] **DOCX/PPTX visual rendering (no server)** — replace the flat-text docx editor with a WebView renderer using `docx-preview.js` + `pptxviewjs` (server-free, real fonts/tables/layout). **View + annotate model** (same as PDF: overlay strokes/highlights stored separately — content editing is a different app's worth of scope). Editing note: keep a "plain text edit" fallback for the markers format; OR keep the current text editor as the edit mode and use WebView as preview mode.
 - [ ] **FCM push notifications** — notifications die when the app is force-stopped. Firebase project + service. The only major functional gap.
+- [ ] **In-app update flow (Happymod/Snaptube style)** — toast "update available" → download APK → install. Flutter: `upgrader` for the check/toast UI, http download of the APK, `flutter_app_installer` for install. Needs: APK hosted somewhere stable (GitHub releases), `REQUEST_INSTALL_PACKAGES` permission (one-time "allow unknown sources"), and it only applies to direct-APK distribution (Play Store handles updates itself). Android-only.
 - [ ] **Admin "Re-index Notes"** — never actually clicked; old notes pile pending.
 - [ ] **Delete old .ppt/.doc originals** from Cloudinary (~12MB, currently kept as safety).
 
