@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -183,6 +184,15 @@ class _NotesPageState extends State<NotesPage> {
                     }
                     
                     final notes = snapshot.data ?? [];
+
+                    // Fire-and-forget file health check (cached 12h)
+                    if (notes.isNotEmpty) {
+                      unawaited(
+                        context.read<NoteService>().checkNotesHealth(notes).then((_) {
+                          if (mounted) setState(() {});
+                        }),
+                      );
+                    }
                     
                     if (notes.isEmpty) {
                       return Center(
@@ -330,6 +340,8 @@ class _NotesPageState extends State<NotesPage> {
   Widget _buildNoteCard(BuildContext context, Note note) {
     final theme = Theme.of(context);
     final primaryColor = theme.colorScheme.primary;
+    final isHealthy = context.read<NoteService>().isFileHealthy(note.id);
+    final showUnavailable = isHealthy == false;
 
     // Dynamic Icon & Color logic
     IconData fileIcon = Icons.article_rounded;
@@ -410,7 +422,14 @@ class _NotesPageState extends State<NotesPage> {
           leading: Icon(fileIcon, color: fileColor, size: 20),
           title: Text(note.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
           subtitle: Text('By ${note.lecturerName}${note.isFromCache ? ' • Cached' : ''}', style: const TextStyle(fontSize: 11)),
-          trailing: _buildBadge(typeLabel, fileColor),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (showUnavailable) _buildBadge('UNAVAILABLE', Colors.red),
+              const SizedBox(width: 6),
+              _buildBadge(typeLabel, fileColor),
+            ],
+          ),
           onTap: () async {
             await Navigator.push(context, MaterialPageRoute(builder: (context) => NoteDetailPage(note: note)));
             _refreshNotes();
@@ -453,6 +472,10 @@ class _NotesPageState extends State<NotesPage> {
                         if (note.isFromCache) ...[
                           const SizedBox(width: 8),
                           _buildBadge('CACHED', Colors.orange),
+                        ],
+                        if (showUnavailable) ...[
+                          const SizedBox(width: 8),
+                          _buildBadge('UNAVAILABLE', Colors.red),
                         ],
                         const Spacer(),
                         Text(
@@ -506,6 +529,10 @@ class _NotesPageState extends State<NotesPage> {
                 if (note.isFromCache) ...[
                   const SizedBox(width: 8),
                   _buildBadge('CACHED', Colors.orange),
+                ],
+                if (showUnavailable) ...[
+                  const SizedBox(width: 8),
+                  _buildBadge('UNAVAILABLE', Colors.red),
                 ],
               ],
             ),

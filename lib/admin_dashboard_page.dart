@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services.dart';
@@ -426,6 +428,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             _buildAdminAction(context, 'Pricing & Plans', 'View and manage subscription tiers', Icons.monetization_on, Colors.amber),
             _buildAdminAction(context, 'Archive Chats', 'Move old messages to storage to free DB space', Icons.archive, Colors.brown),
             _buildAdminAction(context, 'Re-index Notes', 'Add all old notes to the AI search pile', Icons.auto_awesome, Colors.indigo),
+            _buildAdminAction(context, 'Restore from Backup', 'Revive dead notes from the Telegram backup', Icons.restore_rounded, Colors.teal),
           ]),
 
           const SizedBox(height: 32),
@@ -630,6 +633,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         else if (title == 'Pricing & Plans') Navigator.push(context, MaterialPageRoute(builder: (context) => const PricingPage()));
         else if (title == 'Archive Chats') _archiveChats(context);
         else if (title == 'Re-index Notes') _reindexAllNotes(context);
+        else if (title == 'Restore from Backup') _restoreFromBackup(context);
       },
     );
   }
@@ -661,6 +665,70 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       SnackBar(
         content: Text('Re-index done: ${result.indexed} indexed, ${result.skipped} already indexed/skipped, ${result.failed} failed'),
         backgroundColor: result.failed == 0 ? Colors.green : Colors.orange,
+      ),
+    );
+  }
+
+  /// Restores notes whose Cloudinary file is dead, using the Telegram backup.
+  Future<void> _restoreFromBackup(BuildContext context) async {
+    final noteService = context.read<NoteService>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    // Find dead notes (health check may be cached; fetch fresh status)
+    final List<dynamic> notes = await noteService.fetchAllNotes();
+    final messenger2 = messenger;
+    final dead = <Map<String, dynamic>>[];
+    for (final n in notes) {
+      final id = n['id'].toString();
+      final raw = (n['gdrive_id'] as String?)?.trim() ?? '';
+      if (raw.isEmpty) continue;
+      final url = raw.contains('://') ? raw : 'https://drive.google.com/uc?export=download&id=$raw';
+      try {
+        final resp = await http.head(Uri.parse(url)).timeout(const Duration(seconds: 8));
+        if (resp.statusCode != 200) {
+          dead.add(n);
+        }
+      } catch (_) {
+        dead.add(n);
+      }
+    }
+
+    if (dead.isEmpty) {
+      messenger2.showSnackBar(
+        const SnackBar(content: Text('All notes are healthy — nothing to restore.'), backgroundColor: Colors.green),
+      );
+      return;
+    }
+
+    var restored = 0;
+    var skipped = 0;
+    for (final n in dead) {
+      final id = n['id'].toString();
+      if (n['telegram_file_id'] == null) {
+        skipped++;
+        continue;
+      }
+      try {
+        final response = await Supabase.instance.client.functions.invoke(
+          'telegram-restore',
+          body: {'noteId': id},
+        );
+        final data = response.data;
+        if (data is Map && data['success'] == true) {
+          restored++;
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        debugPrint('Restore failed for note $id: $e');
+        skipped++;
+      }
+    }
+
+    messenger2.showSnackBar(
+      SnackBar(
+        content: Text('Restore done: $restored restored, $skipped skipped (no backup or failed).'),
+        backgroundColor: restored > 0 ? Colors.green : Colors.orange,
       ),
     );
   }

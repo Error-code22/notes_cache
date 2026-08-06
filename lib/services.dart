@@ -447,6 +447,77 @@ class AuthService extends ChangeNotifier {
 class NoteService {
   final SupabaseClient _supabase = Supabase.instance.client;
 
+  // --- note file health checking ---
+  static const String _healthCacheKey = 'note_file_health';
+  static const Duration _healthTtl = Duration(hours: 12);
+  final Map<String, bool> _fileHealth = {};
+  final Set<String> _checking = {};
+
+  /// Whether the note's file is known to be downloadable.
+  /// null = not checked yet.
+  bool? isFileHealthy(String noteId) => _fileHealth[noteId];
+
+  /// Lightweight HEAD check per note file (cached 12h, 5 concurrent).
+  /// Best-effort; results stored in SharedPreferences.
+  Future<void> checkNotesHealth(List<Note> notes) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_healthCacheKey);
+    final cache = <String, Map<String, dynamic>>{};
+    if (raw != null) {
+      try {
+        final m = jsonDecode(raw) as Map<String, dynamic>;
+        m.forEach((k, v) => cache[k] = Map<String, dynamic>.from(v as Map));
+      } catch (_) {}
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final toCheck = <Note>[];
+    for (final n in notes) {
+      final id = n.id.toString();
+      final cached = cache[id];
+      if (cached != null) {
+        // Dead files re-check often (10 min) so fixed uploads clear fast;
+        // healthy files are trusted for 12h to save requests.
+        final cachedAt = (cached['at'] as num?)?.toInt() ?? 0;
+        final isAlive = cached['alive'] == true;
+        final ttlMs = (isAlive ? _healthTtl : const Duration(minutes: 10)).inMilliseconds;
+        if (now - cachedAt < ttlMs) {
+          _fileHealth[id] = isAlive;
+          continue;
+        }
+      }
+      toCheck.add(n);
+    }
+
+    // Check in batches of 5
+    for (var i = 0; i < toCheck.length; i += 5) {
+      final batch = toCheck.sublist(i, i + 5 > toCheck.length ? toCheck.length : i + 5);
+      await Future.wait(batch.map(_checkFile));
+    }
+
+    final toSave = <String, dynamic>{};
+    _fileHealth.forEach((id, alive) => toSave[id] = {'alive': alive, 'at': now});
+    await prefs.setString(_healthCacheKey, jsonEncode(toSave));
+  }
+
+  Future<void> _checkFile(Note n) async {
+    final id = n.id.toString();
+    final raw = n.gDriveId?.trim() ?? '';
+    if (raw.isEmpty || _checking.contains(id)) return;
+    _checking.add(id);
+    try {
+      final url = raw.contains('://')
+          ? raw
+          : 'https://drive.google.com/uc?export=download&id=$raw';
+      final resp = await http.head(Uri.parse(url)).timeout(const Duration(seconds: 8));
+      _fileHealth[id] = resp.statusCode == 200;
+    } catch (_) {
+      _fileHealth[id] = false;
+    } finally {
+      _checking.remove(id);
+    }
+  }
+
   Future<List<Note>> getNotesForUser(UserProfile u, {int? semester, String? searchQuery}) async {
     final prefs = await SharedPreferences.getInstance();
     final cacheKey = 'notes_cache_${u.id}_${semester ?? "all"}';
@@ -562,7 +633,7 @@ class NoteService {
     }
   }
 
-  Future<bool> saveNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, String? summary, int? fileSize, String? userId}) async {
+  Future<bool> saveNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, String? summary, int? fileSize, String? userId, int? telegramMsgId, String? telegramFileId}) async {
     try {
       await _supabase.from('notes').insert({
         'title': title,
@@ -575,6 +646,8 @@ class NoteService {
         'summary': summary,
         'created_at': DateTime.now().toIso8601String(),
         'file_size': fileSize ?? 0,
+        if (telegramMsgId != null) 'telegram_msg_id': telegramMsgId,
+        if (telegramFileId != null) 'telegram_file_id': telegramFileId,
         if (userId != null) 'user_id': userId,
       });
       return true;
@@ -600,6 +673,37 @@ class NoteService {
     } catch (e) {
       debugPrint('updateNoteSummary error: $e');
       return false;
+    }
+  }
+
+  /// Finds the most recent note id with the given title (for post-upload summary).
+  Future<String?> getNoteIdByTitle(String title) async {
+    try {
+      final data = await _supabase
+          .from('notes')
+          .select('id')
+          .eq('title', title)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      return data?['id']?.toString();
+    } catch (e) {
+      debugPrint('getNoteIdByTitle error: $e');
+      return null;
+    }
+  }
+
+  /// Fetches all notes with their file + backup refs (admin tools).
+  Future<List<Map<String, dynamic>>> fetchAllNotes() async {
+    try {
+      final data = await _supabase
+          .from('notes')
+          .select('id, title, gdrive_id, telegram_file_id')
+          .timeout(const Duration(seconds: 30));
+      return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('fetchAllNotes error: $e');
+      return [];
     }
   }
 
@@ -1377,6 +1481,33 @@ class AiChatService {
       debugPrint('Notesy summary error: $e');
       return '';
     }
+  }
+
+  // --- Background summary queue (rate-limited, fire-and-forget) ---
+  static Future<void> _summaryQueue = Future.value();
+  static int _summaryFailures = 0;
+
+  /// Queues a summarization task: one at a time, 2s apart, so bulk uploads
+  /// (e.g. a lecturer pushing 50+ docs) stay under Groq's per-key rate limit.
+  /// Never blocks the caller; failures fall back to the lazy per-note trigger.
+  static void queueSummarize(Future<String?> Function() task) {
+    _summaryQueue = _summaryQueue.then((_) async {
+      await Future.delayed(const Duration(seconds: 2));
+      try {
+        final summary = await task();
+        if (summary == null || summary.isEmpty) {
+          _summaryFailures++;
+        } else {
+          _summaryFailures = 0;
+        }
+      } catch (e) {
+        debugPrint('Background summary error: $e');
+        _summaryFailures++;
+      }
+      if (_summaryFailures >= 5) {
+        debugPrint('Background summarizer backing off (5 consecutive failures).');
+      }
+    });
   }
 }
 

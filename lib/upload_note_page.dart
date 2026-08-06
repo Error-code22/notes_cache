@@ -195,7 +195,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
           _uploadStatus[file.path] = 'Uploading...';
         });
 
-        final fileUrl = await cloudinaryService.uploadFile(
+        final uploadResult = await cloudinaryService.uploadFileWithBackup(
           file: file,
           userId: authService.currentUser?.id ?? 'guest',
           folder: 'notes',
@@ -208,7 +208,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
 
         if (_isCancelled || !mounted) break;
 
-        if (fileUrl == null) {
+        if (!uploadResult.success) {
           setState(() {
             _uploadStatus[file.path] = '❌ Upload Failed';
             _failedCount++;
@@ -228,11 +228,13 @@ class _UploadNotePageState extends State<UploadNotePage> {
               : (authService.currentUser?.fullName ?? 'Student Upload'),
           targetYear: _selectedYear,
           semester: _selectedSemester,
-          gDriveId: fileUrl,
+          gDriveId: uploadResult.url,
           content: _contentController.text,
           summary: _summaryController.text,
           fileSize: fileSize,
           category: category,
+          telegramMsgId: uploadResult.telegramMsgId,
+          telegramFileId: uploadResult.telegramFileId,
           userId: authService.currentUser?.isGuest == true ? null : authService.currentUser?.id,
         );
 
@@ -242,6 +244,21 @@ class _UploadNotePageState extends State<UploadNotePage> {
             _uploadProgress[file.path] = 0.97;
           });
           await noteService.indexForAi(file, finalTitle);
+
+          // Background AI summary (queued, rate-limited, never blocks upload)
+          if (_summaryController.text.trim().isEmpty) {
+            final noteId = await noteService.getNoteIdByTitle(finalTitle);
+            if (noteId != null) {
+              AiChatService.queueSummarize(() async {
+                final text = await noteService.extractNoteText(file);
+                if (text.length < 20) return null;
+                final summary = await AiChatService().summarizeNote(finalTitle, text);
+                if (summary.isEmpty) return null;
+                await noteService.updateNoteSummary(noteId, summary);
+                return summary;
+              });
+            }
+          }
         }
 
         setState(() {
