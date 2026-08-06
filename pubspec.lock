@@ -547,6 +547,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.7+1"
+  flutter_pdf_annotations:
+    dependency: "direct main"
+    description:
+      name: flutter_pdf_annotations
+      sha256: "790ab1efccddd5c81730234f692ddedf56c63b09d0313d9c3e5848422cf70aa0"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.3.0"
   flutter_plugin_android_lifecycle:
     dependency: transitive
     description:
