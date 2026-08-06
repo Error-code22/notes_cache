@@ -347,6 +347,8 @@ class _DashboardPageState extends State<DashboardPage> {
                           ),
                           const SizedBox(height: 16),
                           _buildNotesyMemoryCard(context),
+                          const SizedBox(height: 12),
+                          _buildReportCard(context),
                         ],
                       ),
                     ),
@@ -462,34 +464,42 @@ class _DashboardPageState extends State<DashboardPage> {
                     ],
                   ),
                   const SizedBox(height: 14),
-                  const Divider(height: 1),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Icon(Icons.bug_report_outlined, size: 16, color: theme.colorScheme.onSurface.withOpacity(0.5)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Found a bug or want a feature?',
-                          style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6)),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const FeedbackPage()),
-                        ),
-                        style: TextButton.styleFrom(
-                          foregroundColor: accent,
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                        ),
-                        child: const Text('REPORT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                      ),
-                    ],
-                  ),
-            ],
+                ],
+              ),
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Separate Report Bug / Suggest Feature button (links to FeedbackPage,
+  /// same as the profile menu).
+  Widget _buildReportCard(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      color: theme.cardColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: theme.dividerColor.withOpacity(0.12)),
+      ),
+      child: ListTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.error.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(Icons.bug_report_outlined, size: 20, color: theme.colorScheme.error),
+        ),
+        title: const Text('Report Bug / Suggest Feature', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        subtitle: const Text('Tell us what\'s broken or what you want', style: TextStyle(fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right, size: 20),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const FeedbackPage()),
         ),
       ),
     );
