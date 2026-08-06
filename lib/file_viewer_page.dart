@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_pdf_annotations/flutter_pdf_annotations.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -147,6 +148,13 @@ class _FileViewerPageState extends State<FileViewerPage> {
         backgroundColor: theme.colorScheme.surface,
         elevation: 0,
         actions: [
+          // Native annotation editor (mobile only)
+          if (Platform.isAndroid || Platform.isIOS)
+            IconButton(
+              tooltip: 'Annotate',
+              icon: Icon(Icons.draw_outlined, color: primaryColor),
+              onPressed: _annotatePdf,
+            ),
           IconButton(
             tooltip: 'Gallery Mode',
             icon: Icon(Icons.photo_library_rounded, color: primaryColor),
@@ -172,12 +180,44 @@ class _FileViewerPageState extends State<FileViewerPage> {
               onPageChanged: (page) => setState(() => _currentPage = page ?? 1),
               backgroundColor: theme.scaffoldBackgroundColor,
               margin: 16.0,
+              enableTextSelection: true,
             ),
           ),
           _buildPdfControls(theme, primaryColor),
         ],
       ),
     );
+  }
+
+  /// Opens the native PDF annotation editor (pen, highlighter, stamps).
+  /// Annotations are saved INTO the PDF, then re-uploaded via [onSave].
+  Future<void> _annotatePdf() async {
+    try {
+      final result = await FlutterPdfAnnotations.openPDF(
+        filePath: widget.file.path,
+        savePath: widget.file.path,
+        config: const PDFAnnotationConfig(title: 'Annotate'),
+      );
+      if (result.isSuccess) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ Annotations saved'), backgroundColor: Colors.green),
+          );
+        }
+        await widget.onSave?.call(widget.file);
+      } else if (result.isError && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Annotation error: ${result.error}'), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      debugPrint('Annotate error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open annotator: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Widget _buildPdfControls(ThemeData theme, Color primaryColor) {

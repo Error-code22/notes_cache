@@ -10,6 +10,14 @@ android {
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
+    // flutter_pdf_annotations declares androidx.cardview:cardview:1.1.0,
+    // which was never published — force the real latest (1.0.0).
+    configurations.all {
+        resolutionStrategy {
+            force("androidx.cardview:cardview:1.0.0")
+        }
+    }
+
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
