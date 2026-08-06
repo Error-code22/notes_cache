@@ -100,17 +100,29 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   }
 
   Future<void> _checkPermission() async {
-    final status = await Permission.manageExternalStorage.status;
-    if (!mounted) return;
-    setState(() => _hasPermission = status.isGranted);
+    // Android 11+: MANAGE_EXTERNAL_STORAGE ("all files access").
+    // Android 10 and below: READ_EXTERNAL_STORAGE (legacy).
+    if (await Permission.manageExternalStorage.isGranted) {
+      if (mounted) setState(() => _hasPermission = true);
+      return;
+    }
+    final legacy = await Permission.storage.isGranted;
+    if (mounted) setState(() => _hasPermission = legacy);
   }
 
-  /// One-time all-files access request (opens Android's settings screen).
+  /// One-time access request. Opens the appropriate permission screen.
   Future<void> _requestAccess() async {
-    final status = await Permission.manageExternalStorage.request();
+    var granted = false;
+    if (await Permission.manageExternalStorage.isGranted) {
+      granted = true;
+    } else if (await Permission.manageExternalStorage.request().isGranted) {
+      granted = true;
+    } else if (await Permission.storage.request().isGranted) {
+      granted = true;
+    }
     if (!mounted) return;
-    setState(() => _hasPermission = status.isGranted);
-    if (status.isGranted && mounted) {
+    setState(() => _hasPermission = granted);
+    if (granted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✅ Device access granted — scanning now...'), backgroundColor: Colors.green),
       );
@@ -558,7 +570,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
               child: Icon(_iconForExt(ext), color: primaryColor),
             ),
             title: Text(doc.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), overflow: TextOverflow.ellipsis),
-            subtitle: Text('${_fmtSize(doc.size)} • Offline', style: const TextStyle(fontSize: 11)),
+            subtitle: Text('${_typeLabel(ext)} • ${_fmtSize(doc.size)} • Offline', style: const TextStyle(fontSize: 11)),
             trailing: IconButton(
               icon: Icon(Icons.delete_outline_rounded, color: theme.colorScheme.onSurface.withOpacity(0.4), size: 20),
               onPressed: () => _removeDoc(doc),
@@ -571,6 +583,17 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
         );
       },
     );
+  }
+
+  String _typeLabel(String ext) {
+    switch (ext) {
+      case '.pdf': return 'PDF';
+      case '.ppt': case '.pptx': case '.odp': return 'PPT';
+      case '.doc': case '.docx': case '.rtf': case '.odt': return 'DOC';
+      case '.xls': case '.xlsx': case '.csv': case '.ods': return 'XLS';
+      case '.txt': case '.md': return 'TXT';
+      default: return 'DOC';
+    }
   }
 
   IconData _iconForExt(String ext) {
