@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 import 'dart:io';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services.dart';
@@ -112,6 +114,23 @@ class _SettingsPageState extends State<SettingsPage> {
   // ─── Actions ──────────────────────────────────────────────────────
 
   Future<void> _clearCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear Cache?'),
+        content: const Text('This removes downloaded files and temporary data from this device. Your notes, backups and account are not affected. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text('Clear Cache'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
     try {
       final tempDir = await getTemporaryDirectory();
       if (tempDir.existsSync()) {
@@ -137,6 +156,118 @@ class _SettingsPageState extends State<SettingsPage> {
     notificationService.showNotification(
       title: 'NotesCache Test',
       body: 'Notifications are working perfectly!',
+    );
+  }
+
+  /// Exports the user's notes and profile as a shareable JSON file.
+  Future<void> _exportMyData() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final user = _authService.currentUser;
+      if (user == null) {
+        messenger.showSnackBar(const SnackBar(content: Text('Sign in to export your data.'), backgroundColor: Colors.orange));
+        return;
+      }
+      messenger.showSnackBar(const SnackBar(content: Text('Preparing your export...'), backgroundColor: Colors.blue));
+      final notes = await _noteService.getNotesForUser(user);
+      final data = {
+        'exported_at': DateTime.now().toIso8601String(),
+        'user': {
+          'id': user.id,
+          'email': user.email,
+          'full_name': user.fullName,
+          'year_level': user.yearLevel,
+        },
+        'notes': notes
+            .map((n) => {
+                  'title': n.title,
+                  'lecturer': n.lecturerName,
+                  'year': n.targetYear,
+                  'semester': n.semester,
+                  'category': n.category,
+                  'summary': n.summary,
+                  'file_url': n.gDriveId,
+                })
+            .toList(),
+      };
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/notescache_export_${DateTime.now().millisecondsSinceEpoch}.json');
+      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+      await Share.shareXFiles([XFile(file.path, mimeType: 'application/json')], text: 'NotesCache data export');
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  /// Shows the user's AI usage against their daily limits.
+  Future<void> _showUsageStats() async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sign in to see your usage.'), backgroundColor: Colors.orange));
+      return;
+    }
+    final ai = AiChatService();
+    final todayLocal = await ai.getDailyMessageCount(user.id);
+
+    var serverText = 0;
+    var serverImage = 0;
+    try {
+      final usage = await Supabase.instance.client
+          .from('user_ai_usage')
+          .select('text_count, image_count')
+          .eq('user_id', user.id)
+          .maybeSingle();
+      serverText = (usage?['text_count'] as num?)?.toInt() ?? 0;
+      serverImage = (usage?['image_count'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+
+    final textLimit = int.tryParse(_appConfig['ai_daily_text_limit'] ?? '') ?? 50;
+    final imageLimit = int.tryParse(_appConfig['ai_daily_image_limit'] ?? '') ?? 10;
+
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('AI Usage'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _usageRow('Text messages today', serverText, textLimit),
+            const SizedBox(height: 12),
+            _usageRow('Image analyses today', serverImage, imageLimit),
+            const Divider(height: 32),
+            Text('Local counter (this device): $todayLocal', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 8),
+            const Text('Limits reset daily.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+      ),
+    );
+  }
+
+  Widget _usageRow(String label, int used, int limit) {
+    final fraction = limit == 0 ? 0.0 : (used / limit).clamp(0.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))),
+            Text('$used / $limit', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: fraction,
+            minHeight: 6,
+            backgroundColor: Colors.grey.withOpacity(0.15),
+            valueColor: AlwaysStoppedAnimation(fraction >= 0.8 ? Colors.red : Colors.teal),
+          ),
+        ),
+      ],
     );
   }
 
@@ -675,14 +806,7 @@ class _SettingsPageState extends State<SettingsPage> {
               'View your AI query history and limits',
               Icons.bar_chart_rounded,
               Colors.teal,
-              () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('AI usage stats coming soon'),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-              },
+              _showUsageStats,
             ),
           ]),
           const SizedBox(height: 24),
@@ -735,14 +859,7 @@ class _SettingsPageState extends State<SettingsPage> {
               'Download a copy of your notes and activity',
               Icons.file_download_outlined,
               Colors.green,
-              () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Export feature coming soon'),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-              },
+              _exportMyData,
             ),
           ]),
           const SizedBox(height: 24),
