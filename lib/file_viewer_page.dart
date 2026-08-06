@@ -44,6 +44,13 @@ class _FileViewerPageState extends State<FileViewerPage> {
   int _totalPages = 0;
   bool _isLandscape = false;
 
+  // PDF search
+  bool _searchMode = false;
+  final TextEditingController _searchController = TextEditingController();
+  PdfTextSearcher? _searcher;
+  int _matchIndex = 0;
+  int _matchTotal = 0;
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +59,8 @@ class _FileViewerPageState extends State<FileViewerPage> {
 
   @override
   void dispose() {
+    _searchController.dispose();
+    _searcher?.dispose();
     // Reset to portrait when leaving
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     super.dispose();
@@ -156,6 +165,11 @@ class _FileViewerPageState extends State<FileViewerPage> {
               onPressed: _annotatePdf,
             ),
           IconButton(
+            tooltip: 'Search',
+            icon: Icon(Icons.search_rounded, color: primaryColor),
+            onPressed: () => setState(() => _searchMode = !_searchMode),
+          ),
+          IconButton(
             tooltip: 'Gallery Mode',
             icon: Icon(Icons.photo_library_rounded, color: primaryColor),
             onPressed: () => _openGallery(_currentPage),
@@ -170,23 +184,135 @@ class _FileViewerPageState extends State<FileViewerPage> {
           ),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          PdfViewer.file(
-            widget.file.path,
-            controller: _pdfController,
-            params: PdfViewerParams(
-              onDocumentChanged: (doc) => setState(() => _totalPages = doc?.pages.length ?? 0),
-              onPageChanged: (page) => setState(() => _currentPage = page ?? 1),
-              backgroundColor: theme.scaffoldBackgroundColor,
-              margin: 16.0,
-              enableTextSelection: true,
+          if (_searchMode) _buildSearchBar(theme, primaryColor),
+          Expanded(
+            child: Stack(
+              children: [
+                PdfViewer.file(
+                  widget.file.path,
+                  controller: _pdfController,
+                  params: PdfViewerParams(
+                    onDocumentChanged: (doc) => setState(() => _totalPages = doc?.pages.length ?? 0),
+                    onPageChanged: (page) => setState(() => _currentPage = page ?? 1),
+                    backgroundColor: theme.scaffoldBackgroundColor,
+                    margin: 16.0,
+                    enableTextSelection: true,
+                    matchTextColor: Colors.yellow.withAlpha(127),
+                    activeMatchTextColor: Colors.orange.withAlpha(160),
+                    pagePaintCallbacks: _searcher == null
+                        ? null
+                        : [_searcher!.pageTextMatchPaintCallback],
+                  ),
+                ),
+                _buildPdfControls(theme, primaryColor),
+              ],
             ),
           ),
-          _buildPdfControls(theme, primaryColor),
         ],
       ),
     );
+  }
+
+  Widget _buildSearchBar(ThemeData theme, Color primaryColor) {
+    _searcher ??= PdfTextSearcher(_pdfController);
+    return Material(
+      color: theme.colorScheme.surface,
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 18, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                autofocus: true,
+                style: const TextStyle(fontSize: 14),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  hintText: 'Search in document...',
+                  border: InputBorder.none,
+                ),
+                onChanged: (value) {
+                  final searcher = _searcher;
+                  if (searcher == null) return;
+                  final text = value.trim();
+                  if (text.isEmpty) {
+                    searcher.resetTextSearch();
+                    setState(() => _matchTotal = 0);
+                    return;
+                  }
+                  searcher.startTextSearch(
+                    text,
+                    caseInsensitive: true,
+                    goToFirstMatch: true,
+                  );
+                  searcher.addListener(_onSearchUpdate);
+                },
+                onSubmitted: (value) {
+                  if (value.trim().isNotEmpty) {
+                    _searcher?.startTextSearch(value.trim(), caseInsensitive: true, goToFirstMatch: true);
+                  }
+                },
+              ),
+            ),
+            if (_matchTotal > 0)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Text(
+                  '${_matchIndex + 1}/$_matchTotal',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Previous',
+              icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 22),
+              onPressed: () async {
+                final idx = await _searcher?.goToPrevMatch();
+                if (idx != null && idx >= 0 && mounted) setState(() => _matchIndex = idx);
+              },
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Next',
+              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 22),
+              onPressed: () async {
+                final idx = await _searcher?.goToNextMatch();
+                if (idx != null && idx >= 0 && mounted) setState(() => _matchIndex = idx);
+              },
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Close search',
+              icon: const Icon(Icons.close_rounded, size: 20),
+              onPressed: () {
+                _searcher?.resetTextSearch();
+                _searchController.clear();
+                setState(() {
+                  _searchMode = false;
+                  _matchTotal = 0;
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _onSearchUpdate() {
+    final s = _searcher;
+    if (s == null || !mounted) return;
+    var total = 0;
+    for (var p = 1; p <= _totalPages; p++) {
+      final r = s.getMatchesRangeForPage(p);
+      if (r != null) total += r.end - r.start;
+    }
+    setState(() => _matchTotal = total);
   }
 
   /// Opens the native PDF annotation editor (pen, highlighter, stamps).
