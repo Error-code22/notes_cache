@@ -48,6 +48,9 @@ class _NotesPageState extends State<NotesPage> {
   String? _typeFilter;
   NoteViewMode _viewMode = NoteViewMode.list;
   Future<List<Note>>? _notesFuture;
+  bool _downloadingOffline = false;
+  final Set<String> _offlineAvailable = {};
+  bool _offlineCheckDone = false;
 
   @override
   void initState() {
@@ -96,6 +99,47 @@ class _NotesPageState extends State<NotesPage> {
     if (title.endsWith('.md')) return 'txt';
     if (title.endsWith('.txt') || category == 'text') return 'txt';
     return 'other';
+  }
+
+  /// Checks which notes already have local copies (for the OFFLINE badge).
+  Future<void> _checkOfflineAvailability(List<Note> notes) async {
+    if (_offlineCheckDone) return;
+    final noteService = context.read<NoteService>();
+    final available = <String>{};
+    for (final n in notes) {
+      if (await noteService.isAvailableOffline(n)) available.add(n.id);
+    }
+    if (!mounted) return;
+    setState(() {
+      _offlineCheckDone = true;
+      _offlineAvailable.addAll(available);
+    });
+  }
+
+  /// Bulk-downloads all note files so the app works fully offline.
+  Future<void> _downloadAllOffline() async {
+    if (_downloadingOffline) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final notes = await _notesFuture ?? [];
+    setState(() => _downloadingOffline = true);
+    messenger.showSnackBar(
+      SnackBar(content: Text('Downloading ${notes.length} files for offline...'), backgroundColor: Colors.blue),
+    );
+    final result = await context.read<NoteService>().downloadAllForOffline(notes);
+    if (!mounted) return;
+    setState(() {
+      _downloadingOffline = false;
+      _offlineCheckDone = false;
+    });
+    await _checkOfflineAvailability(notes);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(result.failed == 0
+            ? '✅ All files ready for offline reading'
+            : '${result.ok} ready, ${result.failed} failed (some may be unavailable)'),
+        backgroundColor: result.failed == 0 ? Colors.green : Colors.orange,
+      ),
+    );
   }
 
   Future<void> _loadViewMode() async {
@@ -187,6 +231,22 @@ class _NotesPageState extends State<NotesPage> {
               const PopupMenuItem(value: NoteViewMode.compact, child: ListTile(leading: Icon(Icons.grid_view_rounded), title: Text('Compact View'))),
             ],
           ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (value) {
+              if (value == 'offline') _downloadAllOffline();
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'offline',
+                child: Row(children: [
+                  const Icon(Icons.download_for_offline_outlined, size: 20),
+                  const SizedBox(width: 10),
+                  Text(_downloadingOffline ? 'Downloading...' : 'Download All for Offline'),
+                ]),
+              ),
+            ],
+          ),
         ],
         backgroundColor: theme.colorScheme.surface,
         elevation: 0,
@@ -268,6 +328,9 @@ class _NotesPageState extends State<NotesPage> {
                     final filtered = _typeFilter == null
                         ? notes
                         : notes.where((n) => _typeOf(n) == _typeFilter).toList();
+
+                    // Mark which notes are available offline (once per session)
+                    unawaited(_checkOfflineAvailability(notes));
 
                     if (filtered.isEmpty) {
                       return Center(
@@ -417,6 +480,7 @@ class _NotesPageState extends State<NotesPage> {
     final primaryColor = theme.colorScheme.primary;
     final isHealthy = context.read<NoteService>().isFileHealthy(note.id);
     final showUnavailable = isHealthy == false;
+    final showOffline = _offlineAvailable.contains(note.id);
 
     // Dynamic Icon & Color logic
     IconData fileIcon = Icons.article_rounded;
@@ -500,7 +564,11 @@ class _NotesPageState extends State<NotesPage> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (showUnavailable) _buildBadge('UNAVAILABLE', Colors.red),
+              if (showOffline) _buildBadge('OFFLINE', Colors.green),
+              if (showUnavailable) ...[
+                const SizedBox(width: 6),
+                _buildBadge('UNAVAILABLE', Colors.red),
+              ],
               const SizedBox(width: 6),
               _buildBadge(typeLabel, fileColor),
             ],
@@ -547,6 +615,10 @@ class _NotesPageState extends State<NotesPage> {
                         if (note.isFromCache) ...[
                           const SizedBox(width: 8),
                           _buildBadge('CACHED', Colors.orange),
+                        ],
+                        if (showOffline) ...[
+                          const SizedBox(width: 8),
+                          _buildBadge('OFFLINE', Colors.green),
                         ],
                         if (showUnavailable) ...[
                           const SizedBox(width: 8),
@@ -604,6 +676,10 @@ class _NotesPageState extends State<NotesPage> {
                 if (note.isFromCache) ...[
                   const SizedBox(width: 8),
                   _buildBadge('CACHED', Colors.orange),
+                ],
+                if (showOffline) ...[
+                  const SizedBox(width: 8),
+                  _buildBadge('OFFLINE', Colors.green),
                 ],
                 if (showUnavailable) ...[
                   const SizedBox(width: 8),
