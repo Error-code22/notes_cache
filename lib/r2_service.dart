@@ -5,14 +5,41 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// Result of a Cloudinary upload (includes the Telegram backup refs).
+class UploadResult {
+  final String? url;
+  final int? telegramMsgId;
+  final String? telegramFileId;
+
+  const UploadResult({this.url, this.telegramMsgId, this.telegramFileId});
+
+  bool get success => url != null;
+}
+
 class CloudinaryService {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   String get _functionUrl => '${dotenv.env['SUPABASE_URL']}/functions/v1';
 
-  /// Upload a file to Cloudinary via edge function
-  /// Returns the public URL of the uploaded file, or null on failure
+  /// Uploads a file and returns just the URL (backup refs discarded).
   Future<String?> uploadFile({
+    required File file,
+    required String userId,
+    String folder = 'notes',
+    Function(double)? onProgress,
+  }) async {
+    final result = await uploadFileWithBackup(
+      file: file,
+      userId: userId,
+      folder: folder,
+      onProgress: onProgress,
+    );
+    return result.url;
+  }
+
+  /// Uploads a file to Cloudinary (mirrored to the Telegram backup channel).
+  /// Returns the public URL plus the Telegram message/file refs.
+  Future<UploadResult> uploadFileWithBackup({
     required File file,
     required String userId,
     String folder = 'notes',
@@ -65,14 +92,18 @@ class CloudinaryService {
 
       if (jsonResponse['success'] == true) {
         debugPrint('CloudinaryService: Upload successful - ${jsonResponse['url']}');
-        return jsonResponse['url'] as String?;
+        return UploadResult(
+          url: jsonResponse['url'] as String?,
+          telegramMsgId: (jsonResponse['telegramMsgId'] as num?)?.toInt(),
+          telegramFileId: jsonResponse['telegramFileId'] as String?,
+        );
       } else {
         debugPrint('CloudinaryService: Upload failed - ${jsonResponse['error']}');
-        return null;
+        return const UploadResult();
       }
     } catch (e) {
       debugPrint('CloudinaryService: Upload error - $e');
-      return null;
+      return const UploadResult();
     }
   }
 

@@ -70,6 +70,9 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       final response = await http.get(Uri.parse(url));
       debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
       if (response.statusCode != 200) {
+        if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
+          throw Exception('This file is no longer available on the server (HTTP ${response.statusCode}). It may have been removed by the uploader.');
+        }
         throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $url');
       }
       await file.writeAsBytes(response.bodyBytes);
@@ -82,6 +85,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     if (_summary != null && _summary!.isNotEmpty) return _summary;
     final user = context.read<AuthService>().currentUser;
     if (user == null || user.isGuest) return null;
+    if (mounted) setState(() => _isSummarizing = true);
     try {
       final noteService = context.read<NoteService>();
       String text = widget.note.content.trim();
@@ -89,14 +93,30 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
         final file = await _downloadNoteFile();
         if (file != null) text = await noteService.extractNoteText(file);
       }
-      if (text.length < 20) return null;
+      if (text.length < 20) {
+        if (!silent && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not read this file. Old .ppt documents aren\'t readable in-app — try a .pptx, PDF, Word or text version.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return null;
+      }
 
       final summary = await AiChatService().summarizeNote(widget.note.title, text);
       if (summary.isNotEmpty) {
         await noteService.updateNoteSummary(widget.note.id, summary);
         if (mounted) setState(() => _summary = summary);
+        return summary;
       }
-      return summary.isEmpty ? null : summary;
+      if (!silent && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('AI couldn\'t summarize right now. Try again in a moment.'), backgroundColor: Colors.orange),
+        );
+      }
+      return null;
     } catch (e) {
       debugPrint('Summary generation error: $e');
       if (!silent && mounted) {
@@ -105,6 +125,8 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
         );
       }
       return null;
+    } finally {
+      if (mounted && _isSummarizing) setState(() => _isSummarizing = false);
     }
   }
 
@@ -294,7 +316,12 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
           // Download from Cloudinary / Google Drive
           final response = await http.get(Uri.parse(url));
           debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
-          if (response.statusCode != 200) throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $url');
+          if (response.statusCode != 200) {
+            if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
+              throw Exception('This file is no longer available on the server (HTTP ${response.statusCode}). It may have been removed by the uploader.');
+            }
+            throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $url');
+          }
           await file.writeAsBytes(response.bodyBytes);
         } else {
           await file.writeAsString(widget.note.content);
@@ -498,10 +525,6 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
               ],
             ),
             const Divider(height: 40),
-            if (_summary != null && _summary!.isNotEmpty) ...[
-              _buildSummaryCard(theme, _summary!),
-              const SizedBox(height: 24),
-            ],
             Text(
               'Full Description',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
@@ -515,6 +538,34 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
                 color: theme.colorScheme.onSurface,
               ),
             ),
+            if (_isSummarizing) ...[
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: theme.colorScheme.primary.withOpacity(0.2)),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                    const SizedBox(width: 12),
+                    const Expanded(child: Text('Generating AI summary...', style: TextStyle(fontSize: 13))),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: _isSummarizing
+                          ? () => setState(() => _isSummarizing = false)
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (_summary != null && _summary!.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              _buildSummaryCard(theme, _summary!),
+            ],
             const SizedBox(height: 100),
           ],
         ),
