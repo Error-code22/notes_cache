@@ -4,6 +4,7 @@ Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
 
 ## ✅ Done (this build era)
 
+- **Legacy Office migration**: all 12 old `.ppt`/`.doc` notes converted to PDF (local Office 2019) and re-uploaded — now open in the PDF viewer. Cloudinary conversion tested and proven unavailable; no hosting added.
 - **Keep-alive**: pg_cron → keepalive function every 5 min + in-app 15-min ping. Project never pauses.
 - **Guest mode**: no sign-in wall; auto-guest; guest AI history local; 3-message cap.
 - **PDF RAG**: uploads index into `chunks`; old notes index on first open; admin re-index.
@@ -26,6 +27,7 @@ Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
 - [ ] **Phone test pass** of the current APK (search, annotations, local docs scan, type filter).
 - [ ] **FCM push notifications** — notifications die when the app is force-stopped. Firebase project + service. The only major functional gap.
 - [ ] **Admin "Re-index Notes"** — never actually clicked; old notes pile pending.
+- [ ] **Delete old .ppt/.doc originals** from Cloudinary (~12MB, currently kept as safety).
 
 ## 🔮 Later / conditional
 
