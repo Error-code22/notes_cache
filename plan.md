@@ -1,0 +1,43 @@
+# NotesCache Plan 🗺️
+
+Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
+
+## ✅ Done (this build era)
+
+- **Keep-alive**: pg_cron → keepalive function every 5 min + in-app 15-min ping. Project never pauses.
+- **Guest mode**: no sign-in wall; auto-guest; guest AI history local; 3-message cap.
+- **PDF RAG**: uploads index into `chunks`; old notes index on first open; admin re-index.
+- **AI summaries**: auto on upload (background queue) + lazily on note-detail open; cached in DB; shown under Full Description with "Generating…" state.
+- **Editor/viewer suite** (mobile-first, offline-capable):
+  - PDF: pdfrx viewer (text selection, search w/ highlights + prev/next + match counter) + native annotation editor (flutter_pdf_annotations: pen/highlight/stamps).
+  - DOCX editor (custom archive+xml round-trip), PPTX text viewer (binary .ppt → clear message), XLSX grid editor, CSV RFC-4180 table, code/md/txt editors, image editor (rotate/flip), video player, audio player.
+  - Save-back: edits re-upload to Cloudinary and update the note.
+- **Telegram backup**: every upload mirrored to the channel; `telegram-restore` + admin "Restore from Backup"; admin backup-coverage counter.
+- **Storage tracking**: Cloudinary usage card (25-credit shared pool), 14-day bandwidth + storage-growth charts, per-note download logging.
+- **File health**: automatic HEAD checks → UNAVAILABLE badges (dead files re-checked every 10 min).
+- **Local Docs**: one-time all-files permission → device scan (documents only) → open/edit in place; explicit per-file "Share to library" + "Keep offline copy"; policies updated (live DB + constants).
+- **Settings fixed**: App Font actually applies; Clear Cache confirmation; notification toggles wired; AI Usage Stats dialog; Export My Data (JSON share).
+- **Notes list**: file-type filter (card colors), semester dropdown, search.
+- **Notesy fixes**: no-tools fallback on Groq tool-call failures; guest history → SharedPreferences (no 22P02).
+- **Infra**: cardview 1.1.0 force → 1.0.0; compileSdk 37 junction; Windows coroutine define; flutter_quill ≥11.5.1.
+
+## ⏳ In progress / queued
+
+- [ ] **Phone test pass** of the current APK (search, annotations, local docs scan, type filter).
+- [ ] **FCM push notifications** — notifications die when the app is force-stopped. Firebase project + service. The only major functional gap.
+- [ ] **Admin "Re-index Notes"** — never actually clicked; old notes pile pending.
+
+## 🔮 Later / conditional
+
+- [ ] **R2 swap** — when Cloudinary's 25-credit/month pool starts hurting. `r2-upload` edge function already exists.
+- [ ] **PDF page-level editing** (delete/reorder/merge/split) — blocked: pdfrx has no public page-manipulation API and `pdf` 3.12 can't load existing files. Revisit when either changes.
+- [ ] **PDF form filling / OCR / password** — no viable free path today.
+- [ ] **Play Store decision** — `MANAGE_EXTERNAL_STORAGE` (Local Docs scan) blocks Play Store listing; fine for direct APK installs.
+- [ ] **Kotlin built-in migration** — will be required by future Flutter versions (warning on every build).
+- [ ] **iOS build** — not started.
+- [ ] **Backfill old notes into Telegram backup** (only notes uploaded after the feature have copies).
+- [ ] **Desktop annotate/editing** — flutter_pdf_annotations is mobile-only; desktop uses external tools.
+
+## Done-but-caveated (watch items)
+- flutter_pdf_annotations is a brand-new (April 2026) MIT plugin — test on real devices before trusting important docs.
+- Cloudinary Media Delivery ACL was blocking all PDFs (`deny or ACL failure`); fixed via console checkbox ("PDFs and zip files delivery") + raw-type uploads as insurance.
