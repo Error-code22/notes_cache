@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notesy Desktop Workspace</title>
+    <!-- Tailwind CSS for modern, high-end styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f5f3ff',
+                            100: '#ede9fe',
+                            500: '#8b5cf6',
+                            600: '#7c3aed',
+                            700: '#6d28d9',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Glassmorphism utility */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
+
+    <!-- 1. SIDEBAR NAVIGATION -->
+    <aside class="w-64 bg-white border-r border-slate-200 flex flex-col justify-between hidden md:flex z-20">
+        <div>
+            <!-- App Logo / Header -->
+            <div class="h-16 flex items-center px-6 border-b border-slate-100">
+                <div class="flex items-center space-x-3">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center text-white font-bold shadow-md shadow-brand-500/20">
+                        N
+                    </div>
+                    <span class="font-bold text-lg tracking-tight text-slate-900">Notesy</span>
+                </div>
+            </div>
+
+            <!-- Navigation Links -->
+            <nav class="p-4 space-y-1.5">
+                <a href="#" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl bg-brand-50 text-brand-700 font-medium text-sm transition-colors">
+                    <svg class="w-5 h-5 text-brand-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 font-medium text-sm transition-colors">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                    <span>Academic Notes</span>
+                </a>
+                <a href="#" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 font-medium text-sm transition-colors">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                    <span>Communication</span>
+                </a>
+                <a href="#" class="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 font-medium text-sm transition-colors">
+                    <div class="flex items-center space-x-3">
+                        <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        <span>Memory Lab</span>
+                    </div>
+                    <span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded-full">NEW</span>
+                </a>
+            </nav>
+        </div>
+
+        <!-- Sidebar Footer (Pomodoro Mini-Widget) -->
+        <div class="p-4 m-4 rounded-xl bg-slate-100 border border-slate-200/80">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Focus Timer</span>
+                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            </div>
+            <div class="text-xl font-bold text-slate-800 font-mono">24:50</div>
+            <div class="mt-2 text-[11px] text-slate-500">Session: Organic Chemistry</div>
+        </div>
+    </aside>
+
+    <!-- MAIN VIEWPORT CONTENT -->
+    <div class="flex-1 flex flex-col h-screen overflow-hidden">
+        
+        <!-- TOP HEADER WITH COMMAND PALETTE TRIGGER -->
+        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 z-10">
+            <!-- Command Palette Search Bar Trigger -->
+            <div class="w-96">
+                <button class="w-full flex items-center justify-between px-3.5 py-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-400 text-sm hover:border-slate-300 transition-all shadow-inner">
+                    <span class="flex items-center space-x-2">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                        <span>Search notes, flashcards, or tasks...</span>
+                    </span>
+                    <kbd class="bg-white border border-slate-200 px-2 py-0.5 rounded text-[10px] font-mono text-slate-500 shadow-sm">⌘K</kbd>
+                </button>
+            </div>
+
+            <!-- Right Controls: Theme & Profile -->
+            <div class="flex items-center space-x-4">
+                <button class="w-9 h-9 rounded-xl border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                </button>
+                <div class="flex items-center space-x-3 pl-3 border-l border-slate-200">
+                    <div class="w-9 h-9 rounded-xl bg-brand-500 text-white flex items-center justify-center font-bold text-sm shadow-md shadow-brand-500/20">
+                        DS
+                    </div>
+                    <div class="hidden sm:block text-left">
+                        <p class="text-xs font-bold text-slate-900 leading-tight">Demo Student</p>
+                        <p class="text-[10px] font-medium text-slate-500 uppercase">Computer Science</p>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- DASHBOARD BODY: SPLIT GRID + WIDGETS -->
+        <main class="flex-1 overflow-y-auto p-8 flex gap-8">
+            
+            <!-- Center Main Content (Grid Cards) -->
+            <div class="flex-1 space-y-6">
+                
+                <!-- Contextual Banner: "Continue Where You Left Off" -->
+                <div class="relative overflow-hidden rounded-2xl bg-gradient-to-r from-brand-600 to-indigo-600 p-6 text-white shadow-xl shadow-brand-500/10">
+                    <div class="relative z-10 max-w-lg">
+                        <span class="text-xs font-semibold bg-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider">Resume Learning</span>
+                        <h2 class="text-xl font-bold mt-2">Data Structures & Algorithms: Module 4</h2>
+                        <p class="text-sm text-purple-100 mt-1">You left off on slide 14 of Binary Search Trees.</p>
+                        <button class="mt-4 px-4 py-2 bg-white text-brand-700 font-semibold text-xs rounded-xl shadow hover:bg-purple-50 transition-colors">
+                            Continue Session &rarr;
+                        </button>
+                    </div>
+                    <div class="absolute right-[-20px] bottom-[-20px] w-48 h-48 bg-white/10 rounded-full blur-2xl"></div>
+                </div>
+
+                <!-- 2-Column Grid Layout for Desktop Cards -->
+                <div>
+                    <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Workspace Navigation</h3>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        
+                        <!-- Card 1 -->
+                        <div class="glass-panel p-5 rounded-2xl hover:border-brand-500 transition-all group cursor-pointer flex items-start space-x-4 shadow-sm">
+                            <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 group-hover:bg-brand-500 group-hover:text-white transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-slate-900 text-sm group-hover:text-brand-600 transition-colors">Academic Notes</h4>
+                                <p class="text-xs text-slate-500 mt-1 truncate">Access and share study materials across classes</p>
+                            </div>
+                            <span class="text-slate-300 group-hover:text-brand-500 transition-colors">&rarr;</span>
+                        </div>
+
+                        <!-- Card 2 -->
+                        <div class="glass-panel p-5 rounded-2xl hover:border-brand-500 transition-all group cursor-pointer flex items-start space-x-4 shadow-sm">
+                            <div class="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center flex-shrink-0 group-hover:bg-brand-500 group-hover:text-white transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-slate-900 text-sm group-hover:text-brand-600 transition-colors">Donate Notes</h4>
+                                <p class="text-xs text-slate-500 mt-1 truncate">Share your personal notes with fellow students</p>
+                            </div>
+                            <span class="text-slate-300 group-hover:text-brand-500 transition-colors">&rarr;</span>
+                        </div>
+
+                        <!-- Card 3 -->
+                        <div class="glass-panel p-5 rounded-2xl hover:border-brand-500 transition-all group cursor-pointer flex items-start space-x-4 shadow-sm">
+                            <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0 group-hover:bg-brand-500 group-hover:text-white transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-slate-900 text-sm group-hover:text-brand-600 transition-colors">Communication</h4>
+                                <p class="text-xs text-slate-500 mt-1 truncate">Chat with friends and active study groups</p>
+                            </div>
+                            <span class="text-slate-300 group-hover:text-brand-500 transition-colors">&rarr;</span>
+                        </div>
+
+                        <!-- Card 4 -->
+                        <div class="glass-panel p-5 rounded-2xl hover:border-brand-500 transition-all group cursor-pointer flex items-start space-x-4 shadow-sm relative">
+                            <div class="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center flex-shrink-0 group-hover:bg-brand-500 group-hover:text-white transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center space-x-2">
+                                    <h4 class="font-bold text-slate-900 text-sm group-hover:text-brand-600 transition-colors">Notesy Memory Lab</h4>
+                                    <span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded-full">NEW</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1 truncate">Quizzes, smart flashcards & memory tools</p>
+                            </div>
+                            <span class="text-slate-300 group-hover:text-brand-500 transition-colors">&rarr;</span>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right Sidebar Panel: Context Widgets / Micro-Tools -->
+            <aside class="w-80 hidden lg:flex flex-col space-y-6">
+                
+                <!-- Quick Mini Flashcard Widget -->
+                <div class="glass-panel p-5 rounded-2xl shadow-sm border border-slate-200">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-xs font-bold text-slate-900 uppercase tracking-wider">Daily Flashcard</span>
+                        <span class="text-[11px] text-brand-600 font-semibold">Algoritms</span>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60 text-xs text-slate-700 min-h-[70px] flex items-center justify-center text-center font-medium">
+                        What is the average time complexity of a standard QuickSort?
+                    </div>
+                    <div class="mt-3 flex gap-2">
+                        <button class="flex-1 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-semibold hover:bg-slate-50">Flip Card</button>
+                        <button class="flex-1 py-1.5 bg-brand-600 text-white rounded-lg text-xs font-semibold hover:bg-brand-700">Got it</button>
+                    </div>
+                </div>
+
+                <!-- Activity Stream Widget -->
+                <div class="glass-panel p-5 rounded-2xl shadow-sm border border-slate-200 flex-1">
+                    <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4">Recent Activity</h3>
+                    <div class="space-y-4">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-2 h-2 rounded-full bg-brand-500 mt-1.5 flex-shrink-0"></div>
+                            <div>
+                                <p class="text-xs text-slate-700 font-medium">Uploaded notes for <span class="text-slate-900 font-bold">Physics 101</span></p>
+                                <span class="text-[10px] text-slate-400">2 hours ago</span>
+                            </div>
+                        </div>
+                        <div class="flex items-start space-x-3">
+                            <div class="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0"></div>
+                            <div>
+                                <p class="text-xs text-slate-700 font-medium">Completed Quiz in <span class="text-slate-900 font-bold">Memory Lab</span></p>
+                                <span class="text-[10px] text-slate-400">Yesterday</span>
+                            </div>
+                        </div>
+                        <div class="flex items-start space-x-3">
+                            <div class="w-2 h-2 rounded-full bg-blue-500 mt-1.5 flex-shrink-0"></div>
+                            <div>
+                                <p class="text-xs text-slate-700 font-medium">Joined study group <span class="text-slate-900 font-bold">Data Structures</span></p>
+                                <span class="text-[10px] text-slate-400">3 days ago</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </aside>
+
+        </main>
+    </div>
+
+</body>
+</html>
