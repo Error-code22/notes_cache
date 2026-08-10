@@ -72,7 +72,7 @@ export default function Home() {
               </a>
             </div>
             <p className="text-xs text-gray-400 mt-4">
-              Not sure which one? Try the 64-bit version first. If the phone says "not compatible," use the 32-bit one. After download, allow "install from unknown sources" when prompted.
+              Not sure which one? Try the 64-bit version first. If the phone says "not compatible," use the 32-bit one. Download stalling in Chrome? Long-press the button → "Download link", or use another browser. After download, allow "install from unknown sources" when prompted.
             </p>
           </div>
 
