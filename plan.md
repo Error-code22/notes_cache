@@ -38,6 +38,10 @@ Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
 
 ## 🔮 Later / conditional
 
+- [ ] **Notesy grounding upgrades** (when AI feedback arrives; all free/keyless):
+  1. **Semantic search on chunks** — embeddings instead of keyword-only FTS so Notesy finds concepts, not just words (the real differentiator: it knows *this campus's* notes)
+  2. **Academic APIs** — arXiv + Crossref tools (free, reputable, no keys) for scholarly answers
+  3. **Better web search** — replace DuckDuckGo instant-answer with real result snippets (keyless HTML search or free-tier API); existing sanitization + admin toggle already cover guardrails
 - [ ] **R2 swap** — when Cloudinary's 25-credit/month pool starts hurting. `r2-upload` edge function already exists.
 - [ ] **PDF page-level editing** (delete/reorder/merge/split) — blocked: pdfrx has no public page-manipulation API and `pdf` 3.12 can't load existing files. Revisit when either changes.
 - [ ] **PDF form filling / OCR / password** — no viable free path today.
