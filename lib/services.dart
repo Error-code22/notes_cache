@@ -445,7 +445,8 @@ class AuthService extends ChangeNotifier {
     if (_currentUser == null) return false;
     try {
       await _supabase.from('app_feedback').insert({
-        'user_id': _currentUser!.id,
+        // Guests have no real user id (UUID column would reject 'guest_user')
+        if (!_currentUser!.isGuest) 'user_id': _currentUser!.id,
         'type': type,
         'content': content,
         'created_at': DateTime.now().toIso8601String(),
