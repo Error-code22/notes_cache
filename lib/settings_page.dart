@@ -741,31 +741,6 @@ class _SettingsPageState extends State<SettingsPage> {
             const Divider(height: 1),
             SwitchListTile(
               title: const Text(
-                'Email Updates',
-                style: TextStyle(fontWeight: FontWeight.w500),
-              ),
-              subtitle: const Text(
-                'Notifications via email for important updates',
-                style: TextStyle(fontSize: 12),
-              ),
-              value: _emailUpdates,
-              activeColor: themeProvider.seedColor,
-              onChanged: (val) {
-                setState(() => _emailUpdates = val);
-                _setBoolPref(_prefEmailUpdates, val);
-                if (val && mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Email updates enabled'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                }
-              },
-            ),
-            const Divider(height: 1),
-            SwitchListTile(
-              title: const Text(
                 'Notification Sound',
                 style: TextStyle(fontWeight: FontWeight.w500),
               ),
@@ -827,31 +802,6 @@ class _SettingsPageState extends State<SettingsPage> {
               Icons.cleaning_services_rounded,
               Colors.orange,
               _clearCache,
-            ),
-            const Divider(height: 1),
-            SwitchListTile(
-              title: const Text(
-                'Auto Backup',
-                style: TextStyle(fontWeight: FontWeight.w500),
-              ),
-              subtitle: const Text(
-                'Automatically backup your data',
-                style: TextStyle(fontSize: 12),
-              ),
-              value: _autoBackup,
-              activeColor: themeProvider.seedColor,
-              onChanged: (val) {
-                setState(() => _autoBackup = val);
-                _setBoolPref(_prefAutoBackup, val);
-                if (val && mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Auto backup enabled'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                }
-              },
             ),
             const Divider(height: 1),
             _buildActionTile(
