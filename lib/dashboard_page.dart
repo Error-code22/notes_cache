@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -60,25 +63,29 @@ class _DashboardPageState extends State<DashboardPage> {
     super.initState();
     _connectivity.start();
     _keepAlive.start();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final authService = context.read<AuthService>();
-      final themeProvider = context.read<ThemeProvider>();
-      
-      authService.updateThemeProvider(themeProvider);
-      
-      if (authService.currentUser != null) {
-        themeProvider.setUserId(authService.currentUser!.id);
-        themeProvider.setUserTheme(authService.currentUser!);
-        _setupBackgroundNotifications();
-      } else {
-        // Wait for user to be loaded if session is still recovering
-        authService.addListener(_onAuthChanged);
-      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final authService = context.read<AuthService>();
+        final themeProvider = context.read<ThemeProvider>();
+        
+        authService.updateThemeProvider(themeProvider);
+        
+        if (authService.currentUser != null) {
+          themeProvider.setUserId(authService.currentUser!.id);
+          themeProvider.setUserTheme(authService.currentUser!);
+          _setupBackgroundNotifications();
+        } else {
+          // Wait for user to be loaded if session is still recovering
+          authService.addListener(_onAuthChanged);
+        }
 
-      authService.onYearAutoUpdated = (newYear) {
-        _showCongratulationPopup(newYear);
-      };
-    });
+        authService.onYearAutoUpdated = (newYear) {
+          _showCongratulationPopup(newYear);
+        };
+
+        if (Platform.isAndroid) {
+          unawaited(_checkForUpdate());
+        }
+      });
   }
 
   @override
@@ -249,7 +256,10 @@ class _DashboardPageState extends State<DashboardPage> {
             icon: Icon(context.watch<ThemeProvider>().themeMode == ThemeMode.dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined, color: primaryColor),
             onPressed: () {
               final provider = context.read<ThemeProvider>();
-              provider.setThemeMode(provider.themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark);
+              // system mode renders dark on dark OSes; treat it as light for
+              // toggling so the FIRST click always produces a visible change.
+              final next = provider.themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+              provider.setThemeMode(next);
             },
           ),
           PopupMenuButton<String>(
@@ -534,6 +544,68 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ),
     );
+  }
+
+  /// Happymod-style updater: compares the installed version with the latest
+  /// GitHub release; if newer, offers download + install.
+  Future<void> _checkForUpdate() async {
+    final updateService = UpdateService();
+    final latest = await updateService.getLatestVersion();
+    if (latest == null || !mounted) return;
+
+    final packageInfo = await PackageInfo.fromPlatform();
+    final installed = packageInfo.version;
+    if (!UpdateService.isNewer(installed, latest)) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Update available'),
+        content: Text('A new version of NotesCache is out (v$latest — you have v$installed).\n\nDownload and install it?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _downloadAndInstall(updateService, latest);
+            },
+            child: const Text('DOWNLOAD'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _downloadAndInstall(UpdateService updateService, String version) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Downloading NotesCache v$version...'),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+    final path = await updateService.downloadApk();
+    if (path == null) {
+      if (mounted) {
+        messenger.showSnackBar(const SnackBar(content: Text('Download failed. Check your connection and try again.'), backgroundColor: Colors.red));
+      }
+      return;
+    }
+    final result = await OpenFilex.open(path);
+    if (mounted && result.type != ResultType.done) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(result.type == ResultType.noAppToOpen
+              ? 'Install blocked. Enable "Install unknown apps" for NotesCache in your phone settings, then open the APK.'
+              : 'Could not open installer: ${result.message}'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
   }
 
   void _showLogoutConfirmation(BuildContext context, AuthService authService) {
