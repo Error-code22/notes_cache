@@ -2,6 +2,9 @@
 .next/
 out/
 
+# Netlify CLI local state & caches
+.netlify/
+
 # Dependencies
 node_modules/
 
