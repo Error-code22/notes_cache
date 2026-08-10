@@ -309,6 +309,45 @@ class _UploadNotePageState extends State<UploadNotePage> {
     final user = context.watch<AuthService>().currentUser;
     final isStudent = user?.hasRole(UserRole.student) ?? true;
 
+    // Guests can't upload to the main library (use Donate instead).
+    if (user?.isGuest == true) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Upload Notes', style: TextStyle(fontWeight: FontWeight.bold)),
+          centerTitle: true,
+          elevation: 0,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.lock_outline_rounded, size: 64, color: theme.colorScheme.primary.withOpacity(0.3)),
+                const SizedBox(height: 20),
+                const Text('Sign in to upload notes', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                Text(
+                  'As a guest you can browse the library. Sign in to share notes — or use the Donate section to contribute anonymously.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6), fontSize: 14, height: 1.5),
+                ),
+                const SizedBox(height: 28),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pushNamed(context, '/login'),
+                  icon: const Icon(Icons.login_rounded),
+                  label: const Text('SIGN IN'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Upload Notes', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -331,28 +370,6 @@ class _UploadNotePageState extends State<UploadNotePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (user?.isGuest == true)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 24),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.privacy_tip_outlined, color: Colors.orange),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Text(
-                          'Notice: As a Guest, your uploaded notes will be stored permanently, but your other activity will not be saved.',
-                          style: TextStyle(fontSize: 12, color: Colors.orange.shade800, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               if (_selectedFiles.isEmpty) ...[
                 _buildUploadPlaceholder(theme),
               ] else ...[

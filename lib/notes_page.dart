@@ -363,7 +363,7 @@ class _NotesPageState extends State<NotesPage> {
           ),
         ),
       ),
-      floatingActionButton: (user.hasRole(UserRole.lecturer) || user.hasRole(UserRole.admin) || user.isGuest)
+      floatingActionButton: (user.hasRole(UserRole.lecturer) || user.hasRole(UserRole.admin))
           ? FloatingActionButton.extended(
               onPressed: () {
                 Navigator.push(
