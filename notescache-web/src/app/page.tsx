@@ -4,8 +4,9 @@ const WHATSAPP_GROUP = 'https://chat.whatsapp.com/DkqyCtURIAiKOhEijE8rZT'
 const WHATSAPP_SUPPORT = 'https://wa.me/254703300084'
 const GITHUB_REPO = 'https://github.com/Error-code22/notes_cache'
 const RELEASE_PAGE = 'https://github.com/Error-code22/notes_cache/releases'
-const APK_ARM64 = 'https://github.com/Error-code22/notes_cache/releases/download/v1.0.0/NotesCache-arm64-v8a.apk'
-const APK_V7A = 'https://github.com/Error-code22/notes_cache/releases/download/v1.0.0/NotesCache-armeabi-v7a.apk'
+// 'latest' auto-points to the newest release — no URL changes needed on updates
+const APK_ARM64 = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk'
+const APK_V7A = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-armeabi-v7a.apk'
 
 export default function Home() {
   return (
