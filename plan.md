@@ -27,14 +27,23 @@ Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
 
 ## ⏳ In progress / queued
 
-- [ ] **Phone test pass** of the release APK (`app-arm64-v8a-release.apk`) — search, annotations, scan, offline, editors.
-- [ ] **Deploy the web landing page** — DONE at notescache.netlify.app (keep in sync via `npx netlify deploy --prod --build`).
-- [ ] **v1.0.1 release** — bump `version:` in pubspec.yaml + rebuild + upload to the existing release (direct links auto-update via `/latest/`).
-- [ ] **DOCX/PPTX visual rendering (no server)** — replace the flat-text docx editor with a WebView renderer using `docx-preview.js` + `pptxviewjs` (server-free, real fonts/tables/layout). **View + annotate model** (same as PDF: overlay strokes/highlights stored separately — content editing is a different app's worth of scope). Editing note: keep a "plain text edit" fallback for the markers format; OR keep the current text editor as the edit mode and use WebView as preview mode.
+- [ ] **v1.0.2 release** — bundle the recent fixes: guests blocked from uploads, demo-mode banner, theme toggle (first-click) fix, desktop Local Docs folder picker, lazy 1850-doc list, in-app updater, clearer card wording. Rebuild APKs + Windows zip → upload → users get the in-app update toast automatically.
+- [ ] **Phone test pass** of the current build — search, annotations, offline, editors, updater.
+- [ ] **DOCX/PPTX visual rendering (no server)** — replace the flat-text docx editor with a WebView renderer using `docx-preview.js` + `pptxviewjs` (server-free, real fonts/tables/layout). **View + annotate model** (same as PDF). Editing note: keep the text editor as edit mode, WebView as preview mode.
 - [ ] **FCM push notifications** — notifications die when the app is force-stopped. Firebase project + service. The only major functional gap.
-- [ ] **In-app update flow (Happymod/Snaptube style)** — toast "update available" → download APK → install. Flutter: `upgrader` for the check/toast UI, http download of the APK, `flutter_app_installer` for install. Needs: APK hosted somewhere stable (GitHub releases), `REQUEST_INSTALL_PACKAGES` permission (one-time "allow unknown sources"), and it only applies to direct-APK distribution (Play Store handles updates itself). Android-only.
 - [ ] **Admin "Re-index Notes"** — never actually clicked; old notes pile pending.
 - [ ] **Delete old .ppt/.doc originals** from Cloudinary (~12MB, currently kept as safety).
+
+## ✅ Done (recent, not yet released to users — ships in v1.0.2)
+
+- **In-app updater (Happymod-style)** — checks GitHub latest release on app open; "Update available" dialog → download → system installer. No new dependencies.
+- **Guests blocked from library uploads** (FAB + page gate; Donate remains the anonymous channel).
+- **Theme toggle fixed** — first click from system mode now actually changes theme (was an invisible no-op).
+- **Desktop Local Docs** — folder picker replaces the phone-style scan on Windows.
+- **Local Docs lazy list** — 1850+ docs scroll smoothly.
+- **Demo-mode yellow banner** on dashboard for guests.
+- **Card wording clarified** — Academic Notes = browse/read; Donate = contribute.
+- **Email confirmation disabled** — signups are instant now (was the launch blocker).
 
 ## 🔮 Later / conditional
 
