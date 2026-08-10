@@ -38,6 +38,16 @@ Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
 
 ## 🔮 Later / conditional
 
+- [ ] **Desktop workspace dashboard** (designed, not yet built — mockup reviewed):
+  - Shell: sidebar nav (Dashboard/Notes/Communication/Memory Lab), top bar with ⌘K-style search, split main view — standard desktop grammar, all Flutter-native (no new plugins)
+  - Widgets and their honest data sources:
+    - Resume Learning banner → needs **last-opened-note logging** (new, small: log note opens, resume from last file)
+    - Workspace navigation cards → already exist (real)
+    - Daily Flashcard widget → pull from existing Memory Lab quiz generator (real, wiring only)
+    - Recent Activity → real today (uploads via getUserActivity); quiz/chat events come later
+    - Focus Timer → new, self-contained (dart:async only)
+  - Rule: no fake data widgets (learned from the mock cleanup). Build shell with real data first, placeholder-labeled widgets after.
+  - Reuse brand colors (indigo seed, not the mock's purple); responsive: sidebar collapses to bottom nav on mobile.
 - [ ] **Notesy grounding upgrades** (when AI feedback arrives; all free/keyless):
   1. **Semantic search on chunks** — embeddings instead of keyword-only FTS so Notesy finds concepts, not just words (the real differentiator: it knows *this campus's* notes)
   2. **Academic APIs** — arXiv + Crossref tools (free, reputable, no keys) for scholarly answers
