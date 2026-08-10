@@ -649,7 +649,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       onTap: () {
         if (title == 'Manage Users') Navigator.push(context, MaterialPageRoute(builder: (context) => const UserManagerPage()));
         else if (title == 'Feedback Explorer') Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackExplorerPage()));
-        else if (title == 'Push Update') _showPushUpdateDialog(context);
+        else if (title == 'Push Update') Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdatesManagerPage()));
         else if (title == 'Pricing & Plans') Navigator.push(context, MaterialPageRoute(builder: (context) => const PricingPage()));
         else if (title == 'Archive Chats') _archiveChats(context);
         else if (title == 'Re-index Notes') _reindexAllNotes(context);
@@ -792,6 +792,164 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class UpdatesManagerPage extends StatefulWidget {
+  const UpdatesManagerPage({super.key});
+
+  @override
+  State<UpdatesManagerPage> createState() => _UpdatesManagerPageState();
+}
+
+class _UpdatesManagerPageState extends State<UpdatesManagerPage> {
+  List<Map<String, dynamic>> _updates = [];
+  bool _loading = true;
+  final _titleController = TextEditingController();
+  final _contentController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _contentController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final updates = await context.read<NoteService>().getAppUpdates();
+    if (mounted) {
+      setState(() {
+        _updates = updates;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _addUpdate() async {
+    if (_titleController.text.trim().isEmpty || _contentController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Title and message are required.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    await context.read<NoteService>().insertAppUpdate(
+          _titleController.text.trim(),
+          _contentController.text.trim(),
+        );
+    _titleController.clear();
+    _contentController.clear();
+    if (mounted) Navigator.pop(context);
+    await _load();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Announcement sent!'), backgroundColor: Colors.green),
+      );
+    }
+  }
+
+  Future<void> _deleteUpdate(String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete update?'),
+        content: const Text('This removes the announcement. Users who haven\'t seen it won\'t get it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await context.read<NoteService>().deleteAppUpdate(id);
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('App Updates Manager', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'New update',
+            icon: const Icon(Icons.add_rounded),
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('New Announcement'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: _titleController,
+                      decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _contentController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(labelText: 'Message', border: OutlineInputBorder()),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                  ElevatedButton(onPressed: () {
+                    Navigator.pop(ctx);
+                    _addUpdate();
+                  }, child: const Text('Send')),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _updates.isEmpty
+              ? const Center(child: Text('No updates yet.'))
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _updates.length,
+                    itemBuilder: (context, i) {
+                      final u = _updates[i];
+                      return Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 8),
+                        color: theme.cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(color: theme.dividerColor.withOpacity(0.08)),
+                        ),
+                        child: ListTile(
+                          leading: const Icon(Icons.campaign_outlined, color: Colors.purple),
+                          title: Text(u['title'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                          subtitle: Text(u['content'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                          isThreeLine: false,
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 20),
+                            onPressed: () => _deleteUpdate(u['id'].toString()),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
     );
   }
 }

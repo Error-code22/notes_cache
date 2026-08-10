@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -157,6 +158,25 @@ class _SettingsPageState extends State<SettingsPage> {
       title: 'NotesCache Test',
       body: 'Notifications are working perfectly!',
     );
+  }
+
+  /// Requests the system notification permission (Android 13+ shows a prompt;
+  /// if it was denied once, this re-opens the request).
+  Future<void> _requestNotificationPermission() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final plugin = FlutterLocalNotificationsPlugin();
+      final android = plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      final granted = await android?.requestNotificationsPermission() ?? true;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(granted ? '✅ Notifications enabled' : 'Notifications denied — enable them in your phone\'s app settings.'),
+          backgroundColor: granted ? Colors.green : Colors.orange,
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not request permission: $e'), backgroundColor: Colors.red));
+    }
   }
 
   /// Exports the user's notes and profile as a shareable JSON file.
@@ -762,6 +782,14 @@ class _SettingsPageState extends State<SettingsPage> {
               Icons.notification_important_outlined,
               Colors.indigo,
               _testNotification,
+            ),
+            const Divider(height: 1),
+            _buildActionTile(
+              'Notification Permission',
+              'Enable system notifications for this app',
+              Icons.notifications_active_outlined,
+              Colors.teal,
+              _requestNotificationPermission,
             ),
           ]),
           const SizedBox(height: 24),
