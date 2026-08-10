@@ -69,7 +69,7 @@ class PricingPage extends StatelessWidget {
               ],
               currentPlan: false,
               buttonText: 'Subscribe',
-              onSelected: () => _showMpesaDialog(context, 'Student Pro', 250),
+              onSelected: () => _showComingSoon(context, 'Student Pro'),
             ),
             const SizedBox(height: 16),
 
@@ -118,53 +118,14 @@ class PricingPage extends StatelessWidget {
     );
   }
 
-  void _showMpesaDialog(BuildContext context, String plan, int amount) {
-    final phoneController = TextEditingController();
+  void _showComingSoon(BuildContext context, String plan) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Subscribe to $plan'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.phone_android, size: 48, color: Colors.green[700]),
-            const SizedBox(height: 16),
-            Text('KSh $amount/month', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: phoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'M-Pesa Phone Number',
-                hintText: '0712345678',
-                prefixIcon: Icon(Icons.phone),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'An M-Pesa STK push will be sent to your phone to complete payment.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+        title: Text('$plan — coming soon'),
+        content: const Text('Payments aren\'t live yet. This app is free while we finish setup — when paid plans launch, you\'ll see it in the app updates.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('M-Pesa payment initiated! Check your phone for the STK push.'),
-                  backgroundColor: Colors.green,
-                ),
-              );
-            },
-            icon: const Icon(Icons.payment),
-            label: const Text('Pay with M-Pesa'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green[700]),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
         ],
       ),
     );
