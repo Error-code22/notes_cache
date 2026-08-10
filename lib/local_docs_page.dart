@@ -100,6 +100,11 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   }
 
   Future<void> _checkPermission() async {
+    // Desktop: no storage permission needed — the OS folder picker is used.
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      if (mounted) setState(() => _hasPermission = true);
+      return;
+    }
     // Android 11+: MANAGE_EXTERNAL_STORAGE ("all files access").
     // Android 10 and below: READ_EXTERNAL_STORAGE (legacy).
     if (await Permission.manageExternalStorage.isGranted) {
@@ -165,6 +170,30 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('📄 Found ${unique.length} document(s) on this device'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    }
+  }
+
+  /// Desktop (Windows/Linux/macOS): pick a folder and scan it instead of
+  /// the phone-style whole-device scan.
+  Future<void> _pickFolderOnDesktop() async {
+    final path = await FilePicker.getDirectoryPath();
+    if (path == null) return;
+    setState(() => _scanning = true);
+    final found = <File>[];
+    await _walk(Directory(path), found, depth: 0, maxDepth: 8);
+    if (!mounted) return;
+    setState(() {
+      _scanned = found..sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
+      _scanning = false;
+    });
+    await _saveScannedFlag();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('📄 Found ${found.length} document(s) in that folder'),
           backgroundColor: Colors.blue,
         ),
       );
@@ -380,12 +409,56 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
 
   // ── TAB 1: Scan the device (open in place, no copies) ──────
   Widget _buildScanTab(ThemeData theme, Color primaryColor) {
+    final isDesktop = !Platform.isAndroid && !Platform.isIOS;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!_hasPermission)
+          if (isDesktop) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: theme.colorScheme.primary.withOpacity(0.15)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.folder_open_rounded),
+                      SizedBox(width: 10),
+                      Expanded(child: Text('Choose a folder on this computer to browse its documents.', style: TextStyle(fontWeight: FontWeight.w600))),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: _scanning ? null : _pickFolderOnDesktop,
+                    icon: _scanning
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.folder_open_rounded),
+                    label: Text(_scanning ? 'Scanning...' : 'CHOOSE FOLDER'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (_scanned.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Text('Pick a folder above — documents appear here and open in the in-app editors.',
+                      textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4))),
+                ),
+              )
+            else ...[
+              Text('${_scanned.length} document(s) found — opened in place, nothing is copied', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
+              const SizedBox(height: 8),
+              for (final file in _scanned) _buildScannedTile(theme, primaryColor, file),
+            ],
+          ] else if (!_hasPermission)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(

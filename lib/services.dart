@@ -1603,6 +1603,60 @@ class AiChatService {
   }
 }
 
+/// Checks for app updates via the GitHub releases API and downloads the new
+/// APK for in-app installation (Happymod-style flow).
+class UpdateService {
+  static const String _latestUrl =
+      'https://api.github.com/repos/Error-code22/notes_cache/releases/latest';
+
+  /// Fetches the newest version tag (e.g. "1.0.2") from GitHub. null on failure.
+  Future<String?> getLatestVersion() async {
+    try {
+      final response = await http.get(Uri.parse(_latestUrl)).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final tag = (data['tag_name'] as String? ?? '').replaceFirst(RegExp(r'^v'), '');
+      return tag.isEmpty ? null : tag;
+    } catch (e) {
+      debugPrint('UpdateService version check error: $e');
+      return null;
+    }
+  }
+
+  /// Direct download URL for the arm64 APK of the latest release.
+  String get apkDownloadUrl =>
+      'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk';
+
+  /// Compares "1.0.1" vs "1.0.2"; true when [installed] < [latest].
+  static bool isNewer(String installed, String latest) {
+    final a = installed.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+    final b = latest.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+    for (var i = 0; i < a.length || i < b.length; i++) {
+      final av = i < a.length ? a[i] : 0;
+      final bv = i < b.length ? b[i] : 0;
+      if (av != bv) return av < bv;
+    }
+    return false;
+  }
+
+  /// Downloads the APK to the app directory (with progress callback) and
+  /// returns the file path, or null on failure.
+  Future<String?> downloadApk({void Function(double progress)? onProgress}) async {
+    try {
+      final appDir = await NoteService().getAppDirectory();
+      final target = File('$appDir\\notescache_update.apk');
+      final response = await http.get(Uri.parse(apkDownloadUrl)).timeout(const Duration(minutes: 5));
+      if (response.statusCode != 200) return null;
+      await target.writeAsBytes(response.bodyBytes);
+      onProgress?.call(1.0);
+      return target.path;
+    } catch (e) {
+      debugPrint('UpdateService download error: $e');
+      return null;
+    }
+  }
+}
+
 /// Monitors internet connectivity and exposes [isOnline] as a [ValueNotifier].
 /// Call [start] once (e.g. in [DashboardPage.initState]) and [dispose] when done.
 class ConnectivityService {
