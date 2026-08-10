@@ -60,3 +60,6 @@ next_fixes.md
 # Build artifacts
 *.g.dart
 *.freezed.dart
+
+# Local Netlify folder
+.netlify

@@ -1,6 +1,37 @@
 # Project Progress Log 🚀📈
 
-## Latest Milestone: Bug Hunt Round + First Release Build (2026-08-06)
+## Latest Milestone: Public Launch & Secret-Leak Cleanup (2026-08-07)
+
+### 1. The Leak (what happened)
+- Repo made **public** → GitHub/Supabase/Google scanners found secrets inside the **committed APKs** (`releases/` folder, old commit).
+- **Root cause:** pubspec bundles `.env` as an asset → **every APK ever built contained the whole old `.env`** — including SUPABASE_SECRET_KEY, Cloudinary API secret, Telegram bot token, Groq/Gemini keys, Drive client secret, and (in older builds) the GCP `service_account.json`.
+- Fallout: Supabase **revoked** the sb_secret key; Google **disabled** the GCP service-account key.
+
+### 2. The Cleanup (all done)
+- **`.env` stripped to public-only values** (URL, anon key, publishable key, Drive client ID). Server-only secrets now live ONLY in Supabase Edge Function secrets. Comment added to `.env` warning never to add secrets there.
+- **Git history purged** — `releases/` removed from all commits (filter-branch + force-push).
+- **APKs rebuilt with the clean `.env`** and verified secret-free (extracted the bundled `.env` from the APK and checked every secret string — all gone). Release assets replaced (same names → links unchanged).
+- **Keys rotated:** Groq (user), Cloudinary (new key `814129955457977` — verified working in edge functions), Telegram (new token, verified end-to-end: backup mirror posted message 204), Supabase secret (regenerated, stored in password manager only), GCP service key (disabled by Google; delete console entry at leisure), Gemini (ignored — unused).
+- supabase CLI **reinstalled** (npm global, v2.113.0 — old binary vanished from PATH; `supabase login` redone by user).
+
+### 3. notescache-web (landing/download site)
+- **Full Next.js web-app source was lost** during the leak cleanup (interrupted `git checkout` synced the folder to a commit that lacked the source; the stash holding it was pruned by `git gc`). Compiled `.next` output survived but the TSX/configs didn't.
+- **Rebuilt as a minimal Next.js 16 static landing page** (download hub): hero, APK download buttons (arm64/v7a, auto-updating `/releases/latest/download/...` URLs), GitHub link, WhatsApp group + support. "Web version coming soon" note.
+- **Deployed to Netlify** (static export, `output: 'export'`): **https://notescache.netlify.app** (renamed from the random slug). Deploy command: `cd notescache-web && npx netlify deploy --prod --build`.
+- Gitignores added: `.next/`, `.netlify/`, `.env*.local` (node_modules was already covered by root gitignore).
+
+### 4. Distribution chain (final)
+- **GitHub release** = canonical downloads: `github.com/Error-code22/notes_cache/releases/tag/v1.0.0` (3 APKs, clean).
+- **Direct APK link** (what goes in WhatsApp groups): `github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk` — auto-points to newest release.
+- **Landing page** = notescache.netlify.app (links to both).
+- Zero downloads of the leaky APKs were ever recorded (repo was private; release created after cleanup).
+
+### 5. Lessons (codified in AGENTS.md)
+- Never put server secrets in `.env` — it's bundled into the APK as an asset. Only public values (Supabase URL/anon/publishable) belong there.
+- Edge function secrets are the ONLY home for server credentials.
+- Check `git add -A` output for stray build folders (`.next`, `.netlify`) before committing.
+
+## Previous Milestone: Bug Hunt Round + First Release Build (2026-08-06)
 
 ### Bug fixes (this round)
 - **docx blank editor — root cause found**: XML parser matched elements with `namespace: 'w'` (a *prefix*) but package:xml matches by namespace URI — every document silently parsed as empty. Fixed; verified with real library file (361 paragraphs extracted). New `tool/test_docs.dart` for parser regression tests.

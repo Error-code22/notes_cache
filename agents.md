@@ -67,6 +67,15 @@ No sign-in wall: app opens to dashboard; `AuthService` auto-enters guest mode (`
 - flutter_quill pinned ≥11.5.1 (11.5.0 crashes on Flutter 3.44: missing implementations in `QuillRawEditorState`).
 - Edge functions deploy with: `supabase functions deploy <name> [--no-verify-jwt]` (keepalive uses no-verify-jwt).
 
+## SECURITY — CRITICAL (learned the hard way)
+- **NEVER put server secrets in `.env`.** pubspec bundles `.env` as an app asset → every APK ships its contents. Only PUBLIC values belong there: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_PUBLISHABLE_KEY, GOOGLE_DRIVE_CLIENT_ID. There's a comment in `.env` saying exactly this.
+- Server-only credentials (Cloudinary API key/secret, Telegram bot token, Groq keys, Supabase service/secret keys) live **exclusively in Supabase Edge Function secrets** (`supabase secrets set ...`). They must never exist in `.env`, git, or the repo.
+- When rotating: update the edge secret BEFORE deleting the old credential in the provider console (upload/backup functions break otherwise).
+- `git add -A` can sweep stray build folders — `.next/`, `.netlify/`, `releases/` must stay ignored (notescache-web/.gitignore + root .gitignore cover these now).
+- `.env` is public-key-only → safe to distribute. Verify a release APK is clean by unzipping it and reading `assets/flutter_assets/.env` before publishing.
+- GitHub release direct-download pattern: `/releases/latest/download/<asset-name>` auto-points to the newest release.
+- Landing page (notescache-web, Next.js static export) deploys via `npx netlify deploy --prod --build` from that folder; site = notescache.netlify.app.
+
 ## Edge Functions inventory
 | Function | Purpose | Notes |
 |---|---|---|
