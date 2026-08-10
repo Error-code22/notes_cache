@@ -29,6 +29,7 @@ class ThemeProvider extends ChangeNotifier {
   String _fontFamily = 'Inter';
   double _textScale = 1.0;
   String? _currentUserId;
+  bool _userCustomized = false; // set once the user manually changes theme
 
   ThemeMode get themeMode => _themeMode;
   Color get seedColor => _seedColor;
@@ -39,6 +40,9 @@ class ThemeProvider extends ChangeNotifier {
   void setUserId(String? id) { _currentUserId = id; }
 
   void setUserTheme(UserProfile user) {
+    // Never override a theme the user changed manually this session
+    // (profile loads asynchronously and used to clobber the first click).
+    if (_userCustomized) return;
     _themeMode = user.themeMode == 'light' ? ThemeMode.light : (user.themeMode == 'dark' ? ThemeMode.dark : ThemeMode.system);
     _seedColor = Color(user.themeColor);
     _fontFamily = user.themeFont;
@@ -58,18 +62,21 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   Future<void> setThemeMode(ThemeMode m) async {
+    _userCustomized = true;
     _themeMode = m; notifyListeners();
     (await SharedPreferences.getInstance()).setString(_themeKey, m.name);
     _syncToSupabase();
   }
 
   Future<void> setSeedColor(Color c) async {
+    _userCustomized = true;
     _seedColor = c; notifyListeners();
     (await SharedPreferences.getInstance()).setInt(_colorKey, c.value);
     _syncToSupabase();
   }
 
   Future<void> setFontFamily(String f) async {
+    _userCustomized = true;
     _fontFamily = f; notifyListeners();
     (await SharedPreferences.getInstance()).setString(_fontKey, f);
     _syncToSupabase();
