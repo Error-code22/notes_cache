@@ -410,125 +410,143 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   // ── TAB 1: Scan the device (open in place, no copies) ──────
   Widget _buildScanTab(ThemeData theme, Color primaryColor) {
     final isDesktop = !Platform.isAndroid && !Platform.isIOS;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isDesktop) ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: theme.colorScheme.primary.withOpacity(0.15)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.folder_open_rounded),
-                      SizedBox(width: 10),
-                      Expanded(child: Text('Choose a folder on this computer to browse its documents.', style: TextStyle(fontWeight: FontWeight.w600))),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    onPressed: _scanning ? null : _pickFolderOnDesktop,
-                    icon: _scanning
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.folder_open_rounded),
-                    label: Text(_scanning ? 'Scanning...' : 'CHOOSE FOLDER'),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (_scanned.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Text('Pick a folder above — documents appear here and open in the in-app editors.',
-                      textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4))),
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: _buildScanHeader(theme, primaryColor, isDesktop),
+        ),
+        Expanded(
+          child: _scanned.isEmpty
+              ? _buildScanEmpty(theme, isDesktop)
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: Text('${_scanned.length} document(s) found — opened in place, nothing is copied',
+                          style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
+                    ),
+                    // Lazy list: only visible tiles are built (1850+ docs scroll smoothly)
+                    Expanded(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                        itemCount: _scanned.length,
+                        itemBuilder: (context, index) => _buildScannedTile(theme, primaryColor, _scanned[index]),
+                      ),
+                    ),
+                  ],
                 ),
-              )
-            else ...[
-              Text('${_scanned.length} document(s) found — opened in place, nothing is copied', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
-              const SizedBox(height: 8),
-              for (final file in _scanned) _buildScannedTile(theme, primaryColor, file),
-            ],
-          ] else if (!_hasPermission)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.orange.withOpacity(0.25)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.lock_open_rounded, color: Colors.orange),
-                      SizedBox(width: 10),
-                      Expanded(child: Text('Connect device storage to find documents scattered across your phone.', style: TextStyle(fontWeight: FontWeight.w600))),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'One-time setup: Android will ask you to allow "All files access". The app only reads documents (PDF, Word, PowerPoint, Excel, text) — never photos or media. You can revoke this anytime in Android settings.',
-                    style: TextStyle(fontSize: 12, height: 1.4),
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    onPressed: _requestAccess,
-                    icon: const Icon(Icons.link_rounded),
-                    label: const Text('CONNECT DEVICE STORAGE'),
-                  ),
-                ],
-              ),
-            )
-          else ...[
-            Row(
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScanHeader(ThemeData theme, Color primaryColor, bool isDesktop) {
+    if (isDesktop) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: theme.colorScheme.primary.withOpacity(0.15)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
               children: [
-                Icon(Icons.check_circle_rounded, color: Colors.green, size: 18),
-                const SizedBox(width: 8),
-                const Text('Device access granted', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.green, fontSize: 13)),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _scanning ? null : _scanDevice,
-                  icon: _scanning
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.refresh_rounded, size: 18),
-                  label: Text(_scanning ? 'Scanning...' : 'Rescan'),
-                ),
+                Icon(Icons.folder_open_rounded),
+                SizedBox(width: 10),
+                Expanded(child: Text('Choose a folder on this computer to browse its documents.', style: TextStyle(fontWeight: FontWeight.w600))),
               ],
             ),
             const SizedBox(height: 12),
-            if (_scanning)
-              const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
-            else if (_scanned.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Column(
-                    children: [
-                      Icon(Icons.folder_off_outlined, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
-                      const SizedBox(height: 12),
-                      Text(_scannedBefore ? 'No documents found. Tap Rescan.' : 'Tap "Connect device storage" above, then documents appear here.', textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4))),
-                    ],
-                  ),
-                ),
-              )
-            else ...[
-              Text('${_scanned.length} document(s) found — opened in place, nothing is copied', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
-              const SizedBox(height: 8),
-              for (final file in _scanned) _buildScannedTile(theme, primaryColor, file),
-            ],
+            ElevatedButton.icon(
+              onPressed: _scanning ? null : _pickFolderOnDesktop,
+              icon: _scanning
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.folder_open_rounded),
+              label: Text(_scanning ? 'Scanning...' : 'CHOOSE FOLDER'),
+            ),
           ],
-        ],
+        ),
+      );
+    }
+
+    if (!_hasPermission) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.orange.withOpacity(0.25)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.lock_open_rounded, color: Colors.orange),
+                SizedBox(width: 10),
+                Expanded(child: Text('Connect device storage to find documents scattered across your phone.', style: TextStyle(fontWeight: FontWeight.w600))),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'One-time setup: Android will ask you to allow "All files access". The app only reads documents (PDF, Word, PowerPoint, Excel, text) — never photos or media. You can revoke this anytime in Android settings.',
+              style: TextStyle(fontSize: 12, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: _requestAccess,
+              icon: const Icon(Icons.link_rounded),
+              label: const Text('CONNECT DEVICE STORAGE'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        const Icon(Icons.check_circle_rounded, color: Colors.green, size: 18),
+        const SizedBox(width: 8),
+        const Text('Device access granted', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.green, fontSize: 13)),
+        const Spacer(),
+        TextButton.icon(
+          onPressed: _scanning ? null : _scanDevice,
+          icon: _scanning
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.refresh_rounded, size: 18),
+          label: Text(_scanning ? 'Scanning...' : 'Rescan'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScanEmpty(ThemeData theme, bool isDesktop) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.folder_off_outlined, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
+            const SizedBox(height: 12),
+            Text(
+              isDesktop
+                  ? 'Pick a folder above — documents appear here and open in the in-app editors.'
+                  : (_scannedBefore ? 'No documents found. Tap Rescan.' : 'Tap "Connect device storage" above, then documents appear here.'),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4)),
+            ),
+          ],
+        ),
       ),
     );
   }
