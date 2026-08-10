@@ -280,6 +280,39 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       body: Column(
         children: [
+          // Demo-mode banner — shown for guests
+          if (user.isGuest)
+            Material(
+              color: Colors.amber.shade600,
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline_rounded, color: Colors.white, size: 18),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Demo mode: browsing & donating only. Sign in for full access.',
+                          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => Navigator.pushNamed(context, '/login'),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          child: Text(
+                            'SIGN IN',
+                            style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold, decoration: TextDecoration.underline),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           // Offline banner — shown only when connectivity is lost
           ValueListenableBuilder<bool>(
             valueListenable: _connectivity.isOnline,
@@ -322,7 +355,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           _buildHubCard(
                             context,
                             'Academic Notes',
-                            'Access and share study materials',
+                            'Browse and read the shared library',
                             Icons.menu_book_rounded,
                             Colors.blue,
                             () => Navigator.push(context, MaterialPageRoute(builder: (context) => NotesPage(connectivity: _connectivity))),
@@ -331,7 +364,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           _buildHubCard(
                             context,
                             'Donate Notes',
-                            'Share your notes with fellow students',
+                            'Contribute your own notes (no sign-in needed)',
                             Icons.volunteer_activism,
                             Colors.pink,
                             () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DonateNotesPage())),
