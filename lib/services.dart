@@ -1040,9 +1040,32 @@ class NoteService {
     try {
       final List<dynamic> data = await _supabase
           .from('app_feedback')
-          .select('*, profiles(full_name)')
+          .select('id, type, content, user_id, created_at')
           .order('created_at', ascending: false);
-      return data.map((item) => AppFeedback.fromMap(item)).toList();
+      final feedback = data.map((item) => AppFeedback.fromMap(item)).toList();
+
+      // Resolve names in a second pass — embedding profiles() can 400 the
+      // whole query under RLS when some profiles aren't public.
+      final ids = feedback
+          .map((f) => f.userId)
+          .whereType<String>()
+          .where((i) => i.isNotEmpty)
+          .toSet();
+      if (ids.isNotEmpty) {
+        try {
+          final profiles = await _supabase
+              .from('profiles')
+              .select('id, full_name')
+              .inFilter('id', ids.toList());
+          final nameMap = {for (final p in profiles) p['id'].toString(): (p['full_name'] as String? ?? '')};
+          for (final f in feedback) {
+            f.userName = nameMap[f.userId] ?? f.userId;
+          }
+        } catch (e) {
+          debugPrint('Profile name fetch error: $e');
+        }
+      }
+      return feedback;
     } catch (e) {
       debugPrint('Error fetching feedback: $e');
       return [];
@@ -1054,6 +1077,30 @@ class NoteService {
       await _supabase.from('app_updates').insert({'title': title, 'content': content});
     } catch (e) {
       debugPrint('Error inserting app update: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getAppUpdates() async {
+    try {
+      final data = await _supabase
+          .from('app_updates')
+          .select('id, title, content, created_at')
+          .order('created_at', ascending: false)
+          .limit(50);
+      return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('getAppUpdates error: $e');
+      return [];
+    }
+  }
+
+  Future<bool> deleteAppUpdate(String id) async {
+    try {
+      await _supabase.from('app_updates').delete().eq('id', id);
+      return true;
+    } catch (e) {
+      debugPrint('deleteAppUpdate error: $e');
+      return false;
     }
   }
 

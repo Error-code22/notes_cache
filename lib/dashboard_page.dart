@@ -374,7 +374,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           _buildHubCard(
                             context,
                             'Donate Notes',
-                            'Contribute your own notes (no sign-in needed)',
+                            'Share notes with everyone on the app',
                             Icons.volunteer_activism,
                             Colors.pink,
                             () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DonateNotesPage())),

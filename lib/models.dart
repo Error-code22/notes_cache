@@ -233,7 +233,7 @@ class AppFeedback {
   final String type; // 'bug' or 'feature'
   final String content;
   final DateTime createdAt;
-  final String? userName;
+  String? userName;
 
   AppFeedback({
     required this.id,
