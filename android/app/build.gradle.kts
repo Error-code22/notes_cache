@@ -33,7 +33,7 @@ android {
         applicationId = "com.notescache.notes_cache"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 30 // Android 11+ only (permission handling simplified)
+        minSdk = 24 // Android 7+ (legacy storage permission path handles 7-10; MANAGE_EXTERNAL_STORAGE on 11+)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

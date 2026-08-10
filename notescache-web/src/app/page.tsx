@@ -7,6 +7,7 @@ const RELEASE_PAGE = 'https://github.com/Error-code22/notes_cache/releases'
 // 'latest' auto-points to the newest release — no URL changes needed on updates
 const APK_ARM64 = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk'
 const APK_V7A = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-armeabi-v7a.apk'
+const WIN_ZIP = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-Windows.zip'
 
 export default function Home() {
   return (
@@ -34,13 +35,13 @@ export default function Home() {
             Access lecture notes, chat with classmates, and get AI-powered study help — all in one place.
           </p>
           <p className="text-sm text-indigo-600 font-semibold mb-10">
-            📱 Android app available now — full web version coming soon
+            📱 Android & 🖥️ Windows available now — full web version coming soon
           </p>
 
           <div className="bg-white rounded-2xl shadow-sm border p-8 max-w-lg mx-auto">
             <h3 className="text-xl font-semibold mb-2">Download the App</h3>
             <p className="text-sm text-gray-500 mb-6">
-              Pick the APK for your phone. Android 11 or newer required.
+              Pick the APK for your phone. Android 7 or newer required.
             </p>
             <div className="flex flex-col gap-3">
               <a
@@ -56,6 +57,12 @@ export default function Home() {
                 Download for older phones (32-bit)
               </a>
               <a
+                href={WIN_ZIP}
+                className="px-6 py-4 border border-gray-300 text-gray-700 rounded-xl text-lg font-medium hover:bg-gray-50 transition flex items-center justify-center gap-2"
+              >
+                <span>🖥️</span> Download for Windows (PC)
+              </a>
+              <a
                 href={RELEASE_PAGE}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -65,7 +72,7 @@ export default function Home() {
               </a>
             </div>
             <p className="text-xs text-gray-400 mt-4">
-              After download, open the file and allow "install from unknown sources" when prompted.
+              After download, open the file and allow "install from unknown sources" when prompted (Android).
             </p>
           </div>
 
