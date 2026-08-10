@@ -22,10 +22,10 @@ class _FeedbackPageState extends State<FeedbackPage> {
     if (mounted) {
       setState(() => _isSubmitting = false);
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('âœ… Feedback sent! Thank you.')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Feedback sent! Thank you.')));
         Navigator.pop(context);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('âŒ Error sending feedback.'), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error sending feedback.'), backgroundColor: Colors.red));
       }
     }
   }
