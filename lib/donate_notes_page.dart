@@ -157,7 +157,8 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
           content: _descController.text,
           category: category,
           fileSize: fileSize,
-          userId: authService.currentUser?.id,
+          // Guests have no real user id (UUID column would reject 'guest_user')
+          userId: authService.currentUser?.isGuest == true ? null : authService.currentUser?.id,
         );
 
         if (dbSuccess) {
