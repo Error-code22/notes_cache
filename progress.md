@@ -1,6 +1,25 @@
 # Project Progress Log 🚀📈
 
-## Latest Milestone: Public Launch & Secret-Leak Cleanup (2026-08-07)
+## Latest Milestone: v1.0.1 Release & First Users (2026-08-10)
+
+### v1.0.1 shipped
+- **minSdk 24 → Android 7+** (was 11+). Old-phone permission paths already existed — no new dependencies.
+- **Guest fixes**: donate notes + submit feedback (null user_id instead of 'guest_user'; RLS policies added for anon inserts with `user_id IS NULL` — migration `20260810000000_guest_inserts.sql`, verified 201 on both).
+- **Theme toggle race fix**: `setUserTheme` no longer clobbers a manual theme change made before the profile finishes loading (`_userCustomized` flag).
+- **Windows desktop build** added: `NotesCache-Windows.zip` (exe + DLLs, 20.5MB).
+- GitHub release v1.0.1 (4 assets); `/latest/` links auto-update. Landing page updated (4 buttons, clearer 64-bit/32-bit labels).
+
+### First user stats (2026-08-10)
+- Total downloads: **34** — v1.0.0: 20×arm64 + 2×v7a; v1.0.1: 4×arm64 + 5×v7a + 3×Windows.
+- 1 star. Zero downloads of the leaky pre-cleanup APKs (verified at the time).
+- Signal: 32-bit (old-phone) demand is real; Windows already being tried.
+
+### Honesty pass (admin + settings)
+- **Pricing Subscribe was a mock** (fake M-Pesa STK dialog) → now shows "payments coming soon".
+- **Settings Email Updates + Auto Backup toggles** were cosmetic prefs → removed.
+- Everything else in admin/settings verified wired (config saves, usage cards, actions, all settings).
+
+## Previous Milestone: Public Launch & Secret-Leak Cleanup (2026-08-07)
 
 ### 1. The Leak (what happened)
 - Repo made **public** → GitHub/Supabase/Google scanners found secrets inside the **committed APKs** (`releases/` folder, old commit).
