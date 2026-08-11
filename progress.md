@@ -1,23 +1,29 @@
 # Project Progress Log 🚀📈
 
-## Latest Milestone: v1.0.1 Release & First Users (2026-08-10)
+## Latest Milestone: v1.0.2 + UX & Admin Fixes (2026-08-11)
 
-### v1.0.1 shipped
-- **minSdk 24 → Android 7+** (was 11+). Old-phone permission paths already existed — no new dependencies.
-- **Guest fixes**: donate notes + submit feedback (null user_id instead of 'guest_user'; RLS policies added for anon inserts with `user_id IS NULL` — migration `20260810000000_guest_inserts.sql`, verified 201 on both).
-- **Theme toggle race fix**: `setUserTheme` no longer clobbers a manual theme change made before the profile finishes loading (`_userCustomized` flag).
-- **Windows desktop build** added: `NotesCache-Windows.zip` (exe + DLLs, 20.5MB).
-- GitHub release v1.0.1 (4 assets); `/latest/` links auto-update. Landing page updated (4 buttons, clearer 64-bit/32-bit labels).
+### v1.0.2 shipped (APKs + Windows)
+- **In-app updater** — checks GitHub releases on open; "Update available (vX — you have vY)" dialog → download → system installer. Uses `package_info_plus` + `open_filex` (already in deps). `REQUEST_INSTALL_PACKAGES` in manifest. Android-only.
+- **Guests blocked from library uploads** — FAB hidden (only lecturers/admins see it); the upload page shows a "Sign in to upload" gate pointing to Donate as the anonymous channel.
+- **Theme toggle fixed** — from system mode, first click now goes to light (visible change) rather than dark (invisible no-op). Plus `_userCustomized` flag prevents profile-sync from clobbering manual changes.
+- **Donate card wording** — "Share notes with everyone on the app" (was confusingly similar to Academic Notes).
+- **Demo-mode yellow banner** on dashboard for guests: "Demo mode: browsing & donating only. Sign in for full access."
+- **Admin Updates Manager** — Push Update now opens a full manager page: list all announcements, add new, delete junk. Replaces the old dialog-only flow.
+- **Desktop Local Docs** — folder picker (FilePicker.getDirectoryPath) replaces the phone-style scan on Windows; document lists use lazy `ListView.builder` (1,850+ docs scroll smoothly).
+- **Landing page** — clearer APK labels (64-bit "most phones" vs 32-bit), Chrome download stall tip, Windows button.
 
-### First user stats (2026-08-10)
-- Total downloads: **34** — v1.0.0: 20×arm64 + 2×v7a; v1.0.1: 4×arm64 + 5×v7a + 3×Windows.
-- 1 star. Zero downloads of the leaky pre-cleanup APKs (verified at the time).
-- Signal: 32-bit (old-phone) demand is real; Windows already being tried.
+### Critical fixes (already live)
+- **Offline startup** — profile DB fetch had no timeout (30s+ hang on slow/no network). Now 5s timeout → offline cache → guest fallback if no cache. Dashboard loads in seconds offline.
+- **Feedback Explorer** — was returning empty because the `profiles(full_name)` embed 400'd under RLS. Now uses `list_feedback()` SECURITY DEFINER RPC (bulletproof, always works). Migration `20260810010000_list_feedback.sql`.
+- **Guest feedback + donations** — `app_feedback`/`donated_notes` insert policies were `authenticated`-only; added `anon` policies (guest inserts with `user_id IS NULL`). Migration `20260810000000_guest_inserts.sql`.
+- **Registration wall removed** — email confirmation disabled (`mailer_autoconfirm: true` via management API); signups are instant now (was the launch blocker — 0 signups out of 40+ downloads).
 
-### Honesty pass (admin + settings)
-- **Pricing Subscribe was a mock** (fake M-Pesa STK dialog) → now shows "payments coming soon".
-- **Settings Email Updates + Auto Backup toggles** were cosmetic prefs → removed.
-- Everything else in admin/settings verified wired (config saves, usage cards, actions, all settings).
+### Stats (2026-08-10)
+- Total downloads: **34** (v1.0.0 + v1.0.1 combined). Windows: 3 downloads on first day.
+- 1 star. 8 users total (pre-launch), 0 new signups at time (email wall was still up — now fixed).
+- Real feedback already coming in: "I have notes from 1st year, so I dunno what note is for which", "demo student can upload notes", "when i upload a bug i get weird symbols" (the mojibake, now fixed).
+
+## Previous Milestone: Public Launch & Secret-Leak Cleanup (2026-08-07)
 
 ## Previous Milestone: Public Launch & Secret-Leak Cleanup (2026-08-07)
 
