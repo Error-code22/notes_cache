@@ -220,6 +220,18 @@ class AuthService extends ChangeNotifier {
     _enterGuestMode();
   }
 
+  Future<void> signInWithGoogle() async {
+    try {
+      await _supabase.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'io.supabase.notescache://login-callback/',
+      );
+    } catch (e) {
+      debugPrint('Google sign-in error: $e');
+      rethrow;
+    }
+  }
+
   Future<List<UserProfile>> getAllUsers() async {
     if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin)) return [];
     try {
