@@ -27,6 +27,8 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   bool _isSaving = false;
   bool _isDeleting = false;
   Map<String, String> _appConfig = {};
+  List<UserIdentity> _linkedIdentities = [];
+  bool _loadingIdentities = true;
 
   @override
   void initState() {
@@ -40,6 +42,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     WidgetsBinding.instance.addPostFrameCallback((_) {
       authService.ensureFriendCode();
       _loadAppConfig();
+      _loadLinkedIdentities();
     });
   }
 
@@ -47,6 +50,15 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     final noteService = context.read<NoteService>();
     final config = await noteService.getAppConfig();
     if (mounted) setState(() => _appConfig = config);
+  }
+
+  Future<void> _loadLinkedIdentities() async {
+    final authService = context.read<AuthService>();
+    final identities = await authService.getLinkedProviders();
+    if (mounted) setState(() {
+      _linkedIdentities = identities;
+      _loadingIdentities = false;
+    });
   }
 
   @override
@@ -458,6 +470,11 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
           }),
           const Divider(height: 32),
 
+          // Linked Accounts
+          _sectionHeader('Linked Accounts'),
+          _buildLinkedAccountsSection(context, user),
+          const Divider(height: 32),
+
           // Help & Feedback
           _sectionHeader('Help & Feedback'),
           _settingsTile(Icons.bug_report_outlined, 'Report a Bug', 'Let us know if something is broken', () {
@@ -528,6 +545,114 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
       subtitle: subtitle.isNotEmpty ? Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis) : null,
       trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
+    );
+  }
+
+  Widget _buildLinkedAccountsSection(BuildContext context, UserProfile user) {
+    final theme = Theme.of(context);
+    if (_loadingIdentities) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    final hasGoogle = _linkedIdentities.any((i) => i.provider == 'google');
+    final hasEmail = _linkedIdentities.any((i) => i.provider == 'email');
+
+    return Column(
+      children: [
+        // Email status
+        ListTile(
+          leading: Icon(Icons.email_outlined, color: hasEmail ? Colors.green : Colors.grey),
+          title: Text('Email', style: TextStyle(fontWeight: FontWeight.w500, color: hasEmail ? null : Colors.grey)),
+          subtitle: Text(hasEmail ? user.email : 'Not linked'),
+          trailing: hasEmail
+              ? const Icon(Icons.check_circle, color: Colors.green, size: 20)
+              : null,
+        ),
+        // Google status
+        ListTile(
+          leading: Icon(Icons.g_mobiledata, color: hasGoogle ? Colors.blue : Colors.grey),
+          title: Text('Google', style: TextStyle(fontWeight: FontWeight.w500, color: hasGoogle ? null : Colors.grey)),
+          subtitle: Text(hasGoogle ? 'Linked' : 'Not linked'),
+          trailing: hasGoogle
+              ? TextButton(
+                  onPressed: () => _confirmUnlinkGoogle(context),
+                  child: const Text('Unlink', style: TextStyle(color: Colors.redAccent)),
+                )
+              : TextButton.icon(
+                  onPressed: () => _linkGoogle(context),
+                  icon: const Icon(Icons.link, size: 18),
+                  label: const Text('Link'),
+                ),
+        ),
+        // Hint for Google-only users
+        if (!hasEmail && hasGoogle)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'Set a password so you can also sign in without Google.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _linkGoogle(BuildContext context) async {
+    final authService = context.read<AuthService>();
+    try {
+      await authService.linkGoogle();
+      await _loadLinkedIdentities();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google account linked!'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to link Google: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _confirmUnlinkGoogle(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Unlink Google?'),
+        content: const Text('You\'ll need a password to sign in after unlinking. Set one first if you haven\'t.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final authService = context.read<AuthService>();
+              final googleIdentity = _linkedIdentities.firstWhere((i) => i.provider == 'google');
+              try {
+                await authService.unlinkGoogle(googleIdentity);
+                await _loadLinkedIdentities();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Google unlinked'), backgroundColor: Colors.green),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to unlink: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Unlink', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
     );
   }
 
