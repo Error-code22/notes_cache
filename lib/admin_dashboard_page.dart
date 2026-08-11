@@ -56,7 +56,7 @@ class AdminDashboardPage extends StatelessWidget {
           crossAxisCount: cols,
           mainAxisSpacing: 14,
           crossAxisSpacing: 14,
-          childAspectRatio: 1.35,
+          childAspectRatio: 1.1,
         ),
         itemCount: _cards.length,
         itemBuilder: (_, i) => _DashboardCard(

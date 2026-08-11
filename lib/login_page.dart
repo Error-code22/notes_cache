@@ -392,6 +392,43 @@ class _LoginPageState extends State<LoginPage> {
         ),
       ),
       const SizedBox(height: 16),
+      // ── OR divider ──
+      Row(
+        children: [
+          const Expanded(child: Divider()),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text('OR', style: TextStyle(fontSize: 12, color: Colors.grey[500], fontWeight: FontWeight.w600)),
+          ),
+          const Expanded(child: Divider()),
+        ],
+      ),
+      const SizedBox(height: 16),
+      // ── Google Sign-In ──
+      SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: OutlinedButton.icon(
+          onPressed: isLoading ? null : () async {
+            try {
+              await context.read<AuthService>().signInWithGoogle();
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Google sign-in failed: $e'), backgroundColor: Colors.red),
+                );
+              }
+            }
+          },
+          icon: const Icon(Icons.g_mobiledata, size: 24),
+          label: const Text('Continue with Google', style: TextStyle(fontWeight: FontWeight.w600)),
+          style: OutlinedButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            side: BorderSide(color: Colors.grey[300]!),
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
       Center(
         child: TextButton(
           onPressed: () => setState(() => _isSignUp = !_isSignUp),
