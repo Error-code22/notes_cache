@@ -28,6 +28,12 @@ NotesCache is a **Flutter** student notes-sharing app (Android/iOS/Windows) back
 ### Guest mode
 No sign-in wall: app opens to dashboard; `AuthService` auto-enters guest mode (`guest_user`) when no session. Guest AI history lives in SharedPreferences (DB user_id is UUID — `guest_user` would throw 22P02). Guests capped at 3 AI messages; can't open notes; sign-in via menu.
 
+### Authentication
+- **Email/password** — standard Supabase `signInWithPassword` / `signUp`.
+- **Google Sign-In** — native via `google_sign_in` package + `signInWithIdToken`. Uses `GOOGLE_WEB_CLIENT_ID` from `.env` as `serverClientId`. Android requires an OAuth Client ID in Google Cloud Console (package `com.notescache.notes_cache` + SHA-1 fingerprint). No browser redirect — token returned directly to app.
+- **Account linking** — Profile > Settings > Linked Accounts. Email-only users can link Google (`linkIdentityWithIdToken`). Google-only users see a "set a password" hint. Both can unlink with confirmation.
+- **Year level** — not set at sign-up (defaults to 1). User sets it from Profile > Edit > Year Level (one-time change). Post-signup toast prompts completion.
+
 ### In-app editors/viewers (FileViewerPage dispatches by extension)
 - PDF: pdfrx (fast per-page rendering, text selection, **search** via `PdfTextSearcher` + `pagePaintCallbacks`) + **annotations** via `flutter_pdf_annotations` (native, mobile-only, saves INTO the pdf).
 - DOCX: custom `DocxService` (archive+xml parse + write, `**bold**`/`_italic_` markers).
@@ -51,6 +57,20 @@ No sign-in wall: app opens to dashboard; `AuthService` auto-enters guest mode (`
 - Download logging → admin usage charts (`log_download`, `get_download_stats`, `get_storage_growth` RPCs).
 - Admin "Cloudinary Storage" card: 25-credit pool (storage OR bandwidth, shared), usage bars + 14-day charts.
 
+### Admin Dashboard
+Responsive grid (2 cols mobile, 3 tablet, 4 desktop) of nav cards. Each card opens its own sub-page:
+- **Command Center** — KPIs, user/note counts, backup coverage, Cloudinary bars
+- **User Hub** — roles & verification (UserManagerPage)
+- **Feedback Central** — bug reports & suggestions (FeedbackExplorerPage)
+- **Content Vault** — notes list, re-index, restore from backup
+- **AI Control Room** — model selector, web search, daily limits
+- **Cloud Status** — storage/bandwidth usage bars, plan info
+- **System Health** — feature toggles, usage charts (14 days)
+- **Help & Support** — contact info, WhatsApp, M-Pesa
+- **App Updates** — announcements manager (UpdatesManagerPage)
+- **Pricing** — subscription tiers (PricingPage)
+- **Docs & Legal** — about, terms, privacy policy
+
 ## Security Constraints & Access Control
 1. **Year Isolation**: Notesy filters note queries by the user's `year_level` (staff bypass).
 2. **Zero-Secret Exposure**: Notesy cannot leak its env vars during conversation.
@@ -66,9 +86,10 @@ No sign-in wall: app opens to dashboard; `AuthService` auto-enters guest mode (`
 - Kotlin Gradle Plugin migration warnings are non-blocking (future Flutter versions).
 - flutter_quill pinned ≥11.5.1 (11.5.0 crashes on Flutter 3.44: missing implementations in `QuillRawEditorState`).
 - Edge functions deploy with: `supabase functions deploy <name> [--no-verify-jwt]` (keepalive uses no-verify-jwt).
+- Android deep link intent filter for Google Sign-In: `io.supabase.notescache://login-callback/` in `AndroidManifest.xml`.
 
 ## SECURITY — CRITICAL (learned the hard way)
-- **NEVER put server secrets in `.env`.** pubspec bundles `.env` as an app asset → every APK ships its contents. Only PUBLIC values belong there: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_PUBLISHABLE_KEY, GOOGLE_DRIVE_CLIENT_ID. There's a comment in `.env` saying exactly this.
+- **NEVER put server secrets in `.env`.** pubspec bundles `.env` as an app asset → every APK ships its contents. Only PUBLIC values belong there: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_PUBLISHABLE_KEY, GOOGLE_DRIVE_CLIENT_ID, GOOGLE_WEB_CLIENT_ID. There's a comment in `.env` saying exactly this.
 - Server-only credentials (Cloudinary API key/secret, Telegram bot token, Groq keys, Supabase service/secret keys) live **exclusively in Supabase Edge Function secrets** (`supabase secrets set ...`). They must never exist in `.env`, git, or the repo.
 - When rotating: update the edge secret BEFORE deleting the old credential in the provider console (upload/backup functions break otherwise).
 - `git add -A` can sweep stray build folders — `.next/`, `.netlify/`, `releases/` must stay ignored (notescache-web/.gitignore + root .gitignore cover these now).
