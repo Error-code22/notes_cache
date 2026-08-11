@@ -189,7 +189,6 @@ class AuthService extends ChangeNotifier {
         _enterGuestMode();
       }
     }
-    }
   }
 
   Future<bool> isOnline() async {
