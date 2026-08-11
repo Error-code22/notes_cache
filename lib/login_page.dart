@@ -419,6 +419,13 @@ class _LoginPageState extends State<LoginPage> {
               final authService = context.read<AuthService>();
               await authService.signInWithGoogle();
               if (mounted && authService.currentUser != null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Welcome! Please complete your profile (year, etc.) from the Profile page.'),
+                    backgroundColor: Colors.green,
+                    duration: Duration(seconds: 4),
+                  ),
+                );
                 Navigator.pushReplacementNamed(context, '/dashboard');
               }
             } catch (e) {
