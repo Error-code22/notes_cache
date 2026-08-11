@@ -162,8 +162,9 @@ class AuthService extends ChangeNotifier {
   Future<void> _fetchUserProfile(User user) async {
     final prefs = await SharedPreferences.getInstance();
     try {
-      // Try fetching from Supabase
-      final data = await _supabase.from('profiles').select().eq('id', user.id).single();
+      // Try fetching from Supabase (fast timeout — if offline, use cache immediately)
+      final data = await _supabase.from('profiles').select().eq('id', user.id).single()
+          .timeout(const Duration(seconds: 5));
       _currentUser = UserProfile.fromMap(data, user.email!);
       
       // Save for offline use
@@ -183,7 +184,11 @@ class AuthService extends ChangeNotifier {
       if (cachedData != null && cachedEmail != null) {
         _currentUser = UserProfile.fromMap(jsonDecode(cachedData), cachedEmail);
         notifyListeners();
+      } else {
+        // No cache, no network — go guest so the dashboard loads quickly
+        _enterGuestMode();
       }
+    }
     }
   }
 
