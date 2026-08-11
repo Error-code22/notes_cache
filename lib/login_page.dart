@@ -16,7 +16,6 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _nameController = TextEditingController();
-  int _selectedYear = 1;
   bool _isSignUp = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -69,7 +68,6 @@ class _LoginPageState extends State<LoginPage> {
           _emailController.text.trim(),
           _passwordController.text.trim(),
           _nameController.text.trim(),
-          _selectedYear,
         );
       } else {
         await authService.signIn(
@@ -78,6 +76,15 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
       if (mounted && authService.currentUser != null) {
+        if (_isSignUp) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Account created! Please complete your profile (year, etc.) from the Profile page.'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
         Navigator.pushReplacementNamed(context, '/dashboard');
       }
     } catch (e) {
@@ -308,8 +315,6 @@ class _LoginPageState extends State<LoginPage> {
           onSubmitted: (_) => _handleAuth(),
         ),
         const SizedBox(height: 16),
-        _buildYearSelector(context),
-        const SizedBox(height: 16),
       ],
       _buildTextField(
         _emailController,
@@ -524,42 +529,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Widget _buildYearSelector(BuildContext context) {
-    final primaryColor = Theme.of(context).colorScheme.primary;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Select Your Academic Year', style: TextStyle(fontSize: 12, color: Colors.grey)),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(4, (index) {
-            final year = index + 1;
-            final isSelected = _selectedYear == year;
-            return GestureDetector(
-              onTap: () => setState(() => _selectedYear = year),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? primaryColor : Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'Yr $year',
-                  style: TextStyle(
-                    color: isSelected
-                        ? Colors.white
-                        : Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ],
-    );
-  }
 }
 
 class ForgotPasswordPage extends StatefulWidget {
