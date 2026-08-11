@@ -151,10 +151,10 @@ class AuthService extends ChangeNotifier {
     } finally { _setLoading(false); }
   }
 
-  Future<void> signUp(String e, String p, String n, int y) async {
+  Future<void> signUp(String e, String p, String n) async {
     _setLoading(true);
     try {
-      final res = await _supabase.auth.signUp(email: e, password: p, data: {'full_name': n, 'year_level': y, 'role': 'student'});
+      final res = await _supabase.auth.signUp(email: e, password: p, data: {'full_name': n, 'year_level': 1, 'role': 'student'});
       if (res.user != null) await _fetchUserProfile(res.user!);
     } finally { _setLoading(false); }
   }
