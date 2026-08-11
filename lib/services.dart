@@ -1038,34 +1038,17 @@ class NoteService {
 
   Future<List<AppFeedback>> getAllFeedback() async {
     try {
-      final List<dynamic> data = await _supabase
-          .from('app_feedback')
-          .select('id, type, content, user_id, created_at')
-          .order('created_at', ascending: false);
-      final feedback = data.map((item) => AppFeedback.fromMap(item)).toList();
-
-      // Resolve names in a second pass — embedding profiles() can 400 the
-      // whole query under RLS when some profiles aren't public.
-      final ids = feedback
-          .map((f) => f.userId)
-          .whereType<String>()
-          .where((i) => i.isNotEmpty)
-          .toSet();
-      if (ids.isNotEmpty) {
-        try {
-          final profiles = await _supabase
-              .from('profiles')
-              .select('id, full_name')
-              .inFilter('id', ids.toList());
-          final nameMap = {for (final p in profiles) p['id'].toString(): (p['full_name'] as String? ?? '')};
-          for (final f in feedback) {
-            f.userName = nameMap[f.userId] ?? f.userId;
-          }
-        } catch (e) {
-          debugPrint('Profile name fetch error: $e');
-        }
-      }
-      return feedback;
+      final data = await _supabase.rpc('list_feedback');
+      return (data as List).map((item) {
+        return AppFeedback(
+          id: (item['id'] ?? '').toString(),
+          userId: (item['user_id'] as String?) ?? '',
+          type: (item['type'] ?? 'bug').toString(),
+          content: (item['content'] ?? '').toString(),
+          createdAt: DateTime.parse((item['created_at'] ?? DateTime.now().toIso8601String()).toString()),
+          userName: item['full_name'] as String?,
+        );
+      }).toList();
     } catch (e) {
       debugPrint('Error fetching feedback: $e');
       return [];
