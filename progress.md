@@ -1,27 +1,29 @@
-# Project Progress Log 🚀📈
+# Project Progress Log
 
-## Latest Milestone: v1.0.2 + UX & Admin Fixes (2026-08-11)
+## Latest Milestone: Google Sign-In, Admin Redesign, Account Linking (2026-08-11)
 
-### v1.0.2 shipped (APKs + Windows)
-- **In-app updater** — checks GitHub releases on open; "Update available (vX — you have vY)" dialog → download → system installer. Uses `package_info_plus` + `open_filex` (already in deps). `REQUEST_INSTALL_PACKAGES` in manifest. Android-only.
-- **Guests blocked from library uploads** — FAB hidden (only lecturers/admins see it); the upload page shows a "Sign in to upload" gate pointing to Donate as the anonymous channel.
-- **Theme toggle fixed** — from system mode, first click now goes to light (visible change) rather than dark (invisible no-op). Plus `_userCustomized` flag prevents profile-sync from clobbering manual changes.
-- **Donate card wording** — "Share notes with everyone on the app" (was confusingly similar to Academic Notes).
-- **Demo-mode yellow banner** on dashboard for guests: "Demo mode: browsing & donating only. Sign in for full access."
-- **Admin Updates Manager** — Push Update now opens a full manager page: list all announcements, add new, delete junk. Replaces the old dialog-only flow.
-- **Desktop Local Docs** — folder picker (FilePicker.getDirectoryPath) replaces the phone-style scan on Windows; document lists use lazy `ListView.builder` (1,850+ docs scroll smoothly).
-- **Landing page** — clearer APK labels (64-bit "most phones" vs 32-bit), Chrome download stall tip, Windows button.
+### Google Sign-In (native)
+- Native `google_sign_in` + `signInWithIdToken` (no browser redirect). Uses `serverClientId` (Web Client ID) + Android OAuth Client in Google Cloud Console (SHA-1 registered).
+- Account linking in Profile > Settings > Linked Accounts: email-only users can link Google; Google-only users see a "set a password" hint. Both can unlink with confirmation dialog.
+- Post-signup toast prompts users to complete profile (year level, etc.).
 
-### Critical fixes (already live)
-- **Offline startup** — profile DB fetch had no timeout (30s+ hang on slow/no network). Now 5s timeout → offline cache → guest fallback if no cache. Dashboard loads in seconds offline.
-- **Feedback Explorer** — was returning empty because the `profiles(full_name)` embed 400'd under RLS. Now uses `list_feedback()` SECURITY DEFINER RPC (bulletproof, always works). Migration `20260810010000_list_feedback.sql`.
-- **Guest feedback + donations** — `app_feedback`/`donated_notes` insert policies were `authenticated`-only; added `anon` policies (guest inserts with `user_id IS NULL`). Migration `20260810000000_guest_inserts.sql`.
-- **Registration wall removed** — email confirmation disabled (`mailer_autoconfirm: true` via management API); signups are instant now (was the launch blocker — 0 signups out of 40+ downloads).
+### Admin Dashboard redesign
+- Flat ListView replaced with responsive grid (2 cols mobile, 3 tablet, 4 desktop). 11 nav cards, each opens its own sub-page: Command Center, User Hub, Feedback Central, Content Vault, AI Control Room, Cloud Status, System Health, Help & Support, App Updates, Pricing, Docs & Legal.
+- "Save All" removed — each sub-page saves independently.
 
-### Stats (2026-08-10)
-- Total downloads: **34** (v1.0.0 + v1.0.1 combined). Windows: 3 downloads on first day.
-- 1 star. 8 users total (pre-launch), 0 new signups at time (email wall was still up — now fixed).
-- Real feedback already coming in: "I have notes from 1st year, so I dunno what note is for which", "demo student can upload notes", "when i upload a bug i get weird symbols" (the mojibake, now fixed).
+### Sign-up simplification
+- Year selector removed from sign-up form. New users get `year_level: 1` by default. Year is set from Profile page.
+
+### Landing page refresh
+- Version bar at top showing current version + changelog snippet.
+- New tagline: "Many Notes. One Place."
+- All emojis removed.
+- Clean download section with version-specific APK links + Windows.
+
+### Stats (2026-08-11)
+- Total GitHub downloads: **51** (v1.0.0: 22, v1.0.1: 22, v1.0.2: 7).
+- Supabase download logs: Aug 5 (6), Aug 6 (26), Aug 7-11 (0 — pre-v1.0.2 logging fix).
+- 8 users, Google Sign-In now live.
 
 ## Previous Milestone: Public Launch & Secret-Leak Cleanup (2026-08-07)
 
