@@ -258,7 +258,7 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<void> linkGoogle() async {
+  Future<bool> linkGoogle() async {
     try {
       final googleSignIn = GoogleSignIn(
         serverClientId: dotenv.env['GOOGLE_WEB_CLIENT_ID'],
@@ -266,17 +266,18 @@ class AuthService extends ChangeNotifier {
       );
       await googleSignIn.signOut();
       final googleUser = await googleSignIn.signIn();
-      if (googleUser == null) return;
+      if (googleUser == null) return false; // user cancelled
 
       final googleAuth = await googleUser.authentication;
       final idToken = googleAuth.idToken;
-      if (idToken == null) throw Exception('No ID token received');
+      if (idToken == null) return false;
 
       await _supabase.auth.linkIdentityWithIdToken(
         provider: OAuthProvider.google,
         idToken: idToken,
         accessToken: googleAuth.accessToken,
       );
+      return true;
     } catch (e) {
       debugPrint('Google link error: $e');
       rethrow;

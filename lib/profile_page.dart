@@ -603,7 +603,8 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   Future<void> _linkGoogle(BuildContext context) async {
     final authService = context.read<AuthService>();
     try {
-      await authService.linkGoogle();
+      final linked = await authService.linkGoogle();
+      if (!linked) return;
       await _loadLinkedIdentities();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
