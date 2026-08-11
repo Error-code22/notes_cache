@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'editors/office_docx.dart';
 import 'editors/office_pptx.dart';
 import 'package:path_provider/path_provider.dart';
@@ -231,10 +232,24 @@ class AuthService extends ChangeNotifier {
 
   Future<void> signInWithGoogle() async {
     try {
-      await _supabase.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: 'io.supabase.notescache://login-callback/',
+      final googleSignIn = GoogleSignIn(
+        serverClientId: dotenv.env['GOOGLE_WEB_CLIENT_ID'],
       );
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) return; // user cancelled
+
+      final googleAuth = await googleUser.authentication;
+      final idToken = googleAuth.idToken;
+      if (idToken == null) throw Exception('No ID token received');
+
+      await _supabase.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: googleAuth.accessToken,
+      );
+
+      final user = _supabase.auth.currentUser;
+      if (user != null) await _fetchUserProfile(user);
     } catch (e) {
       debugPrint('Google sign-in error: $e');
       rethrow;

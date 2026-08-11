@@ -416,16 +416,10 @@ class _LoginPageState extends State<LoginPage> {
         child: OutlinedButton.icon(
           onPressed: isLoading ? null : () async {
             try {
-              await context.read<AuthService>().signInWithGoogle();
-              // The auth state listener in AuthService will update the user.
-              // Poll for it to navigate back to dashboard.
-              for (var i = 0; i < 30; i++) {
-                await Future.delayed(const Duration(seconds: 1));
-                if (!mounted) return;
-                if (context.read<AuthService>().currentUser != null) {
-                  Navigator.pushReplacementNamed(context, '/dashboard');
-                  return;
-                }
+              final authService = context.read<AuthService>();
+              await authService.signInWithGoogle();
+              if (mounted && authService.currentUser != null) {
+                Navigator.pushReplacementNamed(context, '/dashboard');
               }
             } catch (e) {
               if (mounted) {
