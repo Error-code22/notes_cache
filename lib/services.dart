@@ -129,7 +129,16 @@ class AuthService extends ChangeNotifier {
   UserProfile? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
 
-  AuthService() { _recoverSession(); }
+  AuthService() {
+    _recoverSession();
+    _supabase.auth.onAuthStateChange.listen((data) async {
+      final session = data.session;
+      if (session != null) {
+        await _fetchUserProfile(session.user);
+        notifyListeners();
+      }
+    });
+  }
   void updateThemeProvider(ThemeProvider p) { _themeProvider = p; }
 
   Future<void> _recoverSession() async {
