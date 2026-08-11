@@ -234,7 +234,9 @@ class AuthService extends ChangeNotifier {
     try {
       final googleSignIn = GoogleSignIn(
         serverClientId: dotenv.env['GOOGLE_WEB_CLIENT_ID'],
+        signInOption: SignInOption.standard,
       );
+      await googleSignIn.signOut(); // clear cached account so picker shows
       final googleUser = await googleSignIn.signIn();
       if (googleUser == null) return; // user cancelled
 
@@ -253,6 +255,49 @@ class AuthService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Google sign-in error: $e');
       rethrow;
+    }
+  }
+
+  Future<void> linkGoogle() async {
+    try {
+      final googleSignIn = GoogleSignIn(
+        serverClientId: dotenv.env['GOOGLE_WEB_CLIENT_ID'],
+        signInOption: SignInOption.standard,
+      );
+      await googleSignIn.signOut();
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) return;
+
+      final googleAuth = await googleUser.authentication;
+      final idToken = googleAuth.idToken;
+      if (idToken == null) throw Exception('No ID token received');
+
+      await _supabase.auth.linkIdentityWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: googleAuth.accessToken,
+      );
+    } catch (e) {
+      debugPrint('Google link error: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> unlinkGoogle(UserIdentity identity) async {
+    try {
+      await _supabase.auth.unlinkIdentity(identity);
+    } catch (e) {
+      debugPrint('Google unlink error: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<UserIdentity>> getLinkedProviders() async {
+    try {
+      return await _supabase.auth.getUserIdentities();
+    } catch (e) {
+      debugPrint('getLinkedProviders error: $e');
+      return [];
     }
   }
 
