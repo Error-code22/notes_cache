@@ -18,6 +18,7 @@ import 'updates_page.dart';
 import 'feedback_page.dart';
 import 'donate_notes_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -547,7 +548,8 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   /// Happymod-style updater: compares the installed version with the latest
-  /// GitHub release; if newer, offers download + install.
+  /// GitHub release; if newer, offers download + install with a persistent
+  /// progress dialog. Also shows a "What's New" popup after updating.
   Future<void> _checkForUpdate() async {
     final updateService = UpdateService();
     final latest = await updateService.getLatestVersion();
@@ -555,56 +557,186 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final packageInfo = await PackageInfo.fromPlatform();
     final installed = packageInfo.version;
-    if (!UpdateService.isNewer(installed, latest)) return;
 
+    if (!UpdateService.isNewer(installed, latest)) {
+      // Up to date — show "What's New" once per version if notes exist.
+      if (!await updateService.hasShownWhatsNew(installed)) {
+        await updateService.markWhatsNewShown(installed);
+        final notes = await updateService.getLatestReleaseNotes();
+        if (notes != null && notes.isNotEmpty && mounted) {
+          _showWhatsNewDialog(notes);
+        }
+      }
+      return;
+    }
+
+    // Already downloaded this version earlier (user dismissed the dialog)?
+    if (await updateService.hasCachedApk(latest)) {
+      await _showUpdateDialog(updateService, latest, installed, readyToInstall: true);
+      return;
+    }
+    await _showUpdateDialog(updateService, latest, installed);
+  }
+
+  void _showWhatsNewDialog(String notes) {
     showDialog<void>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (ctx) => AlertDialog(
-        title: const Text('Update available'),
-        content: Text('A new version of NotesCache is out (v$latest — you have v$installed).\n\nDownload and install it?'),
+        title: const Text("What's New"),
+        content: SingleChildScrollView(
+          child: Text(notes, style: const TextStyle(fontSize: 13, height: 1.4)),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Later'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _downloadAndInstall(updateService, latest);
-            },
-            child: const Text('DOWNLOAD'),
+            child: const Text('Got it!'),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _downloadAndInstall(UpdateService updateService, String version) async {
+  Future<void> _showUpdateDialog(
+    UpdateService updateService,
+    String latest,
+    String installed, {
+    bool readyToInstall = false,
+  }) async {
+    final canInstall = await _canInstallPackages();
+    var downloading = !readyToInstall;
+    var progress = readyToInstall ? 1.0 : 0.0;
+    var done = readyToInstall;
+    var failed = false;
+    var downloadStarted = false;
+    String? downloadedPath;
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text('Downloading NotesCache v$version...'),
-        duration: const Duration(seconds: 3),
+
+    // non-dismissible: user can only use the buttons
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          // Kick off the download automatically once the dialog is up.
+          if (downloading && !downloadStarted) {
+            downloadStarted = true;
+            Future.microtask(() async {
+              downloadedPath = await updateService.downloadApk(onProgress: (received, total) {
+                if (total > 0 && ctx.mounted) {
+                  setDialogState(() => progress = received / total);
+                }
+              });
+              if (downloadedPath == null) {
+                if (ctx.mounted) {
+                  setDialogState(() {
+                    downloading = false;
+                    failed = true;
+                  });
+                }
+              } else {
+                await updateService.markDownloaded(latest);
+                if (ctx.mounted) {
+                  setDialogState(() {
+                    downloading = false;
+                    done = true;
+                    progress = 1.0;
+                  });
+                }
+              }
+            });
+          }
+
+          return AlertDialog(
+            title: Text(done ? 'Install update' : 'Update available'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(done
+                    ? 'v$latest is downloaded and ready.'
+                    : 'A new version of NotesCache is out (v$latest — you have v$installed).\n\nDownloading…'),
+                const SizedBox(height: 20),
+                if (downloading) ...[
+                  LinearProgressIndicator(value: progress == 0 ? null : progress, minHeight: 8),
+                  const SizedBox(height: 8),
+                  Text(
+                    progress == 0
+                        ? 'Starting download…'
+                        : '${(progress * 100).toStringAsFixed(0)}% — ${(progress * 40).toStringAsFixed(1)} MB',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ] else if (failed) ...[
+                  const Text('Download failed. Check your connection.',
+                      style: TextStyle(color: Colors.red, fontSize: 13)),
+                ] else if (!done) ...[
+                  Text(
+                    canInstall
+                        ? 'You\'ll be able to install it right away.'
+                        : 'You\'ll need to allow NotesCache to install apps in settings first.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              if (!done && !failed)
+                TextButton(
+                  onPressed: () {
+                    // Keep any partial download for next time.
+                    if (downloadedPath != null) {
+                      updateService.markDownloaded(latest);
+                    }
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Later'),
+                ),
+              if (failed)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Close'),
+                ),
+              if (done)
+                ElevatedButton(
+                  onPressed: () async {
+                    if (!canInstall) {
+                      await openAppSettings();
+                      if (ctx.mounted) {
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('Enable "Install unknown apps" for NotesCache, then reopen the app to install.'), backgroundColor: Colors.orange),
+                        );
+                      }
+                      return;
+                    }
+                    final path = downloadedPath ?? await updateService.apkFilePath();
+                    final result = await OpenFilex.open(path);
+                    if (ctx.mounted && result.type != ResultType.done) {
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(result.type == ResultType.noAppToOpen
+                              ? 'Install blocked. Enable "Install unknown apps" for NotesCache in settings.'
+                              : 'Could not open installer: ${result.message}'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                    }
+                  },
+                  child: Text(canInstall ? 'INSTALL' : 'OPEN SETTINGS'),
+                ),
+            ],
+          );
+        },
       ),
     );
-    final path = await updateService.downloadApk();
-    if (path == null) {
-      if (mounted) {
-        messenger.showSnackBar(const SnackBar(content: Text('Download failed. Check your connection and try again.'), backgroundColor: Colors.red));
-      }
-      return;
-    }
-    final result = await OpenFilex.open(path);
-    if (mounted && result.type != ResultType.done) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(result.type == ResultType.noAppToOpen
-              ? 'Install blocked. Enable "Install unknown apps" for NotesCache in your phone settings, then open the APK.'
-              : 'Could not open installer: ${result.message}'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+  }
+
+  Future<bool> _canInstallPackages() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final status = await Permission.requestInstallPackages.status;
+      return status.isGranted;
+    } catch (e) {
+      debugPrint('Install permission check error: $e');
+      return true; // default to trying; installer will surface issues
     }
   }
 

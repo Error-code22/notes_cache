@@ -46,6 +46,7 @@ class _NotesPageState extends State<NotesPage> {
   String _searchQuery = '';
   String _selectedFilter = 'All Notes';
   String? _typeFilter;
+  bool _myNotesOnly = false;
   NoteViewMode _viewMode = NoteViewMode.list;
   Future<List<Note>>? _notesFuture;
   bool _downloadingOffline = false;
@@ -78,6 +79,7 @@ class _NotesPageState extends State<NotesPage> {
           user,
           searchQuery: _searchQuery.isEmpty ? null : _searchQuery,
           semester: semester,
+          myNotesOnly: _myNotesOnly,
         );
       });
     }
@@ -267,6 +269,8 @@ class _NotesPageState extends State<NotesPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 children: [
                   _buildFilterChip(context, 'All Notes'),
+                  if (!(context.read<AuthService>().currentUser?.isGuest ?? true))
+                    _buildMyNotesChip(context),
                   _buildLocalDocsChip(context),
                   _buildSemesterDropdown(context),
                   _buildFilterChip(context, 'Past Papers'),
@@ -452,6 +456,38 @@ class _NotesPageState extends State<NotesPage> {
     );
   }
 
+  Widget _buildMyNotesChip(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      child: FilterChip(
+        avatar: Icon(Icons.person_outline_rounded, size: 16,
+            color: _myNotesOnly ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.6)),
+        label: const Text('My Notes'),
+        selected: _myNotesOnly,
+        onSelected: (val) {
+          setState(() {
+            _myNotesOnly = val;
+            _selectedFilter = 'All Notes';
+          });
+          _refreshNotes();
+        },
+        backgroundColor: theme.cardColor,
+        selectedColor: primaryColor.withOpacity(0.1),
+        checkmarkColor: primaryColor,
+        labelStyle: TextStyle(
+          color: _myNotesOnly ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7),
+          fontWeight: _myNotesOnly ? FontWeight.bold : FontWeight.normal,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: _myNotesOnly ? primaryColor.withOpacity(0.2) : Colors.transparent),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFilterChip(BuildContext context, String label) {
     final isSelected = _selectedFilter == label;
     final theme = Theme.of(context);
@@ -462,7 +498,12 @@ class _NotesPageState extends State<NotesPage> {
         label: Text(label),
         selected: isSelected,
         onSelected: (val) {
-          setState(() => _selectedFilter = label);
+          final wasMyNotes = _myNotesOnly;
+          setState(() {
+            _selectedFilter = label;
+            if (label == 'All Notes') _myNotesOnly = false;
+          });
+          if (label == 'All Notes' && wasMyNotes) _refreshNotes();
         },
         backgroundColor: theme.cardColor,
         selectedColor: primaryColor.withOpacity(0.1),
