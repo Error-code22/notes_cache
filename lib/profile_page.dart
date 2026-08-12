@@ -194,6 +194,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     var selectedYear = user.yearLevel ?? 1;
     var saving = false;
     var uploadingAvatar = false;
+    var dialogAvatarUrl = user.avatarUrl; // live-updates when picker/upload changes it
     final theme = Theme.of(context);
     final primaryColor = theme.colorScheme.primary;
 
@@ -233,7 +234,11 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                                   if (result != null && result.files.single.path != null && dialogCtx.mounted) {
                                     final success = await authService.updateProfileImage(File(result.files.single.path!));
                                     if (dialogCtx.mounted) {
-                                      setDialogState(() => uploadingAvatar = false);
+                                      setDialogState(() {
+                                        uploadingAvatar = false;
+                                        // Keep the dialog avatar in sync with the upload
+                                        dialogAvatarUrl = authService.currentUser?.avatarUrl;
+                                      });
                                       ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(
                                         content: Text(success ? 'Profile photo updated!' : 'Failed — max 2MB, JPG/PNG/WebP only'),
                                         backgroundColor: success ? Colors.green : Colors.red,
@@ -259,7 +264,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                                 color: primaryColor.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(20),
                                 image: DecorationImage(
-                                  image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
+                                  image: NetworkImage(dialogAvatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
                                   fit: BoxFit.cover,
                                 ),
                               ),
@@ -292,7 +297,10 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                           Tooltip(
                             message: 'Pick a DiceBear avatar',
                             child: InkWell(
-                              onTap: () => _showDiceBearPicker(dialogCtx),
+                              onTap: () => _showDiceBearPicker(
+                                dialogCtx,
+                                onAvatarChanged: (url) => setDialogState(() => dialogAvatarUrl = url),
+                              ),
                               borderRadius: BorderRadius.circular(8),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -454,7 +462,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   /// DiceBear avatar picker: shows a grid of generated avatars (same seed,
   /// different styles) + a shuffle button to randomize the seed. Tapping one
   /// saves it as the profile avatar immediately.
-  void _showDiceBearPicker(BuildContext dialogCtx) {
+  void _showDiceBearPicker(BuildContext dialogCtx, {required void Function(String url) onAvatarChanged}) {
     final authService = context.read<AuthService>();
     final user = authService.currentUser!;
     const styles = [
@@ -515,6 +523,10 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                             if (sheetCtx.mounted) {
                               setSheetState(() => saving = false);
                               Navigator.pop(sheetCtx);
+                              // Keep the edit dialog's avatar in sync
+                              if (ok && dialogCtx.mounted) {
+                                onAvatarChanged(urlFor(style));
+                              }
                               if (dialogCtx.mounted) {
                                 ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(
                                   content: Text(ok ? 'Avatar updated!' : 'Failed to update avatar.'),
