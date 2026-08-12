@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -214,10 +215,6 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     }
   }
 
-  void _openDrawer() {
-    _scaffoldKey.currentState?.openDrawer();
-  }
-
   // ==================== LEGACY GUEST HISTORY ====================
 
   Future<void> _loadLegacyGuestHistory() async {
@@ -420,6 +417,43 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     if (!_vaultConversation) return;
     _applyDecoy();
   }
+  /// Shield short press: if in a vault chat, re-lock it (show decoy).
+  /// If not in one, open a new vault chat showing a decoy (no PIN needed —
+  /// safe to glance at).
+  Future<void> _onShieldTap() async {
+    if (_vaultConversation) {
+      _lockVaultNow();
+      return;
+    }
+    final user = context.read<AuthService>().currentUser;
+    if (user == null || user.isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sign in to use the vault.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final id = await AiChatService().createConversation(user.id, title: 'Private chat');
+    if (id == null || !mounted) return;
+    try {
+      await Supabase.instance.client.from('ai_conversations').update({'locked': true}).eq('id', id);
+    } catch (e) {
+      debugPrint('Mark vault error: $e');
+    }
+    await _loadConversations();
+    await _openConversation(id.toString());
+    if (!mounted) return;
+    setState(() => _vaultConversation = true);
+    await _applyDecoy(); // show a random decoy chat immediately
+  }
+
+  /// Shield long press: open the vault PIN/biometrics gate.
+  Future<void> _onShieldLongPress() async {
+    if (_vaultConversation) {
+      await _unlockVault();
+    } else {
+      await _startVaultChat();
+    }
+  }
 
   // ==================== SEND / IMAGES ====================
 
@@ -618,7 +652,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     final isGuest = user.isGuest;
     final limit = isGuest ? _guestLimit : _userDailyLimit;
     final isLimitReached = _dailyMessageCount >= limit && !user.hasRole(UserRole.admin);
-    final title = _vaultLocked ? _decoyTitle : (_privateStudyMode ? 'Private Study' : 'Study Assistant');
+    final title = _vaultLocked ? _decoyTitle : (_privateStudyMode ? 'Private Study' : 'Notesy');
 
     return Scaffold(
       key: _scaffoldKey,
@@ -632,22 +666,6 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
         actions: [
           if (!isGuest)
             Tooltip(
-              message: 'Chat history',
-              child: IconButton(
-                icon: const Icon(Icons.history_rounded),
-                onPressed: _openDrawer,
-              ),
-            ),
-          if (_messages.isNotEmpty && !_vaultLocked)
-            Tooltip(
-              message: 'Clear chat history',
-              child: IconButton(
-                icon: const Icon(Icons.delete_outline),
-                onPressed: _clearChatHistory,
-              ),
-            ),
-          if (!isGuest)
-            Tooltip(
               message: _privateStudyMode ? 'End private study session' : 'Start private study session',
               child: IconButton(
                 icon: Icon(_privateStudyMode ? Icons.lock_clock : Icons.lock_outline),
@@ -657,15 +675,12 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
             ),
           if (!isGuest)
             Tooltip(
-              message: _vaultLocked
-                  ? 'Unlock private chat'
-                  : (_vaultConversation ? 'Lock private chat' : 'Start a private chat'),
-              child: IconButton(
-                icon: Icon(_vaultLocked ? Icons.lock_open : Icons.shield_outlined),
-                color: _vaultLocked ? Colors.deepPurple : (_vaultConversation ? Colors.deepPurple : null),
-                onPressed: _vaultLocked
-                    ? _unlockVault
-                    : (_vaultConversation ? _lockVaultNow : _startVaultChat),
+              message: 'Shield: tap for quick view · hold to unlock vault',
+              child: _VaultButton(
+                locked: _vaultLocked,
+                inVault: _vaultConversation,
+                onTap: _onShieldTap,
+                onLongPress: _onShieldLongPress,
               ),
             ),
         ],
@@ -695,15 +710,15 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.deepPurple.withOpacity(0.12),
+              color: Colors.blue.withOpacity(0.12),
               child: Row(
                 children: [
-                  const Icon(Icons.shield_outlined, size: 16, color: Colors.deepPurple),
+                  const Icon(Icons.shield_outlined, size: 16, color: Colors.blue),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Vault chat locked — tap the shield to unlock with biometrics or PIN.',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.deepPurple.shade700),
+                      'Private chat — hold the shield to unlock.',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
                     ),
                   ),
                 ],
@@ -793,75 +808,107 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
                   ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
                   : _conversations.isEmpty
                       ? const Center(child: Text('No chats yet.'))
-                      : ListView.builder(
-                          itemCount: _conversations.length,
-                          itemBuilder: (context, index) {
-                            final conv = _conversations[index];
-                            final isCurrent = _currentConversationId?.toString() == conv['id'].toString();
-                            final isPinned = conv['pinned'] == true;
-                            final isLocked = conv['locked'] == true;
-                            return ListTile(
-                              selected: isCurrent,
-                              selectedTileColor: theme.colorScheme.primary.withOpacity(0.08),
-                              leading: Icon(isLocked ? Icons.shield_outlined : (isPinned ? Icons.push_pin : Icons.chat_bubble_outline),
-                                  size: 20, color: isLocked ? Colors.deepPurple : null),
-                              title: Text(
-                                conv['title']?.toString() ?? 'Chat',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                              ),
-                              subtitle: Text(
-                                _formatConvTime(conv['updated_at']?.toString()),
-                                style: const TextStyle(fontSize: 11),
-                              ),
-                              onTap: () {
-                                Navigator.pop(context);
-                                _openConversation(conv['id'].toString());
-                              },
-                              onLongPress: () {
-                                showModalBottomSheet<void>(
-                                  context: context,
-                                  builder: (ctx) => SafeArea(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        ListTile(
-                                          leading: Icon(isPinned ? Icons.push_pin_outlined : Icons.push_pin),
-                                          title: Text(isPinned ? 'Unpin' : 'Pin'),
-                                          onTap: () {
-                                            Navigator.pop(ctx);
-                                            _pinConversation(conv, !isPinned);
-                                          },
-                                        ),
-                                        ListTile(
-                                          leading: const Icon(Icons.edit_outlined),
-                                          title: const Text('Rename'),
-                                          onTap: () {
-                                            Navigator.pop(ctx);
-                                            _renameConversation(conv);
-                                          },
-                                        ),
-                                        ListTile(
-                                          leading: const Icon(Icons.delete_outline, color: Colors.red),
-                                          title: const Text('Delete', style: TextStyle(color: Colors.red)),
-                                          onTap: () {
-                                            Navigator.pop(ctx);
-                                            _deleteConversation(conv);
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
+                      : _buildConversationList(theme),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// Conversation list split into normal chats and private (shield) chats.
+  Widget _buildConversationList(ThemeData theme) {
+    final normal = _conversations.where((c) => c['locked'] != true).toList();
+    final vault = _conversations.where((c) => c['locked'] == true).toList();
+
+    Widget tile(Map<String, dynamic> conv) {
+      final isCurrent = _currentConversationId?.toString() == conv['id'].toString();
+      final isPinned = conv['pinned'] == true;
+      final isLocked = conv['locked'] == true;
+      return ListTile(
+        selected: isCurrent,
+        selectedTileColor: isLocked
+            ? Colors.blue.withOpacity(0.12)
+            : theme.colorScheme.primary.withOpacity(0.08),
+        leading: Icon(
+          isLocked ? Icons.shield_outlined : (isPinned ? Icons.push_pin : Icons.chat_bubble_outline),
+          size: 20,
+          color: isLocked ? Colors.blue : null,
+        ),
+        title: Text(
+          conv['title']?.toString() ?? 'Chat',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+        ),
+        subtitle: Text(
+          _formatConvTime(conv['updated_at']?.toString()),
+          style: const TextStyle(fontSize: 11),
+        ),
+        onTap: () {
+          Navigator.pop(context);
+          _openConversation(conv['id'].toString());
+        },
+        onLongPress: () {
+          showModalBottomSheet<void>(
+            context: context,
+            builder: (ctx) => SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: Icon(isPinned ? Icons.push_pin_outlined : Icons.push_pin),
+                    title: Text(isPinned ? 'Unpin' : 'Pin'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _pinConversation(conv, !isPinned);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.edit_outlined),
+                    title: const Text('Rename'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _renameConversation(conv);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline, color: Colors.red),
+                    title: const Text('Delete', style: TextStyle(color: Colors.red)),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _deleteConversation(conv);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    Widget sectionHeader(String label, Color color) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: Text(
+          label.toUpperCase(),
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1, color: color),
+        ),
+      );
+    }
+
+    return ListView(
+      children: [
+        if (normal.isNotEmpty) ...[
+          sectionHeader('Chats', theme.colorScheme.primary),
+          ...normal.map(tile),
+        ],
+        if (vault.isNotEmpty) ...[
+          sectionHeader('Private', Colors.blue),
+          ...vault.map(tile),
+        ],
+      ],
     );
   }
 
@@ -1003,101 +1050,110 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     final limit = user.isGuest ? _guestLimit : _userDailyLimit;
     final isLimitReached = _dailyMessageCount >= limit && !user.hasRole(UserRole.admin);
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-      decoration: BoxDecoration(color: theme.colorScheme.surface),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Pending image previews (up to 3): thumbs + X to remove
-          if (_pendingImageBytesList.isNotEmpty)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
-                  children: [
-                    for (var i = 0; i < _pendingImageBytesList.length; i++)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Stack(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(10),
-                              child: Image.memory(
-                                _pendingImageBytesList[i],
-                                width: 72,
-                                height: 72,
-                                fit: BoxFit.cover,
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: theme.dividerColor.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Pending image previews (up to 3): thumbs + X to remove
+            if (_pendingImageBytesList.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    children: [
+                      for (var i = 0; i < _pendingImageBytesList.length; i++)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.memory(
+                                  _pendingImageBytesList[i],
+                                  width: 72,
+                                  height: 72,
+                                  fit: BoxFit.cover,
+                                ),
                               ),
-                            ),
-                            Positioned(
-                              top: -10,
-                              right: -10,
-                              child: Material(
-                                color: Colors.black.withValues(alpha: 0.75),
-                                shape: const CircleBorder(),
-                                child: InkWell(
-                                  customBorder: const CircleBorder(),
-                                  onTap: () => setState(() {
-                                    _pendingImageBase64s.removeAt(i);
-                                    _pendingImageBytesList.removeAt(i);
-                                  }),
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(5),
-                                    child: Icon(Icons.close_rounded, size: 16, color: Colors.white),
+                              Positioned(
+                                top: -10,
+                                right: -10,
+                                child: Material(
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  shape: const CircleBorder(),
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: () => setState(() {
+                                      _pendingImageBase64s.removeAt(i);
+                                      _pendingImageBytesList.removeAt(i);
+                                    }),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(5),
+                                      child: Icon(Icons.close_rounded, size: 16, color: Colors.white),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    if (_pendingImageBytesList.length < _maxImages)
-                      IconButton(
-                        tooltip: 'Add image (${_pendingImageBytesList.length}/$_maxImages)',
-                        icon: const Icon(Icons.add_photo_alternate_outlined, size: 22),
-                        onPressed: (user.isGuest || isLimitReached) ? () => _showGuestNotice(context) : () => _pickImages(ImageSource.gallery),
-                      ),
-                  ],
+                      if (_pendingImageBytesList.length < _maxImages)
+                        IconButton(
+                          tooltip: 'Add image (${_pendingImageBytesList.length}/$_maxImages)',
+                          icon: const Icon(Icons.add_photo_alternate_outlined, size: 22),
+                          onPressed: (user.isGuest || isLimitReached) ? () => _showGuestNotice(context) : () => _pickImages(ImageSource.gallery),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                enabled: !isLimitReached,
-                minLines: 1,
-                maxLines: 4,
-                style: TextStyle(color: theme.colorScheme.onSurface),
-                decoration: InputDecoration(
-                  hintText: isLimitReached
-                      ? 'Limit reached'
-                      : (_privateStudyMode ? 'Private study question...' : 'Paste a topic, note title, or homework question...'),
-                  border: InputBorder.none,
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  enabled: !isLimitReached,
+                  minLines: 1,
+                  maxLines: 4,
+                  style: TextStyle(color: theme.colorScheme.onSurface),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: isLimitReached
+                        ? 'Limit reached'
+                        : (_privateStudyMode ? 'Private study question...' : 'Paste a topic, note title, or homework question...'),
+                    border: InputBorder.none,
+                  ),
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: isLimitReached ? null : (_) => _sendMessage(),
                 ),
-                textInputAction: TextInputAction.send,
-                onSubmitted: isLimitReached ? null : (_) => _sendMessage(),
               ),
-            ),
-            Tooltip(
-              message: 'Attach photo, image, or file',
-              child: IconButton(
-                icon: const Icon(Icons.attach_file),
-                onPressed: (user.isGuest || isLimitReached) ? () => _showGuestNotice(context) : _showAttachMenu,
+              Tooltip(
+                message: 'Attach photo, image, or file',
+                child: IconButton(
+                  icon: const Icon(Icons.attach_file),
+                  onPressed: (user.isGuest || isLimitReached) ? () => _showGuestNotice(context) : _showAttachMenu,
+                ),
               ),
-            ),
-            Tooltip(
-              message: 'Send',
-              child: IconButton(
-                icon: Icon(Icons.send_rounded, color: isLimitReached ? Colors.grey : primaryColor),
-                onPressed: isLimitReached ? null : _sendMessage,
+              Tooltip(
+                message: 'Send',
+                child: IconButton(
+                  icon: Icon(Icons.send_rounded, color: isLimitReached ? Colors.grey : primaryColor),
+                  onPressed: isLimitReached ? null : _sendMessage,
+                ),
               ),
-            ),
-          ]),
-        ],
+            ]),
+          ],
+        ),
       ),
     );
   }
@@ -1110,34 +1166,6 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       ),
     );
   }
-
-  Future<void> _clearChatHistory() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Clear Chat'),
-        content: const Text('Delete all messages in this chat? This cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Clear', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    final user = context.read<AuthService>().currentUser;
-    if (user != null && !user.isGuest && _currentConversationId != null) {
-      await AiChatService().deleteConversation(_currentConversationId!.toString());
-      await _newConversation();
-    } else {
-      setState(() => _messages.clear());
-      await _saveChatHistory();
-    }
-  }
-
   void _togglePrivateStudyMode() {
     if (!_privateStudyMode && _messages.isNotEmpty) {
       showDialog<void>(
@@ -1167,5 +1195,105 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       if (_privateStudyMode) _messages.clear();
       _privateStudyMode = !_privateStudyMode;
     });
+  }
+}
+
+/// Shield action button: short press fires [onTap] (quick decoy view),
+/// holding for [holdDuration] fires [onLongPress] (unlock vault).
+/// Shows a progress ring while held so the user knows the hold is registering.
+class _VaultButton extends StatefulWidget {
+  final bool locked;
+  final bool inVault;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _VaultButton({
+    required this.locked,
+    required this.inVault,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  static const Duration holdDuration = Duration(milliseconds: 3500);
+
+  @override
+  State<_VaultButton> createState() => _VaultButtonState();
+}
+
+class _VaultButtonState extends State<_VaultButton> {
+  Timer? _holdTimer;
+  double _holdProgress = 0.0;
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startHold() {
+    _holdTimer?.cancel();
+    _holdTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
+      setState(() => _holdProgress += 50 / _VaultButton.holdDuration.inMilliseconds);
+      if (_holdProgress >= 1.0) {
+        t.cancel();
+        _holdTimer = null;
+        setState(() => _holdProgress = 0.0);
+        widget.onLongPress();
+      }
+    });
+  }
+
+  void _cancelHold() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    if (_holdProgress >= 0.5) {
+      setState(() => _holdProgress = 0.0);
+    } else if (_holdProgress > 0) {
+      setState(() => _holdProgress = 0.0);
+      widget.onTap();
+    } else {
+      widget.onTap();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.locked || widget.inVault ? Colors.blue : null;
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: GestureDetector(
+        onTapDown: (_) => _startHold(),
+        onTapUp: (_) => _cancelHold(),
+        onTapCancel: () {
+          _holdTimer?.cancel();
+          _holdTimer = null;
+          setState(() => _holdProgress = 0.0);
+        },
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                width: 38,
+                height: 38,
+                child: CircularProgressIndicator(
+                  value: _holdProgress == 0 ? null : _holdProgress,
+                  strokeWidth: 2.5,
+                  color: Colors.blue,
+                  backgroundColor: Colors.blue.withValues(alpha: 0.1),
+                ),
+              ),
+              Icon(
+                widget.locked ? Icons.lock_open : Icons.shield_outlined,
+                size: 22,
+                color: color,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
