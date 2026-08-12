@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui' show ImageFilter;
 import 'package:provider/provider.dart';
@@ -896,7 +897,17 @@ class _ChatsListPageState extends State<ChatsListPage> with SingleTickerProvider
                         final dmRoom = dmRoomsByMembers[friend.id];
                         return ListTile(
                           leading: CircleAvatar(
-                            backgroundImage: NetworkImage(friend.avatarUrl ?? AuthService.getDefaultAvatarUrl(friend.fullName, friend.id)),
+                            radius: 22,
+                            backgroundColor: Colors.grey[200],
+                            backgroundImage: friend.avatarUrl == null
+                                ? null
+                                : CachedNetworkImageProvider(friend.avatarUrl!),
+                            child: friend.avatarUrl == null
+                                ? Text(
+                                    (friend.fullName ?? '?').isNotEmpty ? (friend.fullName![0].toUpperCase()) : '?',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
+                                  )
+                                : null,
                           ),
                           title: Text(friend.fullName ?? 'Student', style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text(

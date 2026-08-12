@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'services.dart';
 import 'models.dart';
@@ -605,7 +606,17 @@ class _ChatRoomPageState extends State<ChatRoomPage> {
                       }
                       return ListTile(
                         leading: CircleAvatar(
-                          backgroundImage: NetworkImage(m.avatarUrl ?? AuthService.getDefaultAvatarUrl(m.fullName, m.id)),
+                          radius: 22,
+                          backgroundColor: Colors.grey[200],
+                          backgroundImage: m.avatarUrl == null
+                              ? null
+                              : CachedNetworkImageProvider(m.avatarUrl!),
+                          child: m.avatarUrl == null
+                              ? Text(
+                                  (m.fullName ?? '?').isNotEmpty ? (m.fullName![0].toUpperCase()) : '?',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
+                                )
+                              : null,
                         ),
                         title: Row(
                           children: [

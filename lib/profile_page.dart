@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -105,15 +106,24 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Container(
-                            width: 80,
-                            height: 80,
-                            decoration: BoxDecoration(
-                              color: primaryColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(20),
-                              image: DecorationImage(
-                                image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
-                                fit: BoxFit.cover,
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: CachedNetworkImage(
+                              imageUrl: user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id),
+                              width: 80,
+                              height: 80,
+                              fit: BoxFit.cover,
+                              placeholder: (_, __) => Container(
+                                width: 80,
+                                height: 80,
+                                color: primaryColor.withOpacity(0.1),
+                                child: const Center(child: Icon(Icons.person_outline, size: 32, color: Colors.grey)),
+                              ),
+                              errorWidget: (_, __, ___) => Container(
+                                width: 80,
+                                height: 80,
+                                color: primaryColor.withOpacity(0.1),
+                                child: const Center(child: Icon(Icons.person_outline, size: 32, color: Colors.grey)),
                               ),
                             ),
                           ),
@@ -256,30 +266,42 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                         borderRadius: BorderRadius.circular(20),
                         child: Stack(
                           children: [
-                            Container(
-                              width: 84,
-                              height: 84,
-                              decoration: BoxDecoration(
-                                color: primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(20),
-                                image: DecorationImage(
-                                  image: NetworkImage(dialogAvatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
-                                  fit: BoxFit.cover,
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              child: CachedNetworkImage(
+                                imageUrl: dialogAvatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id),
+                                width: 84,
+                                height: 84,
+                                fit: BoxFit.cover,
+                                placeholder: (_, __) => Container(
+                                  width: 84,
+                                  height: 84,
+                                  color: primaryColor.withOpacity(0.1),
+                                ),
+                                errorWidget: (_, __, ___) => Container(
+                                  width: 84,
+                                  height: 84,
+                                  color: primaryColor.withOpacity(0.1),
                                 ),
                               ),
-                              child: uploadingAvatar
-                                  ? Container(
-                                      decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)),
-                                      child: const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
-                                    )
-                                  : Container(
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withOpacity(0.35),
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: const Center(child: Icon(Icons.camera_alt, color: Colors.white, size: 24)),
-                                    ),
                             ),
+                            if (uploadingAvatar)
+                              Container(
+                                width: 84,
+                                height: 84,
+                                decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)),
+                                child: const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                              )
+                            else
+                              Container(
+                                width: 84,
+                                height: 84,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.35),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Center(child: Icon(Icons.camera_alt, color: Colors.white, size: 24)),
+                              ),
                           ],
                         ),
                       ),
