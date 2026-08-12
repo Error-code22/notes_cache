@@ -9,7 +9,6 @@ import 'package:file_picker/file_picker.dart';
 import 'services.dart';
 import 'models.dart';
 import 'user_manager_page.dart';
-import 'pricing_page.dart';
 
 // ═══════════════════════════════════════════════════════════════
 // ADMIN DASHBOARD — Responsive Grid
@@ -28,7 +27,7 @@ class AdminDashboardPage extends StatelessWidget {
     {'name': 'System Health', 'desc': 'Feature toggles & charts', 'icon': Icons.monitor_heart_rounded, 'color': Color(0xFFEC407A), 'page': 6},
     {'name': 'Help & Support', 'desc': 'Contact & channels', 'icon': Icons.headset_mic_rounded, 'color': Color(0xFFFFA726), 'page': 7},
     {'name': 'App Updates', 'desc': 'Announcements', 'icon': Icons.campaign_rounded, 'color': Color(0xFF7E57C2), 'page': 8},
-    {'name': 'Pricing', 'desc': 'Subscription tiers', 'icon': Icons.monetization_on_rounded, 'color': Color(0xFF26C6DA), 'page': 9},
+    {'name': 'Plans', 'desc': 'Manage subscription plans', 'icon': Icons.card_membership_rounded, 'color': Color(0xFF26C6DA), 'page': 9},
     {'name': 'Docs & Legal', 'desc': 'About, terms & privacy', 'icon': Icons.description_rounded, 'color': Color(0xFF8D6E63), 'page': 10},
   ];
 
@@ -42,7 +41,7 @@ class AdminDashboardPage extends StatelessWidget {
     const _SystemHealthPage(),
     const _HelpAndSupportPage(),
     const UpdatesManagerPage(),
-    const PricingPage(),
+    const _PlansManagerPage(),
     const _DocsAndLegalPage(),
   ];
 
@@ -731,6 +730,7 @@ class _SystemHealthPage extends StatefulWidget {
 
 class _SystemHealthPageState extends State<_SystemHealthPage> {
   bool _chatBetaLocked = true;
+  bool _showCommsButton = true;
   bool _loading = true;
   List<Map<String, dynamic>> _downloads = [];
   List<Map<String, dynamic>> _growth = [];
@@ -743,7 +743,11 @@ class _SystemHealthPageState extends State<_SystemHealthPage> {
     final ns = context.read<NoteService>();
     final c = await ns.getAppConfig();
     if (!mounted) return;
-    setState(() { _chatBetaLocked = c['chat_beta_locked'] != 'false'; _loading = false; });
+    setState(() {
+      _chatBetaLocked = c['chat_beta_locked'] != 'false';
+      _showCommsButton = c['show_comms_button'] != 'false';
+      _loading = false;
+    });
   }
 
   Future<void> _loadCharts() async {
@@ -780,6 +784,24 @@ class _SystemHealthPageState extends State<_SystemHealthPage> {
                   },
                   secondary: Icon(_chatBetaLocked ? Icons.lock_outline_rounded : Icons.lock_open_rounded,
                       color: _chatBetaLocked ? Colors.orange : Colors.green),
+                ),
+                SwitchListTile(
+                  title: const Text('Show Communication Button'),
+                  subtitle: Text(_showCommsButton
+                      ? 'Visible: the Communication card shows on the homepage'
+                      : 'Hidden: the Communication card is removed from the homepage',
+                      style: const TextStyle(fontSize: 12)),
+                  value: _showCommsButton,
+                  onChanged: (v) {
+                    setState(() => _showCommsButton = v);
+                    _save('show_comms_button', v.toString());
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(v ? 'Communication button shown' : 'Communication button hidden'),
+                      backgroundColor: v ? Colors.green : Colors.orange,
+                    ));
+                  },
+                  secondary: Icon(_showCommsButton ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                      color: _showCommsButton ? Colors.green : Colors.orange),
                 ),
                 const Divider(height: 32),
                 Text('Usage Charts (last 14 days)', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
@@ -987,6 +1009,183 @@ class _UpdatesManagerPageState extends State<UpdatesManagerPage> {
                     },
                   ),
                 ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 9b. PLANS MANAGER — add/remove plans (feeds homepage bottom card)
+// ═══════════════════════════════════════════════════════════════
+
+class _PlansManagerPage extends StatefulWidget {
+  const _PlansManagerPage();
+  @override State<_PlansManagerPage> createState() => _PlansManagerPageState();
+}
+
+class _PlansManagerPageState extends State<_PlansManagerPage> {
+  List<Map<String, dynamic>> _plans = [];
+  bool _loading = true;
+  final _name = TextEditingController();
+  final _price = TextEditingController();
+  final _period = TextEditingController();
+  final _description = TextEditingController();
+  final _features = TextEditingController();
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  @override
+  void dispose() {
+    _name.dispose(); _price.dispose(); _period.dispose(); _description.dispose(); _features.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final ns = context.read<NoteService>();
+    final all = await ns.getPricingPlans();
+    if (!mounted) return;
+    setState(() { _plans = all; _loading = false; });
+  }
+
+  Future<void> _addPlan() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plan name is required.'), backgroundColor: Colors.orange));
+      return;
+    }
+    final features = _features.text
+        .split('\n')
+        .map((f) => f.trim())
+        .where((f) => f.isNotEmpty)
+        .toList();
+    final ok = await context.read<NoteService>().addPricingPlan(
+      name: name,
+      price: _price.text.trim().isEmpty ? 'KSh 0' : _price.text.trim(),
+      period: _period.text.trim().isEmpty ? 'forever' : _period.text.trim(),
+      description: _description.text.trim(),
+      features: features,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok ? 'Plan added!' : 'Failed to add plan.'),
+      backgroundColor: ok ? Colors.green : Colors.red,
+    ));
+    if (ok) {
+      _name.clear(); _price.clear(); _period.clear(); _description.clear(); _features.clear();
+      await _load();
+    }
+  }
+
+  Future<void> _deletePlan(String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete plan?'),
+        content: const Text('This removes the plan from the homepage. Users won\'t see it anymore.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final success = await context.read<NoteService>().deletePricingPlan(id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(success ? 'Plan deleted.' : 'Failed to delete plan.'),
+      backgroundColor: success ? Colors.green : Colors.red,
+    ));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Plans Manager')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(color: theme.dividerColor.withValues(alpha: 0.08)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Add a plan', style: TextStyle(fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 12),
+                          TextField(controller: _name, decoration: const InputDecoration(labelText: 'Name (e.g. Student Pro)', border: OutlineInputBorder())),
+                          const SizedBox(height: 10),
+                          Row(children: [
+                            Expanded(child: TextField(controller: _price, decoration: const InputDecoration(labelText: 'Price (e.g. KSh 250)', border: OutlineInputBorder()))),
+                            const SizedBox(width: 10),
+                            Expanded(child: TextField(controller: _period, decoration: const InputDecoration(labelText: 'Period (e.g. /month)', border: OutlineInputBorder()))),
+                          ]),
+                          const SizedBox(height: 10),
+                          TextField(controller: _description, decoration: const InputDecoration(labelText: 'Description (optional)', border: OutlineInputBorder())),
+                          const SizedBox(height: 10),
+                          TextField(controller: _features, maxLines: 4,
+                              decoration: const InputDecoration(labelText: 'Features — one per line', border: OutlineInputBorder())),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: _addPlan,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add Plan'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('${_plans.length} plan(s)', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  if (_plans.isEmpty)
+                    const Padding(padding: EdgeInsets.all(16), child: Text('No plans yet.'))
+                  else
+                    for (final plan in _plans)
+                      Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 8),
+                        color: theme.cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(color: theme.dividerColor.withValues(alpha: 0.08)),
+                        ),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
+                            child: Icon(Icons.card_membership, color: theme.colorScheme.primary, size: 20),
+                          ),
+                          title: Text(plan['name']?.toString() ?? 'Plan', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                          subtitle: Text(
+                            '${plan['price'] ?? ''} ${plan['period'] ?? ''} • ${((plan['features'] as List?) ?? []).length} features',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                            onPressed: () => _deletePlan(plan['id'].toString()),
+                          ),
+                        ),
+                      ),
+                ],
+              ),
+            ),
     );
   }
 }
