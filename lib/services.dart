@@ -1593,10 +1593,15 @@ class AiChatService {
   }
 
   Future<void> saveChatHistory(String userId, List<Map<String, String>> messages) async {
-    // Keep only last N messages
-    final toSave = messages.length > _maxHistoryMessages
-        ? messages.sublist(messages.length - _maxHistoryMessages)
-        : messages;
+    // Keep only last N messages; strip images so base64 never bloats the DB.
+    final toSave = (messages.length > _maxHistoryMessages
+            ? messages.sublist(messages.length - _maxHistoryMessages)
+            : messages)
+        .map((m) {
+      final clean = Map<String, String>.from(m);
+      clean.remove('image');
+      return clean;
+    }).toList();
 
     if (_isGuest(userId)) {
       final prefs = await SharedPreferences.getInstance();

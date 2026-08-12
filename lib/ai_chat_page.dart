@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -83,6 +84,8 @@ class _AiChatPageState extends State<AiChatPage> {
   ];
 
   String? _currentUserId;
+  String? _pendingImageBase64;
+  Uint8List? _pendingImageBytes;
 
   @override
   void initState() {
@@ -165,38 +168,6 @@ class _AiChatPageState extends State<AiChatPage> {
     await _sendText(text);
   }
 
-  Future<void> _sendText(String text) async {
-    if (text.isEmpty || _isLoading) return;
-
-    final user = context.read<AuthService>().currentUser!;
-    final limit = user.isGuest ? _guestLimit : _userDailyLimit;
-    if (_dailyMessageCount >= limit && !user.hasRole(UserRole.admin)) return;
-
-    setState(() { _messages.add({'role': 'user', 'content': text}); _controller.clear(); _isLoading = true; });
-    _scrollToBottom();
-    try {
-      final aiService = AiChatService();
-      if (user.isGuest) {
-        await aiService.incrementGuestMessageCount();
-      } else {
-        await aiService.incrementDailyMessageCount(user.id);
-      }
-      await _loadDailyCount();
-
-      // Send only last 5 messages to Groq for context (keeps quota low)
-      final allHistory = _messages.take(_messages.length - 1).toList();
-      final contextHistory = aiService.getContextMessages(allHistory);
-      final response = await aiService.getResponse(text, contextHistory);
-      setState(() { _messages.add({'role': 'assistant', 'content': response}); _isLoading = false; });
-      _saveChatHistory();
-      _scrollToBottom();
-    } catch (e) {
-      setState(() { _isLoading = false; _messages.add({'role': 'assistant', 'content': 'Error: $e'}); });
-      _saveChatHistory();
-      _scrollToBottom();
-    }
-  }
-
   Future<void> _runStudyAction(_StudyAction action) async {
     final topic = _controller.text.trim();
     final prompt = topic.isEmpty
@@ -229,19 +200,64 @@ class _AiChatPageState extends State<AiChatPage> {
   Future<void> _pickImage(ImageSource source) async {
     try {
       final XFile? image = await ImagePicker().pickImage(source: source, imageQuality: 70, maxWidth: 1024);
-      if (image != null) {
-        final base64Image = base64Encode(await image.readAsBytes());
-        setState(() { _messages.add({'role': 'user', 'content': 'Shared an image.'}); _isLoading = true; });
-        _scrollToBottom();
-        final aiSvc = AiChatService();
-        final ctx = aiSvc.getContextMessages(_messages.take(_messages.length - 1).toList());
-        final response = await aiSvc.getResponse('Analyze image.', ctx, imageBase64: base64Image);
-        setState(() { _messages.add({'role': 'assistant', 'content': response}); _isLoading = false; });
-        _saveChatHistory();
+      if (image != null && mounted) {
+        final bytes = await image.readAsBytes();
+        setState(() {
+          _pendingImageBase64 = base64Encode(bytes);
+          _pendingImageBytes = bytes;
+        });
         _scrollToBottom();
       }
     } catch (e) {
-      debugPrint('Error picking or processing image: $e');
+      debugPrint('Error picking image: $e');
+    }
+  }
+
+  Future<void> _sendText(String text) async {
+    if (_isLoading) return;
+    final hasImage = _pendingImageBytes != null;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty && !hasImage) return;
+
+    final user = context.read<AuthService>().currentUser!;
+    final limit = user.isGuest ? _guestLimit : _userDailyLimit;
+    if (_dailyMessageCount >= limit && !user.hasRole(UserRole.admin)) return;
+
+    final imageBase64 = _pendingImageBase64;
+    setState(() {
+      _messages.add({
+        'role': 'user',
+        'content': trimmed.isEmpty ? (hasImage ? 'Shared an image.' : '') : trimmed,
+        if (imageBase64 != null) 'image': imageBase64,
+      });
+      _controller.clear();
+      _pendingImageBase64 = null;
+      _pendingImageBytes = null;
+      _isLoading = true;
+    });
+    _scrollToBottom();
+    try {
+      final aiService = AiChatService();
+      if (user.isGuest) {
+        await aiService.incrementGuestMessageCount();
+      } else {
+        await aiService.incrementDailyMessageCount(user.id);
+      }
+      await _loadDailyCount();
+
+      // Send only last 5 messages to Groq for context (keeps quota low).
+      // Images are NOT persisted in history; the current image rides along.
+      final allHistory = _messages.take(_messages.length - 1).toList();
+      final contextHistory = aiService.getContextMessages(allHistory);
+      final prompt = trimmed.isEmpty ? 'Analyze image.' : trimmed;
+      final response = await aiService.getResponse(prompt, contextHistory, imageBase64: imageBase64);
+      setState(() { _messages.add({'role': 'assistant', 'content': response}); _isLoading = false; });
+      _saveChatHistory();
+      _scrollToBottom();
+    } catch (e) {
+      setState(() { _isLoading = false; _messages.add({'role': 'assistant', 'content': 'Error: $e'}); });
+      _saveChatHistory();
+      _scrollToBottom();
     }
   }
 
@@ -397,26 +413,92 @@ class _AiChatPageState extends State<AiChatPage> {
 
   Widget _buildMessageBubble(Map<String, String> msg, ThemeData theme, Color primaryColor) {
     final isUser = msg['role'] == 'user';
+    final hasImage = msg['image'] != null && msg['image']!.isNotEmpty;
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 20),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: hasImage ? 8 : 14),
         decoration: BoxDecoration(
           color: isUser ? primaryColor : theme.cardColor,
           borderRadius: BorderRadius.circular(14),
         ),
-        child: isUser
-            ? Text(msg['content']!, style: const TextStyle(color: Colors.white, fontSize: 15))
-            : MarkdownBody(
-                data: msg['content']!,
-                selectable: true,
-                styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-                  p: TextStyle(color: theme.colorScheme.onSurface, fontSize: 15, height: 1.35),
-                  listBullet: TextStyle(color: theme.colorScheme.primary),
-                  strong: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w700),
+        constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (hasImage)
+              GestureDetector(
+                onTap: () => _showFullImage(msg['image']!),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.memory(
+                    base64Decode(msg['image']!),
+                    width: 160,
+                    height: 160,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                      width: 160,
+                      height: 100,
+                      child: Center(child: Icon(Icons.broken_image_outlined)),
+                    ),
+                  ),
                 ),
               ),
+            if (hasImage && msg['content']!.isNotEmpty) const SizedBox(height: 8),
+            if (msg['content']!.isNotEmpty)
+              isUser
+                  ? Text(msg['content']!, style: const TextStyle(color: Colors.white, fontSize: 15))
+                  : MarkdownBody(
+                      data: msg['content']!,
+                      selectable: true,
+                      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+                        p: TextStyle(color: theme.colorScheme.onSurface, fontSize: 15, height: 1.35),
+                        listBullet: TextStyle(color: theme.colorScheme.primary),
+                        strong: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Fullscreen image viewer with a close button (Gemini-style).
+  void _showFullImage(String base64Image) {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 5,
+                child: Center(
+                  child: Image.memory(
+                    base64Decode(base64Image),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white, size: 48)),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 8,
+              right: 12,
+              child: IconButton.filledTonal(
+                tooltip: 'Close',
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -482,6 +564,45 @@ class _AiChatPageState extends State<AiChatPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Pending image preview (Gemini-style): small thumb + X to remove
+          if (_pendingImageBytes != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.memory(
+                        _pendingImageBytes!,
+                        width: 72,
+                        height: 72,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    Positioned(
+                      top: -8,
+                      right: -8,
+                      child: InkWell(
+                        onTap: () => setState(() {
+                          _pendingImageBase64 = null;
+                          _pendingImageBytes = null;
+                        }),
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            color: Colors.black87,
+                            shape: BoxShape.circle,
+                          ),
+                          padding: const EdgeInsets.all(2),
+                          child: const Icon(Icons.close, size: 14, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Row(children: [
             Expanded(
               child: TextField(
