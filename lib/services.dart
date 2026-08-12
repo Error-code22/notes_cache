@@ -623,7 +623,7 @@ class NoteService {
     }
   }
 
-  Future<List<Note>> getNotesForUser(UserProfile u, {int? semester, String? searchQuery}) async {
+  Future<List<Note>> getNotesForUser(UserProfile u, {int? semester, String? searchQuery, bool myNotesOnly = false}) async {
     final prefs = await SharedPreferences.getInstance();
     final cacheKey = 'notes_cache_${u.id}_${semester ?? "all"}';
 
@@ -631,21 +631,16 @@ class NoteService {
       var q = _supabase.from('notes').select();
       // Only restrict by yearLevel if they are strictly a student
       final isStrictlyStudent = u.hasRole(UserRole.student) && !u.hasRole(UserRole.admin) && !u.hasRole(UserRole.moderator) && !u.hasRole(UserRole.lecturer);
-      
-      debugPrint('[NotesDebug] user=${u.email} roles=${u.roles} yearLevel=${u.yearLevel} isStrictlyStudent=$isStrictlyStudent semester=$semester search=$searchQuery');
-      
-      if (isStrictlyStudent && u.yearLevel != null) {
+
+      if (myNotesOnly) {
+        q = q.eq('user_id', u.id);
+      } else if (isStrictlyStudent && u.yearLevel != null) {
         q = q.eq('target_year', u.yearLevel!);
-        debugPrint('[NotesDebug] Filtering by target_year=${u.yearLevel}');
       }
       if (semester != null) q = q.eq('semester', semester);
       if (searchQuery != null) q = q.ilike('title', '%$searchQuery%');
       
       final List<dynamic> data = await q.order('created_at', ascending: false).timeout(const Duration(seconds: 5));
-      debugPrint('[NotesDebug] Raw results: ${data.length} notes');
-      if (data.isNotEmpty) {
-        debugPrint('[NotesDebug] First note: ${data.first}');
-      }
       
       // Save to cache
       if (searchQuery == null) { // Only cache full lists
@@ -657,7 +652,6 @@ class NoteService {
       debugPrint('[NotesDebug] ERROR: $e\n$st');
       final cachedData = prefs.getString(cacheKey);
       if (cachedData != null) {
-        debugPrint('[NotesDebug] Falling back to cache (${jsonDecode(cachedData).length} notes)');
         final List<dynamic> data = jsonDecode(cachedData);
         return data.map((item) => Note.fromMap(item)).toList();
       }
@@ -1724,6 +1718,8 @@ class AiChatService {
 class UpdateService {
   static const String _latestUrl =
       'https://api.github.com/repos/Error-code22/notes_cache/releases/latest';
+  static const String _prefsVersionKey = 'downloaded_update_version';
+  static const String _shownWhatsNewKey = 'shown_whatsnew_version';
 
   /// Fetches the newest version tag (e.g. "1.0.2") from GitHub. null on failure.
   Future<String?> getLatestVersion() async {
@@ -1735,6 +1731,20 @@ class UpdateService {
       return tag.isEmpty ? null : tag;
     } catch (e) {
       debugPrint('UpdateService version check error: $e');
+      return null;
+    }
+  }
+
+  /// Fetches the release notes (body) of the latest release. null on failure.
+  Future<String?> getLatestReleaseNotes() async {
+    try {
+      final response = await http.get(Uri.parse(_latestUrl)).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final body = data['body'] as String?;
+      return (body == null || body.trim().isEmpty) ? null : body.trim();
+    } catch (e) {
+      debugPrint('UpdateService notes error: $e');
       return null;
     }
   }
@@ -1755,21 +1765,74 @@ class UpdateService {
     return false;
   }
 
-  /// Downloads the APK to the app directory (with progress callback) and
-  /// returns the file path, or null on failure.
-  Future<String?> downloadApk({void Function(double progress)? onProgress}) async {
+  Future<File> _apkFile() async {
+    final appDir = await NoteService().getAppDirectory();
+    return File('$appDir\\notescache_update.apk');
+  }
+
+  /// Public path helper so the install dialog can open the downloaded APK.
+  Future<String> apkFilePath() async => (await _apkFile()).path;
+
+  /// True when a previously downloaded APK for [version] is still on disk —
+  /// lets the user skip re-downloading after dismissing the dialog.
+  Future<bool> hasCachedApk(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getString(_prefsVersionKey) != version) return false;
+    final file = await _apkFile();
+    return file.existsSync() && file.lengthSync() > 1_000_000;
+  }
+
+  /// Records that [version] was downloaded to disk (or marks it stale).
+  Future<void> markDownloaded(String? version) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (version == null) {
+      await prefs.remove(_prefsVersionKey);
+    } else {
+      await prefs.setString(_prefsVersionKey, version);
+    }
+  }
+
+  /// Downloads the APK with real byte-progress reporting.
+  /// [onProgress] receives (receivedBytes, totalBytes).
+  Future<String?> downloadApk({void Function(int received, int total)? onProgress}) async {
+    final target = await _apkFile();
     try {
-      final appDir = await NoteService().getAppDirectory();
-      final target = File('$appDir\\notescache_update.apk');
-      final response = await http.get(Uri.parse(apkDownloadUrl)).timeout(const Duration(minutes: 5));
-      if (response.statusCode != 200) return null;
-      await target.writeAsBytes(response.bodyBytes);
-      onProgress?.call(1.0);
+      final client = http.Client();
+      final request = http.Request('GET', Uri.parse(apkDownloadUrl));
+      final response = await client.send(request).timeout(const Duration(minutes: 5));
+      if (response.statusCode != 200) {
+        client.close();
+        return null;
+      }
+      final total = response.contentLength ?? 0;
+      var received = 0;
+      final sink = target.openWrite();
+      await for (final chunk in response.stream) {
+        received += chunk.length;
+        sink.add(chunk);
+        if (total > 0) onProgress?.call(received, total);
+      }
+      await sink.flush();
+      await sink.close();
+      client.close();
+      onProgress?.call(total > 0 ? total : received, total > 0 ? total : received);
       return target.path;
     } catch (e) {
       debugPrint('UpdateService download error: $e');
+      try { if (target.existsSync()) target.deleteSync(); } catch (_) {}
       return null;
     }
+  }
+
+  /// Whether the user has seen the "What's New" notes for [version].
+  Future<bool> hasShownWhatsNew(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_shownWhatsNewKey) == version;
+  }
+
+  Future<void> markWhatsNewShown(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_shownWhatsNewKey, version);
   }
 }
 
