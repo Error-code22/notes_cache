@@ -55,3 +55,9 @@ CREATE POLICY "Users insert own notes" ON notes
     auth.role() = 'authenticated'
     AND user_id = auth.uid()
   );
+
+-- ── 5. profiles: remove the blanket read-all policy ─────────
+-- "Authenticated users can read profiles" had USING (true) — any logged-in
+-- user could read EVERY profile incl. private ones (email, friend code, bio).
+-- The "public profiles or own" policy is the only read path now.
+DROP POLICY IF EXISTS "Authenticated users can read profiles" ON profiles;
