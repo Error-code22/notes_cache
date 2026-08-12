@@ -77,6 +77,44 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     _currentUserId = context.read<AuthService>().currentUser?.id;
     _loadDailyCount();
     _loadConversations();
+    _maybeShowBetaNotice();
+  }
+
+  /// One-time "beta" disclaimer popup on first Notesy open.
+  Future<void> _maybeShowBetaNotice() async {
+    final prefs = await SharedPreferences.getInstance();
+    const key = 'notesy_beta_notice_shown';
+    if (prefs.getBool(key) ?? false) return;
+    await prefs.setBool(key, true);
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.science_outlined, color: Colors.deepPurple),
+              SizedBox(width: 8),
+              Text('Notesy is in beta', style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: const Text(
+            'Notesy is still in development and can be unpredictable.\n\n'
+            'It may make mistakes, misread notes, or give incomplete answers — '
+            'always double-check important information with your course materials or lecturer.\n\n'
+            'Thanks for being an early tester!',
+            style: TextStyle(fontSize: 13, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Got it'),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   @override
@@ -660,7 +698,26 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
           ? Color.alphaBlend(Colors.deepOrange.withOpacity(0.05), theme.scaffoldBackgroundColor)
           : theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: Text(title),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title),
+            if (title == 'Notesy') ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.deepPurple.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  'BETA',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.8, color: Colors.deepPurple),
+                ),
+              ),
+            ],
+          ],
+        ),
         backgroundColor: theme.colorScheme.surface,
         elevation: 0,
         actions: [
@@ -939,6 +996,21 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
           'Ask me anything about your notes, homework, or study topics.',
           textAlign: TextAlign.center,
           style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.65)),
+        ),
+        const SizedBox(height: 20),
+        Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.deepPurple.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              '⚠ Beta — answers can be imperfect. Double-check important info.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11, color: Colors.deepPurple[400]),
+            ),
+          ),
         ),
       ],
     );
