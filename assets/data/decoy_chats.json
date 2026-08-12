@@ -1,0 +1,60 @@
+{
+  "decoys": [
+    {
+      "title": "How does photosynthesis work?",
+      "messages": [
+        {"role": "user", "content": "Explain photosynthesis simply"},
+        {"role": "assistant", "content": "Photosynthesis is how plants make their own food using sunlight. In short:\n\n- **Light energy** is absorbed by chlorophyll (the green pigment in leaves)\n- Water + carbon dioxide → glucose + oxygen\n- Happens mainly in the **chloroplasts** of leaf cells\n\nWant me to go deeper into the light and dark reactions?"}
+      ]
+    },
+    {
+      "title": "Math revision: quadratic equations",
+      "messages": [
+        {"role": "user", "content": "Help me with quadratic equations"},
+        {"role": "assistant", "content": "Sure! A quadratic looks like **ax² + bx + c = 0**.\n\nYou can solve it with the quadratic formula:\n\n**x = (-b ± √(b² − 4ac)) / 2a**\n\nExample: x² − 5x + 6 = 0 → a=1, b=−5, c=6 → x = 2 or x = 3.\n\nTry one and I'll check your answer!"}
+      ]
+    },
+    {
+      "title": "Summary of the Industrial Revolution",
+      "messages": [
+        {"role": "user", "content": "Can you summarise the Industrial Revolution?"},
+        {"role": "assistant", "content": "The Industrial Revolution (roughly 1760–1840) saw manufacturing move from hand production to machines:\n\n- **Key inventions**: steam engine, power loom, spinning jenny\n- **Factories** grew in cities; people moved from farms to urban areas\n- **Social impact**: new working class, child labour concerns, eventually labour laws\n\nWant the causes or effects in more detail?"}
+      ]
+    },
+    {
+      "title": "What is the difference between mitosis and meiosis?",
+      "messages": [
+        {"role": "user", "content": "Difference between mitosis and meiosis?"},
+        {"role": "assistant", "content": "Quick comparison:\n\n| | Mitosis | Meiosis |\n|---|---|---|\n| Purpose | Growth & repair | Making gametes |\n| Divisions | 1 | 2 |\n| Daughter cells | 2 (identical) | 4 (different) |\n| Chromosomes | Same (2n) | Half (n) |\n\nMitosis = body cells. Meiosis = sperm/egg cells."}
+      ]
+    },
+    {
+      "title": "Tips for studying effectively",
+      "messages": [
+        {"role": "user", "content": "Any study tips?"},
+        {"role": "assistant", "content": "A few that actually work:\n\n1. **Active recall** — test yourself instead of re-reading\n2. **Spaced repetition** — review at 1, 3, 7, 14 days\n3. **Pomodoro** — 25 min focus, 5 min break\n4. **Teach someone** — if you can explain it, you know it\n\nWant a revision plan built around your subjects?"}
+      ]
+    },
+    {
+      "title": "Balancing chemical equations",
+      "messages": [
+        {"role": "user", "content": "How do I balance chemical equations?"},
+        {"role": "assistant", "content": "Steps to balance:\n\n1. Write the equation (reactants → products)\n2. Count atoms of each element on both sides\n3. Add coefficients (numbers in front) to balance\n4. Check — never change subscripts!\n\nExample: H₂ + O₂ → H₂O becomes **2H₂ + O₂ → 2H₂O**. Want a practice one?"}
+      ]
+    },
+    {
+      "title": "Good English essay structure",
+      "messages": [
+        {"role": "user", "content": "How to structure an essay?"},
+        {"role": "assistant", "content": "Classic structure:\n\n- **Introduction** — hook + thesis statement\n- **Body paragraphs** (2–4) — one idea each, with evidence\n- **Conclusion** — restate thesis + wrap up\n\nEach body paragraph: Point → Evidence → Explanation (P.E.E.). Want me to help plan an essay topic?"}
+      ]
+    },
+    {
+      "title": "What causes seasons?",
+      "messages": [
+        {"role": "user", "content": "Why do we have seasons?"},
+        {"role": "assistant", "content": "Seasons come from the **Earth's axial tilt** (~23.5°), not distance from the sun.\n\n- When your hemisphere tilts **toward** the sun → summer (more direct sunlight)\n- Tilts **away** → winter\n- Equinoxes happen when neither pole points toward the sun\n\nMakes sense? I can explain how it affects day length too."}
+      ]
+    }
+  ]
+}
