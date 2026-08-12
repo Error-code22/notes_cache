@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:file_picker/file_picker.dart';
 import 'services.dart';
 import 'models.dart';
 import 'user_manager_page.dart';
@@ -368,6 +371,7 @@ class _AIControlRoomPage extends StatefulWidget {
 
 class _AIControlRoomPageState extends State<_AIControlRoomPage> {
   String _model = 'llama-3.3-70b-versatile';
+  String _visionModel = 'qwen/qwen3.6-27b';
   bool _webSearch = true;
   final _textLimit = TextEditingController();
   final _imageLimit = TextEditingController();
@@ -385,6 +389,7 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
     if (!mounted) return;
     setState(() {
       _model = c['ai_model'] ?? 'llama-3.3-70b-versatile';
+      _visionModel = c['ai_vision_model'] ?? 'qwen/qwen3.6-27b';
       _webSearch = c['ai_web_search'] != 'false';
       _textLimit.text = c['ai_daily_text_limit'] ?? '50';
       _imageLimit.text = c['ai_daily_image_limit'] ?? '10';
@@ -420,6 +425,28 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
                 Text(_model == 'llama-3.3-70b-versatile' ? '70B: Smarter, slower' : '8B: Faster, lighter',
                     style: TextStyle(fontSize: 12, color: Colors.grey[500])),
                 const SizedBox(height: 16),
+                const Text('Vision Model (images)', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: _visionModel,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.image_outlined),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'qwen/qwen3.6-27b', child: Text('Qwen 3.6 27B (vision)')),
+                    DropdownMenuItem(value: 'llama-3.2-11b-vision-preview', child: Text('Llama 3.2 11B Vision (legacy)')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _visionModel = v);
+                    _save('ai_vision_model', v);
+                  },
+                ),
+                const SizedBox(height: 4),
+                Text('Used when a user attaches an image. Qwen 3.6 27B is Groq\'s current vision model.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                const SizedBox(height: 16),
                 SwitchListTile(
                   title: const Text('Web Search'),
                   subtitle: const Text('Let AI search the internet when notes don\'t have the answer'),
@@ -446,8 +473,177 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
                   icon: const Icon(Icons.save),
                   label: const Text('Save Limits'),
                 ),
+                const Divider(height: 32),
+                const Text('Test Model', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 4),
+                const Text('Probe any model directly — text or image. No usage counted.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 12),
+                _ModelTester(),
               ],
             ),
+    );
+  }
+}
+
+/// Admin-only model probe: pick a model, type a prompt, optionally attach an
+/// image, and see the raw Groq response (via the notesy `test_model` action).
+class _ModelTester extends StatefulWidget {
+  const _ModelTester();
+
+  @override
+  State<_ModelTester> createState() => _ModelTesterState();
+}
+
+class _ModelTesterState extends State<_ModelTester> {
+  static const _models = [
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'qwen/qwen3.6-27b',
+    'llama-3.2-11b-vision-preview',
+  ];
+
+  String _model = 'qwen/qwen3.6-27b';
+  final _prompt = TextEditingController();
+  String? _imageBase64;
+  String? _imageName;
+  bool _testing = false;
+  String? _result;
+  String? _error;
+
+  @override
+  void dispose() { _prompt.dispose(); super.dispose(); }
+
+  Future<void> _pickImage() async {
+    final result = await FilePicker.pickFiles(type: FileType.image, withData: true, allowMultiple: false);
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) return;
+    setState(() {
+      _imageBase64 = base64Encode(bytes);
+      _imageName = file.name;
+    });
+  }
+
+  Future<void> _run() async {
+    if (_prompt.text.trim().isEmpty && _imageBase64 == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a prompt or attach an image.'), backgroundColor: Colors.orange));
+      return;
+    }
+    setState(() { _testing = true; _result = null; _error = null; });
+    try {
+      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+        'action': 'test_model',
+        'model': _model,
+        'message': _prompt.text.trim(),
+        if (_imageBase64 != null) 'imageBase64': _imageBase64,
+      });
+      final data = response.data;
+      if (data is Map && data['content'] != null) {
+        if (mounted) setState(() => _result = data['content'].toString());
+      } else {
+        if (mounted) setState(() => _error = 'Unexpected response: $data');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: _model,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.smart_toy_outlined),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          items: const [
+            DropdownMenuItem(value: 'llama-3.3-70b-versatile', child: Text('Llama 3.3 70B (text)')),
+            DropdownMenuItem(value: 'llama-3.1-8b-instant', child: Text('Llama 3.1 8B (text)')),
+            DropdownMenuItem(value: 'qwen/qwen3.6-27b', child: Text('Qwen 3.6 27B (vision)')),
+            DropdownMenuItem(value: 'llama-3.2-11b-vision-preview', child: Text('Llama 3.2 11B Vision (legacy)')),
+          ],
+          onChanged: (v) { if (v != null) setState(() => _model = v); },
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _prompt,
+          maxLines: 3,
+          decoration: InputDecoration(
+            labelText: 'Prompt',
+            hintText: 'e.g. What does this note teach? / Describe this image.',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: _pickImage,
+              icon: const Icon(Icons.image_outlined, size: 18),
+              label: Text(_imageName ?? 'Attach image'),
+            ),
+            if (_imageName != null) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Remove image',
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () => setState(() { _imageBase64 = null; _imageName = null; }),
+              ),
+            ],
+            const Spacer(),
+            ElevatedButton.icon(
+              onPressed: _testing ? null : _run,
+              icon: _testing
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.play_arrow, size: 18),
+              label: Text(_testing ? 'Testing…' : 'Run Test'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_error != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+          ),
+        if (_result != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: SelectableText(_result!, style: const TextStyle(fontSize: 13, height: 1.4)),
+          ),
+        if (_result != null) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: _result!));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied!'), duration: Duration(seconds: 1)));
+              },
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('Copy result'),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
