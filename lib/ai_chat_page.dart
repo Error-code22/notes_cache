@@ -197,9 +197,49 @@ class _AiChatPageState extends State<AiChatPage> {
     }
   }
 
+  /// Paperclip menu (Gemini-style): Photos / Camera / File.
+  void _showAttachMenu() {
+    final theme = Theme.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: theme.colorScheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: CircleAvatar(backgroundColor: Colors.purple.withValues(alpha: 0.1), child: const Icon(Icons.photo_outlined, color: Colors.purple)),
+                title: const Text('Photos'),
+                subtitle: const Text('Pick an image from your gallery'),
+                onTap: () { Navigator.pop(ctx); _pickImage(ImageSource.gallery); },
+              ),
+              ListTile(
+                leading: CircleAvatar(backgroundColor: Colors.red.withValues(alpha: 0.1), child: const Icon(Icons.camera_alt_outlined, color: Colors.red)),
+                title: const Text('Camera'),
+                subtitle: const Text('Take a photo to share'),
+                onTap: () { Navigator.pop(ctx); _pickImage(ImageSource.camera); },
+              ),
+              ListTile(
+                leading: CircleAvatar(backgroundColor: Colors.blue.withValues(alpha: 0.1), child: const Icon(Icons.insert_drive_file_outlined, color: Colors.blue)),
+                title: const Text('File'),
+                subtitle: const Text('Share a text file (txt, md, code)'),
+                onTap: () { Navigator.pop(ctx); _pickFile(); },
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final XFile? image = await ImagePicker().pickImage(source: source, imageQuality: 70, maxWidth: 1024);
+      final XFile? image = await ImagePicker().pickImage(source: source, imageQuality: 60, maxWidth: 640);
       if (image != null && mounted) {
         final bytes = await image.readAsBytes();
         setState(() {
@@ -582,20 +622,21 @@ class _AiChatPageState extends State<AiChatPage> {
                       ),
                     ),
                     Positioned(
-                      top: -8,
-                      right: -8,
-                      child: InkWell(
-                        onTap: () => setState(() {
-                          _pendingImageBase64 = null;
-                          _pendingImageBytes = null;
-                        }),
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            color: Colors.black87,
-                            shape: BoxShape.circle,
+                      top: -10,
+                      right: -10,
+                      child: Material(
+                        color: Colors.black.withValues(alpha: 0.75),
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () => setState(() {
+                            _pendingImageBase64 = null;
+                            _pendingImageBytes = null;
+                          }),
+                          child: const Padding(
+                            padding: EdgeInsets.all(5),
+                            child: Icon(Icons.close_rounded, size: 16, color: Colors.white),
                           ),
-                          padding: const EdgeInsets.all(2),
-                          child: const Icon(Icons.close, size: 14, color: Colors.white),
                         ),
                       ),
                     ),
@@ -623,17 +664,10 @@ class _AiChatPageState extends State<AiChatPage> {
               ),
             ),
             Tooltip(
-              message: 'Attach text file',
+              message: 'Attach photo, image, or file',
               child: IconButton(
                 icon: const Icon(Icons.attach_file),
-                onPressed: (user.isGuest || isLimitReached) ? () => _showGuestNotice(context) : _pickFile,
-              ),
-            ),
-            Tooltip(
-              message: 'Scan image',
-              child: IconButton(
-                icon: const Icon(Icons.camera_alt),
-                onPressed: (user.isGuest || isLimitReached) ? () => _showGuestNotice(context) : () => _pickImage(ImageSource.camera),
+                onPressed: (user.isGuest || isLimitReached) ? () => _showGuestNotice(context) : _showAttachMenu,
               ),
             ),
             Tooltip(
