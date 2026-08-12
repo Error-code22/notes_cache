@@ -8,8 +8,8 @@ const APK_ARM64 = 'https://github.com/Error-code22/notes_cache/releases/latest/d
 const APK_V7A = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-armeabi-v7a.apk'
 const WIN_ZIP = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-Windows.zip'
 
-const CURRENT_VERSION = '1.0.2'
-const WHATS_NEW = 'Google Sign-In, admin dashboard redesign, offline startup fix, account linking'
+const CURRENT_VERSION = '1.0.4'
+const WHATS_NEW = 'Notesy overhaul: multi-image vision, chat history, vault mode, speed optimizations'
 
 export default function Home() {
   return (
@@ -119,6 +119,52 @@ export default function Home() {
             >
               Get support on WhatsApp
             </a>
+          </div>
+        </div>
+
+        {/* Features */}
+        <div className="mt-20">
+          <h3 className="text-2xl font-bold text-center text-gray-900 mb-2">Everything for your studies</h3>
+          <p className="text-center text-gray-600 mb-8 text-sm">One app for notes, AI help, and classmates.</p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[
+              { title: 'Notes by year & semester', desc: 'Browse and search lecture notes filtered to your year, with offline reading.', icon: '📚' },
+              { title: 'Notesy AI assistant', desc: 'Ask anything about your notes — with image support, chat history, and private vault chats.', icon: '🤖' },
+              { title: 'Chat & friends', desc: 'Chat rooms and DMs with classmates, friend codes, unread badges.', icon: '💬' },
+              { title: 'Document editors', desc: 'Open and edit PDF, DOCX, PPTX, XLSX, CSV, code and more — right in the app.', icon: '✏️' },
+              { title: 'Local Docs', desc: 'Browse documents on your own device and share them to the library.', icon: '📂' },
+              { title: 'Personalize', desc: 'Themes, accent colors, fonts, avatars, and Google Sign-In.', icon: '🎨' },
+            ].map((f) => (
+              <div key={f.title} className="bg-white border border-gray-200 rounded-2xl p-5">
+                <div className="text-2xl mb-2">{f.icon}</div>
+                <div className="font-semibold text-gray-900">{f.title}</div>
+                <div className="text-sm text-gray-500 mt-1">{f.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Roadmap */}
+        <div className="mt-20 bg-white border border-gray-200 rounded-2xl p-8 max-w-3xl mx-auto">
+          <h3 className="text-2xl font-bold text-center text-gray-900 mb-2">What's coming</h3>
+          <p className="text-center text-gray-600 mb-8 text-sm">NotesCache is in active development. Here's what we're building next.</p>
+          <div className="space-y-4">
+            {[
+              { title: 'Voice replies', desc: 'Notesy reads answers aloud — perfect for studying on the go.' },
+              { title: 'Flashcards to Memory Lab', desc: 'Save Notesy flashcards into your own revision decks in one tap.' },
+              { title: 'Ask about this note', desc: 'Jump from any note straight into a Notesy conversation about it.' },
+              { title: 'Share chats', desc: 'Export and share conversations with classmates.' },
+              { title: 'Weekly study summaries', desc: 'See what you studied each week: topics, questions, downloads.' },
+              { title: 'Push notifications', desc: 'Get notified when new notes land in your year.' },
+            ].map((r) => (
+              <div key={r.title} className="flex items-start gap-3">
+                <span className="mt-1 w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
+                <div>
+                  <div className="font-semibold text-gray-900 text-sm">{r.title}</div>
+                  <div className="text-sm text-gray-500">{r.desc}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </main>

@@ -1,8 +1,22 @@
 # NotesCache Plan 🗺️
 
-Status as of **2026-08-06**. Anything in a checkbox list without ✅ is next up.
+Status as of **2026-08-12**. Anything in a checkbox list without ✅ is next up.
 
-## ✅ Done (this build era)
+## 🎯 Tomorrow (2026-08-13) — Notesy retention features
+
+1. [ ] **Notesy voice replies (TTS)** — Notesy reads answers aloud (`flutter_tts`, free). Killer for studying on the go.
+2. [ ] **Flashcards → Memory Lab** — one-tap "save these flashcards" from Notesy into a real deck.
+3. [ ] **"Ask about this note"** — from note detail, jump into Notesy with the note's context preloaded.
+4. [ ] **Share chat** — export a conversation as text/image to share with classmates.
+5. [ ] **Weekly study summary** — "This week: X topics, Y questions, Z downloads" (activity data exists).
+
+### Also queued
+- [ ] **FCM push notifications** — biggest gap (notifications die when app force-stopped).
+- [ ] **Batch AI summaries for old notes** — 39/47 notes missing summaries; one admin button.
+- [ ] **Telegram backup backfill** — 0/47 notes backed up; `telegram-restore` currently useless.
+- [ ] **Terms/privacy on website?** — decide whether to migrate from in-app dialogs to web pages (keep in-app for now).
+
+## ✅ Done (recent era — v1.0.4 feature set)
 
 - **Public launch**: repo public, GitHub release v1.0.0 (3 clean APKs), landing page live at **notescache.netlify.app**, direct-download link for WhatsApp groups.
 - **Secret-leak cleanup**: `.env` stripped to public-only, git history purged, APKs rebuilt + verified secret-free, all leaked keys rotated (Groq/Cloudinary/Telegram/Supabase; GCP disabled by Google; Gemini ignored).
