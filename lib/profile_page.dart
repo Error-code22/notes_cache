@@ -19,12 +19,8 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  late TextEditingController _bioController;
-  late TextEditingController _nameController;
   Duration _selectedPeriod = const Duration(days: 7);
   bool _isProfilePublic = true;
-  bool _isUploadingAvatar = false;
-  bool _isSaving = false;
   bool _isDeleting = false;
   Map<String, String> _appConfig = {};
   List<UserIdentity> _linkedIdentities = [];
@@ -33,11 +29,9 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     final authService = context.read<AuthService>();
     final user = authService.currentUser!;
-    _bioController = TextEditingController(text: user.bio);
-    _nameController = TextEditingController(text: user.fullName);
     _isProfilePublic = user.isProfilePublic;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       authService.ensureFriendCode();
@@ -64,54 +58,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   @override
   void dispose() {
     _tabController.dispose();
-    _bioController.dispose();
-    _nameController.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickAndUploadImage() async {
-    final authService = context.read<AuthService>();
-    final online = await authService.isOnline();
-    if (!online) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No internet connection'), backgroundColor: Colors.orange),
-        );
-      }
-      return;
-    }
-
-    try {
-      final result = await FilePicker.pickFiles(type: FileType.image, allowMultiple: false);
-      if (result != null && result.files.single.path != null && mounted) {
-        setState(() => _isUploadingAvatar = true);
-        final success = await authService.updateProfileImage(File(result.files.single.path!));
-        if (mounted) {
-          setState(() => _isUploadingAvatar = false);
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(success ? 'Profile photo updated!' : 'Failed — max 2MB, JPG/PNG/WebP only'),
-            backgroundColor: success ? Colors.green : Colors.red,
-          ));
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isUploadingAvatar = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
-      }
-    }
-  }
-
-  Future<void> _saveProfile() async {
-    setState(() => _isSaving = true);
-    final authService = context.read<AuthService>();
-    await authService.updateProfileDetails(fullName: _nameController.text, bio: _bioController.text);
-    if (mounted) {
-      setState(() => _isSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile updated!'), backgroundColor: Colors.green),
-      );
-    }
   }
 
   @override
@@ -155,39 +102,17 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                 children: [
                   Row(
                     children: [
-                      Stack(
-                        children: [
-                          Container(
-                            width: 80,
-                            height: 80,
-                            decoration: BoxDecoration(
-                              color: primaryColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(20),
-                              image: DecorationImage(
-                                image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                            child: _isUploadingAvatar
-                                ? Container(
-                                    decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)),
-                                    child: const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
-                                  )
-                                : null,
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          image: DecorationImage(
+                            image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
+                            fit: BoxFit.cover,
                           ),
-                          Positioned(
-                            bottom: -4,
-                            right: -4,
-                            child: InkWell(
-                              onTap: _isUploadingAvatar ? null : _pickAndUploadImage,
-                              child: CircleAvatar(
-                                radius: 14,
-                                backgroundColor: _isUploadingAvatar ? Colors.grey : primaryColor,
-                                child: const Icon(Icons.edit, size: 14, color: Colors.white),
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                       const SizedBox(width: 20),
                       Expanded(
@@ -213,6 +138,22 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                     const SizedBox(height: 16),
                     Text(user.bio!, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.8))),
                   ],
+                  const SizedBox(height: 16),
+                  // Edit Profile pill — opens the edit popup
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: OutlinedButton.icon(
+                      onPressed: _showEditProfileDialog,
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Edit Profile', style: TextStyle(fontWeight: FontWeight.w600)),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                        side: BorderSide(color: primaryColor.withOpacity(0.5)),
+                        foregroundColor: primaryColor,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -221,13 +162,12 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
               controller: _tabController,
               labelColor: primaryColor,
               unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
-              tabs: const [Tab(text: 'Edit'), Tab(text: 'Activity'), Tab(text: 'Settings')],
+              tabs: const [Tab(text: 'Activity'), Tab(text: 'Settings')],
             ),
             Expanded(
               child: TabBarView(
                 controller: _tabController,
                 children: [
-                  _buildProfileEditTab(context, user),
                   _buildActivityTab(context, user),
                   _buildAccountSettingsTab(context, user),
                 ],
@@ -239,63 +179,164 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     );
   }
 
-  // ==================== EDIT TAB ====================
+  // ==================== EDIT PROFILE DIALOG ====================
 
-  Widget _buildProfileEditTab(BuildContext context, UserProfile user) {
+  void _showEditProfileDialog() {
+    final authService = context.read<AuthService>();
+    final user = authService.currentUser!;
+    final nameController = TextEditingController(text: user.fullName);
+    final bioController = TextEditingController(text: user.bio);
+    var selectedYear = user.yearLevel ?? 1;
+    var saving = false;
+    var uploadingAvatar = false;
     final theme = Theme.of(context);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildInputField(context, 'Full Name', _nameController, Icons.person_outline),
-          const SizedBox(height: 16),
-          _buildInputField(context, 'Bio', _bioController, Icons.edit_note_outlined, maxLines: 3),
-          const SizedBox(height: 16),
-          // Year Level Selector
-          Text('Year Level', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<int>(
-            value: user.yearLevel ?? 1,
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.school_outlined),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+    final primaryColor = theme.colorScheme.primary;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) => AlertDialog(
+          title: const Text('Edit Profile', style: TextStyle(fontWeight: FontWeight.bold)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Avatar with change button
+                Center(
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 84,
+                        height: 84,
+                        decoration: BoxDecoration(
+                          color: primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          image: DecorationImage(
+                            image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        child: uploadingAvatar
+                            ? Container(
+                                decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)),
+                                child: const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                              )
+                            : null,
+                      ),
+                      Positioned(
+                        bottom: -4,
+                        right: -4,
+                        child: InkWell(
+                          onTap: uploadingAvatar
+                              ? null
+                              : () async {
+                                  setDialogState(() => uploadingAvatar = true);
+                                  final online = await authService.isOnline();
+                                  if (!online) {
+                                    if (dialogCtx.mounted) {
+                                      setDialogState(() => uploadingAvatar = false);
+                                      ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                                        const SnackBar(content: Text('No internet connection'), backgroundColor: Colors.orange),
+                                      );
+                                    }
+                                    return;
+                                  }
+                                  try {
+                                    final result = await FilePicker.pickFiles(type: FileType.image, allowMultiple: false);
+                                    if (result != null && result.files.single.path != null && dialogCtx.mounted) {
+                                      final success = await authService.updateProfileImage(File(result.files.single.path!));
+                                      if (dialogCtx.mounted) {
+                                        setDialogState(() => uploadingAvatar = false);
+                                        ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(
+                                          content: Text(success ? 'Profile photo updated!' : 'Failed — max 2MB, JPG/PNG/WebP only'),
+                                          backgroundColor: success ? Colors.green : Colors.red,
+                                        ));
+                                      }
+                                    } else if (dialogCtx.mounted) {
+                                      setDialogState(() => uploadingAvatar = false);
+                                    }
+                                  } catch (e) {
+                                    if (dialogCtx.mounted) {
+                                      setDialogState(() => uploadingAvatar = false);
+                                      ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+                                    }
+                                  }
+                                },
+                          child: CircleAvatar(
+                            radius: 14,
+                            backgroundColor: uploadingAvatar ? Colors.grey : primaryColor,
+                            child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _buildInputField(dialogCtx, 'Full Name', nameController, Icons.person_outline),
+                const SizedBox(height: 14),
+                _buildInputField(dialogCtx, 'Bio', bioController, Icons.edit_note_outlined, maxLines: 3),
+                const SizedBox(height: 14),
+                Text('Year Level', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  initialValue: selectedYear,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.school_outlined),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 1, child: Text('Year 1')),
+                    DropdownMenuItem(value: 2, child: Text('Year 2')),
+                    DropdownMenuItem(value: 3, child: Text('Year 3')),
+                    DropdownMenuItem(value: 4, child: Text('Year 4')),
+                  ],
+                  onChanged: user.yearChanged ? null : (val) {
+                    if (val != null) setDialogState(() => selectedYear = val);
+                  },
+                ),
+                if (user.yearChanged)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('Year level can only be changed once', style: TextStyle(fontSize: 12, color: Colors.orange[700])),
+                  ),
+              ],
             ),
-            items: const [
-              DropdownMenuItem(value: 1, child: Text('Year 1')),
-              DropdownMenuItem(value: 2, child: Text('Year 2')),
-              DropdownMenuItem(value: 3, child: Text('Year 3')),
-              DropdownMenuItem(value: 4, child: Text('Year 4')),
-            ],
-            onChanged: user.yearChanged ? null : (val) {
-              if (val != null) _changeYearLevel(val);
-            },
           ),
-          if (user.yearChanged)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text('Year level can only be changed once', style: TextStyle(fontSize: 12, color: Colors.orange[700])),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(dialogCtx),
+              child: const Text('Cancel'),
             ),
-          const SizedBox(height: 24),
-          // Save Button
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton.icon(
-              onPressed: _isSaving ? null : _saveProfile,
-              icon: _isSaving
+            ElevatedButton.icon(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      setDialogState(() => saving = true);
+                      await authService.updateProfileDetails(
+                        fullName: nameController.text,
+                        bio: bioController.text,
+                      );
+                      if (selectedYear != (user.yearLevel ?? 1) && !user.yearChanged) {
+                        await authService.updateYearLevel(selectedYear);
+                      }
+                      if (dialogCtx.mounted) {
+                        setDialogState(() => saving = false);
+                        Navigator.pop(dialogCtx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Profile updated!'), backgroundColor: Colors.green),
+                        );
+                      }
+                    },
+              icon: saving
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.save),
-              label: Text(_isSaving ? 'Saving...' : 'Save Changes'),
-              style: ElevatedButton.styleFrom(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
+                  : const Icon(Icons.save, size: 18),
+              label: Text(saving ? 'Saving...' : 'Save'),
             ),
-          ),
-          const SizedBox(height: 16),
-          // Theme Settings
-          _buildThemeSection(context),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -367,17 +408,6 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
         ),
       ],
     );
-  }
-
-  Future<void> _changeYearLevel(int year) async {
-    final authService = context.read<AuthService>();
-    final success = await authService.updateYearLevel(year);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(success ? 'Year level updated!' : 'Year level can only be changed once'),
-        backgroundColor: success ? Colors.green : Colors.orange,
-      ));
-    }
   }
 
   // ==================== ACTIVITY TAB ====================
@@ -468,6 +498,10 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Friend code copied!')));
             }
           }),
+          const Divider(height: 32),
+
+          // Appearance (moved here from the old Edit tab)
+          _buildThemeSection(context),
           const Divider(height: 32),
 
           // Linked Accounts
