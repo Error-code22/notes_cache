@@ -102,17 +102,38 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                 children: [
                   Row(
                     children: [
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: primaryColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          image: DecorationImage(
-                            image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
-                            fit: BoxFit.cover,
+                      // Avatar + Edit pill stacked under the image
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: primaryColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              image: DecorationImage(
+                                image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: 80,
+                            height: 28,
+                            child: OutlinedButton(
+                              onPressed: _showEditProfileDialog,
+                              style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                side: BorderSide(color: primaryColor.withOpacity(0.5)),
+                                foregroundColor: primaryColor,
+                              ),
+                              child: const Text('Edit', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(width: 20),
                       Expanded(
@@ -138,22 +159,6 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                     const SizedBox(height: 16),
                     Text(user.bio!, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.8))),
                   ],
-                  const SizedBox(height: 16),
-                  // Edit Profile pill — small, same width as the avatar, centered under it
-                  SizedBox(
-                    width: 80,
-                    height: 32,
-                    child: OutlinedButton(
-                      onPressed: _showEditProfileDialog,
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        side: BorderSide(color: primaryColor.withOpacity(0.5)),
-                        foregroundColor: primaryColor,
-                      ),
-                      child: const Text('Edit', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -275,9 +280,37 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Text(
-                        'Tap to change photo',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Tap to change photo',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                          ),
+                          const SizedBox(width: 8),
+                          // DiceBear picker
+                          Tooltip(
+                            message: 'Pick a DiceBear avatar',
+                            child: InkWell(
+                              onTap: () => _showDiceBearPicker(dialogCtx),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.casino_outlined, size: 16, color: primaryColor),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Random',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: primaryColor),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -418,10 +451,113 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     );
   }
 
+  /// DiceBear avatar picker: shows a grid of generated avatars (same seed,
+  /// different styles) + a shuffle button to randomize the seed. Tapping one
+  /// saves it as the profile avatar immediately.
+  void _showDiceBearPicker(BuildContext dialogCtx) {
+    final authService = context.read<AuthService>();
+    final user = authService.currentUser!;
+    const styles = [
+      'initials', 'adventurer', 'avataaars', 'bottts', 'fun-emoji',
+      'personas', 'big-ears', 'micah', 'notionists', 'open-peeps',
+      'thumbs', 'lorelei', 'miniavs', 'shapes',
+    ];
+    final seedBase = (user.fullName ?? user.id).replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    var seed = seedBase;
+    var saving = false;
+
+    String urlFor(String style) =>
+        'https://api.dicebear.com/8.x/$style/png?seed=$seed&backgroundColor=1a237e,1565c0,0277bd,00838f,2e7d32,6a1b9a,c62828,e65100&fontSize=40';
+
+    showModalBottomSheet<void>(
+      context: dialogCtx,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Choose an avatar', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                    ),
+                    // Shuffle: randomize the seed
+                    TextButton.icon(
+                      onPressed: saving ? null : () {
+                        setSheetState(() {
+                          seed = '${seedBase}${DateTime.now().millisecondsSinceEpoch % 100000}';
+                        });
+                      },
+                      icon: const Icon(Icons.casino_outlined, size: 18),
+                      label: const Text('Shuffle'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: GridView.count(
+                    crossAxisCount: 4,
+                    shrinkWrap: true,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    children: [
+                      for (final style in styles)
+                        InkWell(
+                          onTap: saving ? null : () async {
+                            setSheetState(() => saving = true);
+                            final ok = await authService.updateAvatarUrl(urlFor(style));
+                            if (sheetCtx.mounted) {
+                              setSheetState(() => saving = false);
+                              Navigator.pop(sheetCtx);
+                              if (dialogCtx.mounted) {
+                                ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(
+                                  content: Text(ok ? 'Avatar updated!' : 'Failed to update avatar.'),
+                                  backgroundColor: ok ? Colors.green : Colors.red,
+                                ));
+                              }
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey[300]!),
+                            ),
+                            padding: const EdgeInsets.all(4),
+                            child: Image.network(
+                              urlFor(style),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.person_outline, size: 20)),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Want your own photo instead? Close this and tap the profile picture.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ==================== ACTIVITY TAB ====================
 
-  Widget _buildActivityTab(BuildContext context, UserProfile user) {
-    final noteService = context.read<NoteService>();
+  Widget _buildActivityTab(BuildContext context, UserProfile user) {    final noteService = context.read<NoteService>();
     return Column(
       children: [
         // Period selector
