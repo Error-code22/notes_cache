@@ -24,6 +24,7 @@ class AiChatPage extends StatefulWidget {
 }
 
 class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, String>> _messages = [];
   final ScrollController _scrollController = ScrollController();
@@ -214,7 +215,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
   }
 
   void _openDrawer() {
-    Scaffold.of(context).openDrawer();
+    _scaffoldKey.currentState?.openDrawer();
   }
 
   // ==================== LEGACY GUEST HISTORY ====================
@@ -291,7 +292,8 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
         ],
       ),
     );
-    pinController.dispose();
+    // Dispose after the pop animation finishes (controller still in use during it)
+    Future<void>.delayed(const Duration(milliseconds: 400), pinController.dispose);
     if (ok == null || ok.isEmpty || ok.length < 4) return false;
     await prefs.setString(_vaultPinKey, ok);
     return true;
@@ -322,7 +324,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       pinController.clear();
       if (entered == null) return false;
       if (entered == pin) {
-        pinController.dispose();
+        Future<void>.delayed(const Duration(milliseconds: 400), pinController.dispose);
         return true;
       }
       attempts++;
@@ -364,6 +366,8 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
   /// Unlock the vault: biometrics/PIN → restore real messages from DB.
   Future<void> _unlockVault() async {
     if (!await _authenticate()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
     if (_currentConversationId != null) {
       final msgs = await AiChatService().loadConversationMessages(_currentConversationId!.toString());
       if (mounted) {
@@ -381,6 +385,10 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
   /// Start a vault conversation: biometrics first, then create a locked chat.
   Future<void> _startVaultChat() async {
     if (!await _authenticate()) return;
+    // Let the auth dialog finish its exit animation before touching state —
+    // continuing immediately deactivates the dialog's elements mid-pop.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
     final user = context.read<AuthService>().currentUser;
     if (user == null || user.isGuest) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -613,6 +621,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     final title = _vaultLocked ? _decoyTitle : (_privateStudyMode ? 'Private Study' : 'Study Assistant');
 
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: _privateStudyMode
           ? Color.alphaBlend(Colors.deepOrange.withOpacity(0.05), theme.scaffoldBackgroundColor)
           : theme.scaffoldBackgroundColor,
