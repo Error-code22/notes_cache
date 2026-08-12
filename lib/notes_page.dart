@@ -50,6 +50,8 @@ class _NotesPageState extends State<NotesPage> {
   NoteViewMode _viewMode = NoteViewMode.list;
   Future<List<Note>>? _notesFuture;
   bool _downloadingOffline = false;
+  bool _healthCheckPending = false;
+  Timer? _searchDebounce;
   final Set<String> _offlineAvailable = {};
   bool _offlineCheckDone = false;
 
@@ -60,6 +62,12 @@ class _NotesPageState extends State<NotesPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshNotes();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
   }
 
   void _refreshNotes({bool? forceOffline}) {
@@ -104,17 +112,20 @@ class _NotesPageState extends State<NotesPage> {
   }
 
   /// Checks which notes already have local copies (for the OFFLINE badge).
+  /// Runs the checks in parallel — was one sequential await per note.
   Future<void> _checkOfflineAvailability(List<Note> notes) async {
     if (_offlineCheckDone) return;
     final noteService = context.read<NoteService>();
-    final available = <String>{};
-    for (final n in notes) {
-      if (await noteService.isAvailableOffline(n)) available.add(n.id);
-    }
+    final results = await Future.wait(notes.map((n) async {
+      final ok = await noteService.isAvailableOffline(n);
+      return (id: n.id, ok: ok);
+    }));
     if (!mounted) return;
     setState(() {
       _offlineCheckDone = true;
-      _offlineAvailable.addAll(available);
+      for (final r in results) {
+        if (r.ok) _offlineAvailable.add(r.id);
+      }
     });
   }
 
@@ -177,7 +188,10 @@ class _NotesPageState extends State<NotesPage> {
           child: TextField(
             onChanged: (value) {
               _searchQuery = value.toLowerCase();
-              _refreshNotes();
+              // Debounce: wait 350ms after the last keystroke before hitting
+              // the DB (was one round-trip per character).
+              _searchDebounce?.cancel();
+              _searchDebounce = Timer(const Duration(milliseconds: 350), _refreshNotes);
             },
             style: TextStyle(color: theme.colorScheme.onSurface, fontSize: 14),
             decoration: InputDecoration(
@@ -323,11 +337,15 @@ class _NotesPageState extends State<NotesPage> {
                     
                     final notes = snapshot.data ?? [];
 
-                    // Fire-and-forget file health check (cached 12h)
-                    if (notes.isNotEmpty) {
+                    // Fire-and-forget file health check (cached 12h).
+                    // Only rebuilds the list when a health status actually
+                    // changed — otherwise this looped forever.
+                    if (notes.isNotEmpty && !_healthCheckPending) {
+                      _healthCheckPending = true;
                       unawaited(
-                        context.read<NoteService>().checkNotesHealth(notes).then((_) {
-                          if (mounted) setState(() {});
+                        context.read<NoteService>().checkNotesHealth(notes).then((changed) {
+                          _healthCheckPending = false;
+                          if (changed && mounted) setState(() {});
                         }),
                       );
                     }

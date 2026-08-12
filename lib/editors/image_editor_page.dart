@@ -19,6 +19,7 @@ class ImageEditorPage extends StatefulWidget {
 class _ImageEditorPageState extends State<ImageEditorPage> {
   img.Image? _original;
   img.Image? _current;
+  Uint8List? _displayBytes;
   bool _loading = true;
   bool _dirty = false;
 
@@ -35,13 +36,21 @@ class _ImageEditorPageState extends State<ImageEditorPage> {
     setState(() {
       _original = decoded;
       _current = decoded;
+      _displayBytes = decoded == null ? null : _encodeDisplay(decoded);
       _loading = false;
     });
+  }
+
+  /// Encode a downscaled PNG once per edit — was running inside build(),
+  /// re-encoding the full image on every setState (rotate/flip = jank).
+  Uint8List _encodeDisplay(img.Image image) {
+    return Uint8List.fromList(img.encodePng(img.copyResize(image, width: 1600)));
   }
 
   void _setCurrent(img.Image next) {
     setState(() {
       _current = next;
+      _displayBytes = _encodeDisplay(next);
       _dirty = true;
     });
   }
@@ -126,7 +135,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> {
                     child: InteractiveViewer(
                       maxScale: 6,
                       child: Image.memory(
-                        Uint8List.fromList(img.encodePng(img.copyResize(_current!, width: 1600))),
+                        _displayBytes ?? Uint8List(0),
                         fit: BoxFit.contain,
                       ),
                     ),
