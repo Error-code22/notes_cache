@@ -86,6 +86,21 @@ class _AiChatPageState extends State<AiChatPage> {
   String? _currentUserId;
   String? _pendingImageBase64;
   Uint8List? _pendingImageBytes;
+  /// Decoded image bytes per base64 string — avoids re-decoding on every
+  /// rebuild of the messages list (was synchronous UI-thread work per build).
+  final Map<String, Uint8List> _decodedImageCache = {};
+
+  Uint8List? _decodeImage(String base64) {
+    var cached = _decodedImageCache[base64];
+    if (cached != null) return cached;
+    try {
+      cached = base64Decode(base64);
+      _decodedImageCache[base64] = cached;
+      return cached;
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   void initState() {
@@ -474,9 +489,10 @@ class _AiChatPageState extends State<AiChatPage> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.memory(
-                    base64Decode(msg['image']!),
+                    _decodeImage(msg['image']!) ?? Uint8List(0),
                     width: 160,
                     height: 160,
+                    cacheWidth: 320, // decode at thumbnail scale, not full res
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => const SizedBox(
                       width: 160,
@@ -521,7 +537,7 @@ class _AiChatPageState extends State<AiChatPage> {
                 maxScale: 5,
                 child: Center(
                   child: Image.memory(
-                    base64Decode(base64Image),
+                    _decodeImage(base64Image) ?? Uint8List(0),
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white, size: 48)),
                   ),

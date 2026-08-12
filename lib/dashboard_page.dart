@@ -86,7 +86,10 @@ class _DashboardPageState extends State<DashboardPage> {
           _showCongratulationPopup(newYear);
         };
 
+        // Ask for notification permission AFTER the first frame so the OS
+        // dialog never delays startup (was blocking in main()).
         if (Platform.isAndroid) {
+          context.read<NotificationService>().requestPermission();
           unawaited(_checkForUpdate());
         }
       });

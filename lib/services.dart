@@ -124,6 +124,7 @@ class AuthService extends ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
   UserProfile? _currentUser;
   bool _isLoading = false;
+  bool _profileFetchInFlight = false;
   ThemeProvider? _themeProvider;
   Function(int)? onYearAutoUpdated;
 
@@ -135,7 +136,16 @@ class AuthService extends ChangeNotifier {
     _supabase.auth.onAuthStateChange.listen((data) async {
       final session = data.session;
       if (session != null) {
-        await _fetchUserProfile(session.user);
+        // The initial auth-state event fires with the restored session,
+        // which _recoverSession already handles — dedupe so the profile
+        // isn't fetched twice at startup.
+        if (_profileFetchInFlight) return;
+        _profileFetchInFlight = true;
+        try {
+          await _fetchUserProfile(session.user);
+        } finally {
+          _profileFetchInFlight = false;
+        }
         notifyListeners();
       }
     });
@@ -145,7 +155,12 @@ class AuthService extends ChangeNotifier {
   Future<void> _recoverSession() async {
     final session = _supabase.auth.currentSession;
     if (session != null) {
-      await _fetchUserProfile(session.user);
+      _profileFetchInFlight = true;
+      try {
+        await _fetchUserProfile(session.user);
+      } finally {
+        _profileFetchInFlight = false;
+      }
     } else {
       // No signed-in user: drop straight into guest mode so the app opens
       // to the dashboard instead of a sign-in screen.
@@ -557,6 +572,7 @@ class NoteService {
   static const Duration _healthTtl = Duration(hours: 12);
   final Map<String, bool> _fileHealth = {};
   final Set<String> _checking = {};
+  bool _healthChanged = false;
 
   /// Whether the note's file is known to be downloadable.
   /// null = not checked yet.
@@ -564,7 +580,8 @@ class NoteService {
 
   /// Lightweight HEAD check per note file (cached 12h, 5 concurrent).
   /// Best-effort; results stored in SharedPreferences.
-  Future<void> checkNotesHealth(List<Note> notes) async {
+  /// Returns true when any health status changed (caller may refresh UI).
+  Future<bool> checkNotesHealth(List<Note> notes) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_healthCacheKey);
     final cache = <String, Map<String, dynamic>>{};
@@ -587,22 +604,42 @@ class NoteService {
         final isAlive = cached['alive'] == true;
         final ttlMs = (isAlive ? _healthTtl : const Duration(minutes: 10)).inMilliseconds;
         if (now - cachedAt < ttlMs) {
+          final wasKnown = _fileHealth[id] != null;
           _fileHealth[id] = isAlive;
+          if (!wasKnown) _healthChanged = true;
           continue;
         }
       }
       toCheck.add(n);
     }
 
+    if (toCheck.isEmpty) {
+      // Nothing to check — skip the prefs write entirely.
+      final changed = _healthChanged;
+      _healthChanged = false;
+      return changed;
+    }
+
     // Check in batches of 5
+    final before = Map<String, bool>.from(_fileHealth);
     for (var i = 0; i < toCheck.length; i += 5) {
       final batch = toCheck.sublist(i, i + 5 > toCheck.length ? toCheck.length : i + 5);
       await Future.wait(batch.map(_checkFile));
+    }
+    for (final n in toCheck) {
+      final id = n.id.toString();
+      if (before[id] != _fileHealth[id]) {
+        _healthChanged = true;
+      }
     }
 
     final toSave = <String, dynamic>{};
     _fileHealth.forEach((id, alive) => toSave[id] = {'alive': alive, 'at': now});
     await prefs.setString(_healthCacheKey, jsonEncode(toSave));
+
+    final changed = _healthChanged;
+    _healthChanged = false;
+    return changed;
   }
 
   Future<void> _checkFile(Note n) async {
@@ -1294,13 +1331,27 @@ class NoteService {
     } catch (e) { debugPrint('getAdminStats error: $e'); return {'totalUsers': 0, 'totalNotes': 0, 'storageUsed': 'N/A'}; }
   }
 
+  Map<String, String>? _configCache;
+  DateTime? _configCacheAt;
+  static const Duration _configTtl = Duration(seconds: 60);
+
   Future<Map<String, String>> getAppConfig() async {
+    // Serve from a 60s TTL cache — was a fresh DB SELECT on every page open.
+    // Admin updates invalidate it via updateAppConfig.
+    final now = DateTime.now();
+    if (_configCache != null &&
+        _configCacheAt != null &&
+        now.difference(_configCacheAt!) < _configTtl) {
+      return _configCache!;
+    }
     try {
       final List<dynamic> data = await _supabase.from('app_config').select();
-      return {for (var item in data) item['key']: item['value']};
+      _configCache = {for (var item in data) item['key']: item['value']};
+      _configCacheAt = now;
+      return _configCache!;
     } catch (e) {
       debugPrint('getAppConfig error, using defaults: $e');
-      return {
+      return _configCache ?? {
         'about_text': 'NotesCache v1.0.0\n\nYour campus study companion. Access lecture notes, chat with classmates, and get instant AI-powered help — all in one place.\n\nBuilt for students, by students.\n\n© 2026 NotesCache. All rights reserved.',
         'terms_and_conditions': 'NOTESCACHE TERMS OF SERVICE\n\nLast Updated: June 2026\n\n1. ACCEPTANCE OF TERMS\nBy accessing or using NotesCache ("the App"), you agree to be bound by these Terms of Service. If you do not agree, do not use the App.\n\n2. ELIGIBILITY\nYou must be a currently enrolled student or staff member at a recognized educational institution. You must provide accurate registration information.\n\n3. ACCOUNT RESPONSIBILITY\nYou are responsible for maintaining the confidentiality of your account. You agree to notify us immediately of any unauthorized use. One account per person.\n\n4. USER CONTENT\n4.1 By uploading notes, documents, or other materials ("User Content"), you grant NotesCache a non-exclusive, royalty-free license to store, display, and distribute such content within the App for educational purposes.\n4.2 You retain ownership of your User Content.\n4.3 You must not upload content that infringes copyright, contains malware, or violates any law.\n4.4 NotesCache reserves the right to remove any User Content at its discretion.\n\n5. AI SERVICES\n5.1 The App provides AI-powered assistance ("Notesy") for educational purposes only.\n5.2 AI responses may contain errors. Always verify information with official course materials.\n5.3 AI usage is subject to daily limits based on your subscription tier.\n5.4 Do not attempt to manipulate, reverse-engineer, or abuse the AI system.\n\n6. PROHIBITED USES\n- Sharing account credentials\n- Scraping or automated data collection\n- Harassment, spam, or abusive behavior in chat rooms\n- Uploading copyrighted material without authorization\n- Attempting to bypass security measures or rate limits\n- Using the App for commercial purposes without a Campus License\n\n7. SUBSCRIPTION & PAYMENTS\n7.1 Free tier is available at no cost with limited features.\n7.2 Paid subscriptions (Student Pro, Campus License) are billed via M-Pesa.\n7.3 Subscriptions auto-renew unless cancelled before the billing date.\n7.4 Refunds are available within 7 days of purchase if less than 10 AI queries were made.\n\n8. TERMINATION\nWe may suspend or terminate your account for violations of these Terms. Upon termination, your right to use the App ceases immediately.\n\n9. LIMITATION OF LIABILITY\nNotesCache is provided "as is" without warranties. We are not liable for any damages arising from use of the App, including but not limited to academic consequences from relying on AI-generated content.\n\n10. GOVERNING LAW\nThese Terms are governed by the laws of the Republic of Kenya.\n\n11. CONTACT\nFor questions about these Terms, contact: support@notescache.com',
         'privacy_policy': 'NOTESCACHE PRIVACY POLICY\n\nLast Updated: June 2026\n\n1. INFORMATION WE COLLECT\n1.1 Account Information: Name, email address, university, year of study, and profile photo (optional).\n1.2 User Content: Notes, documents, and materials you upload to the platform.\n1.3 Chat Messages: Messages you send in chat rooms and direct messages.\n1.4 AI Interactions: Questions asked to Notesy AI and the responses generated.\n1.5 Usage Data: App activity, feature usage, and session information.\n\n2. HOW WE USE YOUR INFORMATION\n2.1 To provide and improve the App\'s services.\n2.2 To power AI features (lecture search, question answering).\n2.3 To enable communication between users (chat rooms, friend system).\n2.4 To enforce usage limits and prevent abuse.\n2.5 To send important service announcements.\n\n3. DATA SHARING\n3.1 We do NOT sell your personal data to third parties.\n3.2 We use Supabase (supabase.com) for data storage and authentication. Their privacy policy applies to infrastructure-level data handling.\n3.3 We use Groq (groq.com) and Google AI (ai.google.dev) for AI processing. Questions sent to AI may be processed by these providers.\n3.4 We may disclose information if required by law or to protect our rights.\n\n4. DATA STORAGE & SECURITY\n4.1 All data is stored on Supabase servers with enterprise-grade encryption.\n4.2 Chat messages are encrypted in transit and at rest.\n4.3 We implement Row Level Security (RLS) to ensure users can only access their own data.\n4.4 Passwords are hashed and never stored in plain text.\n\n5. YOUR RIGHTS\n5.1 You can update your profile information at any time from the app.\n5.2 You can delete your account from Profile > Settings > Delete Account.\n5.3 Upon account deletion, your personal data, chat messages, and AI history are permanently removed.\n5.4 Notes you uploaded may be retained for the benefit of the student community.\n\n6. GUEST MODE\n6.1 Guest users can browse notes and use limited AI features.\n6.2 Guest activity is not linked to personal identity.\n6.3 Notes uploaded by guests are permanently stored in the library.\n\n7. CHILDREN\'S PRIVACY\nThe App is intended for users aged 16 and above. We do not knowingly collect data from children under 16.\n\n8. CHANGES TO THIS POLICY\nWe may update this Privacy Policy from time to time. We will notify users of significant changes via in-app announcements.\n\n9. CONTACT\nFor privacy-related inquiries, contact: support@notescache.com',
@@ -1314,6 +1365,9 @@ class NoteService {
 
   Future<void> updateAppConfig(String k, String v) async {
     await _supabase.from('app_config').upsert({'key': k, 'value': v});
+    // Invalidate the cache so admin edits show up immediately.
+    _configCache = null;
+    _configCacheAt = null;
   }
 }
 
@@ -1383,39 +1437,33 @@ class ChatService {
   }
 
   /// Streams DM (non-group) rooms where [uid] is a member.
-  /// Uses a periodic poll because Supabase `.stream()` can't filter by array-contains.
-  Stream<List<ChatRoom>> getDmRoomsStream(String uid) async* {
-    while (true) {
-      try {
-        final data = await _supabase
-            .from('chat_rooms')
-            .select()
-            .eq('is_group', false);
-        final allRooms = (data as List)
-            .map((item) => ChatRoom.fromMap(item))
-            .where((r) => r.memberIds.contains(uid))
-            .toList();
+  /// Uses Supabase realtime (chat_rooms is in the publication; RLS only
+  /// exposes rooms the user belongs to). Replaces the old 5s-polling loop.
+  Stream<List<ChatRoom>> getDmRoomsStream(String uid) {
+    return _supabase
+        .from('chat_rooms')
+        .stream(primaryKey: ['id'])
+        .map((data) {
+          final allRooms = data
+              .map((item) => ChatRoom.fromMap(item))
+              .where((r) => !r.isGroup && r.memberIds.contains(uid))
+              .toList();
 
-        // Deduplicate: if multiple DM rooms exist for the same pair, keep the newest
-        final Map<String, ChatRoom> deduped = {};
-        for (final room in allRooms) {
-          final otherId = room.memberIds.firstWhere((id) => id != uid, orElse: () => '');
-          if (otherId.isEmpty) continue;
-          final existing = deduped[otherId];
-          if (existing == null ||
-              (room.lastMessageTime != null &&
-               (existing.lastMessageTime == null ||
-                room.lastMessageTime!.isAfter(existing.lastMessageTime!)))) {
-            deduped[otherId] = room;
+          // Deduplicate: if multiple DM rooms exist for the same pair, keep the newest
+          final Map<String, ChatRoom> deduped = {};
+          for (final room in allRooms) {
+            final otherId = room.memberIds.firstWhere((id) => id != uid, orElse: () => '');
+            if (otherId.isEmpty) continue;
+            final existing = deduped[otherId];
+            if (existing == null ||
+                (room.lastMessageTime != null &&
+                 (existing.lastMessageTime == null ||
+                  room.lastMessageTime!.isAfter(existing.lastMessageTime!)))) {
+              deduped[otherId] = room;
+            }
           }
-        }
-        yield deduped.values.toList();
-      } catch (e) {
-        debugPrint('getDmRoomsStream error: $e');
-        yield [];
-      }
-      await Future.delayed(const Duration(seconds: 5));
-    }
+          return deduped.values.toList();
+        });
   }
   Stream<ChatRoom> getRoomStream(String rid) {
     return _supabase.from('chat_rooms').stream(primaryKey: ['id']).eq('id', rid).map((data) => ChatRoom.fromMap(data.first));
@@ -2082,13 +2130,24 @@ class NotificationService {
         await _notifications
             .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
             ?.createNotificationChannel(channel);
-
-        await _notifications
-            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-            ?.requestNotificationsPermission();
+        // NOTE: the permission request is NOT fired here — it used to block the
+        // first frame behind the OS dialog. It's now deferred to requestPermission().
       }
     } catch (e) {
       debugPrint('flutter_local_notifications init failed: $e');
+    }
+  }
+
+  /// Asks for notification permission. Called AFTER the first frame renders
+  /// (e.g. dashboard post-frame) so the OS dialog never delays startup.
+  Future<void> requestPermission() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _notifications
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+    } catch (e) {
+      debugPrint('requestNotificationsPermission failed: $e');
     }
   }
 

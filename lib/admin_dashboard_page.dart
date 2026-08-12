@@ -328,15 +328,23 @@ class _ContentVaultPageState extends State<_ContentVaultPage> {
     final ns = context.read<NoteService>();
     final messenger = ScaffoldMessenger.of(context);
     final notes = await ns.fetchAllNotes();
+    final candidates = notes.where((n) => (n['gdrive_id'] as String?)?.trim().isNotEmpty == true).toList();
+    messenger.showSnackBar(SnackBar(content: Text('Checking ${candidates.length} notes for health...'), backgroundColor: Colors.blue));
+
+    // HEAD checks in parallel batches (was fully serial = minutes on many notes)
     final dead = <Map<String, dynamic>>[];
-    for (final n in notes) {
-      final raw = (n['gdrive_id'] as String?)?.trim() ?? '';
-      if (raw.isEmpty) continue;
-      final url = raw.contains('://') ? raw : 'https://drive.google.com/uc?export=download&id=$raw';
-      try {
-        final r = await http.head(Uri.parse(url)).timeout(const Duration(seconds: 8));
-        if (r.statusCode != 200) dead.add(n);
-      } catch (_) { dead.add(n); }
+    for (var i = 0; i < candidates.length; i += 8) {
+      final end = i + 8 > candidates.length ? candidates.length : i + 8;
+      final batch = candidates.sublist(i, end);
+      final results = await Future.wait(batch.map((n) async {
+        final raw = (n['gdrive_id'] as String?)?.trim() ?? '';
+        final url = raw.contains('://') ? raw : 'https://drive.google.com/uc?export=download&id=$raw';
+        try {
+          final r = await http.head(Uri.parse(url)).timeout(const Duration(seconds: 8));
+          return r.statusCode == 200 ? null : n;
+        } catch (_) { return n; }
+      }));
+      dead.addAll(results.whereType<Map<String, dynamic>>());
     }
     if (dead.isEmpty) {
       messenger.showSnackBar(const SnackBar(content: Text('All notes healthy.'), backgroundColor: Colors.green));

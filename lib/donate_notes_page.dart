@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -26,6 +27,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
   int _selectedSemester = 1;
   String _searchQuery = '';
   Future<List<Note>>? _donatedNotesFuture;
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -38,6 +40,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _tabController.dispose();
     _titleController.dispose();
     _descController.dispose();
@@ -393,7 +396,8 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
           child: TextField(
             onChanged: (value) {
               _searchQuery = value.toLowerCase();
-              _loadDonatedNotes();
+              _searchDebounce?.cancel();
+              _searchDebounce = Timer(const Duration(milliseconds: 350), _loadDonatedNotes);
             },
             decoration: InputDecoration(
               hintText: 'Search donated notes...',
