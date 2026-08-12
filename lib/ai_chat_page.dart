@@ -1223,6 +1223,8 @@ class _VaultButton extends StatefulWidget {
 class _VaultButtonState extends State<_VaultButton> {
   Timer? _holdTimer;
   double _holdProgress = 0.0;
+  bool _holding = false;
+  bool _longPressFired = false;
 
   @override
   void dispose() {
@@ -1231,29 +1233,56 @@ class _VaultButtonState extends State<_VaultButton> {
   }
 
   void _startHold() {
+    if (_holding) return;
+    setState(() {
+      _holding = true;
+      _holdProgress = 0.0;
+    });
     _holdTimer?.cancel();
     _holdTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
-      setState(() => _holdProgress += 50 / _VaultButton.holdDuration.inMilliseconds);
-      if (_holdProgress >= 1.0) {
+      final next = _holdProgress + 50 / _VaultButton.holdDuration.inMilliseconds;
+      if (next >= 1.0) {
         t.cancel();
         _holdTimer = null;
-        setState(() => _holdProgress = 0.0);
+        setState(() {
+          _holding = false;
+          _holdProgress = 0.0;
+        });
+        // Prevent the release (onTapUp) from ALSO firing the tap action.
+        _longPressFired = true;
         widget.onLongPress();
+      } else {
+        setState(() => _holdProgress = next);
       }
     });
   }
 
-  void _cancelHold() {
+  void _release() {
     _holdTimer?.cancel();
     _holdTimer = null;
-    if (_holdProgress >= 0.5) {
-      setState(() => _holdProgress = 0.0);
-    } else if (_holdProgress > 0) {
-      setState(() => _holdProgress = 0.0);
-      widget.onTap();
-    } else {
-      widget.onTap();
+    if (_longPressFired) {
+      // Long press already handled it — swallow this release.
+      _longPressFired = false;
+      setState(() {
+        _holding = false;
+        _holdProgress = 0.0;
+      });
+      return;
     }
+    setState(() {
+      _holding = false;
+      _holdProgress = 0.0;
+    });
+    widget.onTap();
+  }
+
+  void _cancel() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    setState(() {
+      _holding = false;
+      _holdProgress = 0.0;
+    });
   }
 
   @override
@@ -1263,23 +1292,20 @@ class _VaultButtonState extends State<_VaultButton> {
       padding: const EdgeInsets.all(8),
       child: GestureDetector(
         onTapDown: (_) => _startHold(),
-        onTapUp: (_) => _cancelHold(),
-        onTapCancel: () {
-          _holdTimer?.cancel();
-          _holdTimer = null;
-          setState(() => _holdProgress = 0.0);
-        },
+        onTapUp: (_) => _release(),
+        onTapCancel: _cancel,
         child: SizedBox(
           width: 40,
           height: 40,
           child: Stack(
             alignment: Alignment.center,
             children: [
+              // Static thin ring; only shows progress while actually holding.
               SizedBox(
                 width: 38,
                 height: 38,
                 child: CircularProgressIndicator(
-                  value: _holdProgress == 0 ? null : _holdProgress,
+                  value: _holding ? _holdProgress : 0,
                   strokeWidth: 2.5,
                   color: Colors.blue,
                   backgroundColor: Colors.blue.withValues(alpha: 0.1),
