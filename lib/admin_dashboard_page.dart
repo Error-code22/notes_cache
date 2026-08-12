@@ -585,20 +585,27 @@ class _ModelTesterState extends State<_ModelTester> {
         const SizedBox(height: 12),
         Row(
           children: [
-            OutlinedButton.icon(
-              onPressed: _pickImage,
-              icon: const Icon(Icons.image_outlined, size: 18),
-              label: Text(_imageName ?? 'Attach image'),
+            Flexible(
+              child: OutlinedButton.icon(
+                onPressed: _pickImage,
+                icon: const Icon(Icons.image_outlined, size: 18),
+                label: Text(
+                  _imageName != null && _imageName!.length > 18
+                      ? '${_imageName!.substring(0, 15)}…'
+                      : (_imageName ?? 'Attach image'),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
             if (_imageName != null) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
               IconButton(
                 tooltip: 'Remove image',
                 icon: const Icon(Icons.close, size: 18),
                 onPressed: () => setState(() { _imageBase64 = null; _imageName = null; }),
               ),
             ],
-            const Spacer(),
+            const SizedBox(width: 8),
             ElevatedButton.icon(
               onPressed: _testing ? null : _run,
               icon: _testing
