@@ -63,21 +63,28 @@ Responsive grid (2 cols mobile, 3 tablet, 4 desktop) of nav cards. Each card ope
 - **User Hub** — roles & verification (UserManagerPage)
 - **Feedback Central** — bug reports & suggestions (FeedbackExplorerPage)
 - **Content Vault** — notes list, re-index, restore from backup
-- **AI Control Room** — model selector, web search, daily limits
+- **AI Control Room** — model selector, **vision model (Qwen 3.6 27B)**, daily limits, **Model Tester** (admin-only `test_model` action on notesy — text or image probe)
 - **Cloud Status** — storage/bandwidth usage bars, plan info
-- **System Health** — feature toggles, usage charts (14 days)
+- **System Health** — feature toggles (comms beta lock, **show/hide Communication button**), usage charts (14 days)
 - **Help & Support** — contact info, WhatsApp, M-Pesa
 - **App Updates** — announcements manager (UpdatesManagerPage)
-- **Pricing** — subscription tiers (PricingPage)
+- **Plans** — pricing tiers manager (`pricing_plans` table, add/remove)
+- **Roadmap** — app feature plans (`roadmap_items` table → homepage "What's Coming" card)
 - **Docs & Legal** — about, terms, privacy policy
 
+### Homepage live updates
+`roadmap_items` + `app_config` are in the **supabase_realtime publication** — the dashboard subscribes to both, so admin changes reflect on the homepage instantly. If you add other homepage-driven tables, add them to the publication (`ALTER PUBLICATION supabase_realtime ADD TABLE x;`) or they won't update live.
+
+### Notesy vision
+Images in AI chat auto-route to the **vision model** (`ai_vision_model` config, default `qwen/qwen3.6-27b` — Groq's current vision model; `llama-3.2-11b-vision-preview` is gone from Groq). Attached images are **stripped from persisted chat history** (no base64 in DB). Paperclip → attach menu (Photos/Camera/File).
+
 ## Security Constraints & Access Control
-1. **Year Isolation**: Notesy filters note queries by the user's `year_level` (staff bypass).
+1. **Year Isolation**: Notesy filters note queries by the user's `year_level` (staff bypass). Users always see their own uploads (`user_id = auth.uid()`).
 2. **Zero-Secret Exposure**: Notesy cannot leak its env vars during conversation.
 3. **No-Hallucination Rule**: counts via `get_user_stats` tool, never guessed.
 4. **Persistent Guest Limits**: 3 messages, SharedPreferences, across restarts.
 5. **Role-Aware Context**: multi-role users (Admin/Lecturer/Moderator) get wider visibility.
-6. **RLS**: chunks read-public, writes only via SECURITY DEFINER RPCs; downloads table service-role only.
+6. **RLS (hardened 2026-08-12)**: chunks read-public, writes ONLY via `insert_chunks` RPC; downloads table service-role only; `app_config` admin-write only; `usage`/`cache` service-role only; profiles readable only when public or own; notes INSERT requires `user_id = auth.uid()`.
 7. **Cloudinary**: files are public-by-URL (no auth); free tier = 25 credits/month shared between 1GB storage OR 1GB bandwidth each.
 
 ## Build Gotchas

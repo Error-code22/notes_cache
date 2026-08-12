@@ -1,6 +1,45 @@
 # Project Progress Log
 
-## Latest Milestone: Google Sign-In, Admin Redesign, Account Linking (2026-08-11)
+## Latest Milestone: Security Hardening, Vision AI, Speed Audit (2026-08-12)
+
+### Security hardening (all live on DB — migration `20260812000000_security_hardening.sql`)
+- `app_config` — write policies gated to **admins only** (was writable by any authenticated user).
+- `chunks` (AI RAG) — direct INSERT/UPDATE policies dropped; `insert_chunks` RPC is the only write path again (was RAG-poisonable).
+- `usage`/`cache` tables — service-role only (were `USING (true)` public read = privacy leak).
+- `notes` INSERT — now requires `user_id = auth.uid()` (was spoofable).
+- `profiles` — blanket "read all profiles" policy dropped (private profiles were fully exposed); only public profiles + own readable now.
+
+### Notesy AI — vision support (live)
+- **Root cause of broken images**: vision model was hardcoded to `llama-3.2-11b-vision-preview` — **removed from Groq**. Now configurable via `ai_vision_model` config key, default **`qwen/qwen3.6-27b`** (Groq's current vision model, free-tier keys).
+- Admin AI Control Room: **Vision Model dropdown** + **Model Tester** (pick model, prompt, attach image → raw response, copy result). Admin-only `test_model` action in the edge function.
+- Defensive `history` handling in chat path (was 500 if missing).
+- **Gemini-style image UX** in AI chat: attach → small pending thumbnail + X to remove → send → thumbnail in bubble → tap = fullscreen zoom viewer + X. Images auto-route to vision model; **stripped from persisted history** (no base64 bloat in DB).
+- Paperclip now opens **attach menu** (Photos / Camera / File bottom sheet).
+
+### Homepage + admin features
+- Homepage bottom card → **"What's Coming"** roadmap display (app's future feature plans) + "Request a feature" button (→ FeedbackPage). DB-driven via new `roadmap_items` table (migration `20260812020000_roadmap_items.sql`).
+- Admin: **Roadmap Manager** (add/remove planned features w/ icon picker) + **Plans Manager** (pricing tiers, add/remove).
+- **Live homepage updates**: `roadmap_items` + `app_config` added to realtime publication; dashboard subscribes → admin changes reflect instantly.
+- **Show Communication Button toggle** in System Health — hides the comms card from homepage.
+
+### Offline / connectivity
+- Offline banner was flapping: single flaky DNS lookup flipped state. Now **2-consecutive-results debounce** in `ConnectivityService`.
+- Images picked for AI chat shrunk (640px, quality 60) for limited-bundle users.
+
+### Speed audit (2026-08-12) — findings, fixes pending
+Top issues found (research only, no code changes yet):
+1. **Infinite rebuild loop**: notes page health-check `setState` re-triggers itself endlessly (SharedPreferences churn).
+2. **Search re-queries DB per keystroke** (no debounce) — notes + donated notes pages.
+3. **Profile fetched twice at startup** (`_recoverSession` + auth-state listener race).
+4. **DM list polls all chat rooms every 5s** while friends tab open.
+5. **First frame gated behind notification permission dialog** in `main.dart`.
+6. Image editor re-encodes on every build; `getAppConfig()` never cached (8 call sites); AI chat base64 decode per rebuild; notes list re-queried after each open; admin restore HEAD-checks serial; offline-availability check sequential.
+**Fix session queued.**
+
+### v1.0.3 released (2026-08-11)
+- Google Sign-In (native), admin grid redesign, account linking, sign-up simplification, landing page v2, offline startup fix. GitHub: 3 assets. In-app updater prompts v1.0.2 users.
+
+## Previous Milestone: Google Sign-In, Admin Redesign, Account Linking (2026-08-11)
 
 ### Google Sign-In (native)
 - Native `google_sign_in` + `signInWithIdToken` (no browser redirect). Uses `serverClientId` (Web Client ID) + Android OAuth Client in Google Cloud Console (SHA-1 registered).
