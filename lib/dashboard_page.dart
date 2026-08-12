@@ -162,6 +162,21 @@ class _DashboardPageState extends State<DashboardPage> {
           ns.showNotification(title: 'App Update: ${update['title']}', body: update['content']);
         }
       ).subscribe();
+
+      // 4. Homepage live updates: roadmap + config changes made in the
+      //    admin dashboard reflect on the homepage immediately.
+      supabase.channel('public:home_config').onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'roadmap_items',
+        callback: (_) => _loadHomeConfig(),
+      ).subscribe();
+      supabase.channel('public:home_config_app_config').onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'app_config',
+        callback: (_) => _loadHomeConfig(),
+      ).subscribe();
     }
   }
 
