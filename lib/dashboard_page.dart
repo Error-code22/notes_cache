@@ -58,12 +58,15 @@ class _FeaturePill extends StatelessWidget {
 class _DashboardPageState extends State<DashboardPage> {
   final ConnectivityService _connectivity = ConnectivityService();
   final SupabaseKeepAliveService _keepAlive = SupabaseKeepAliveService();
+  bool _showCommsButton = true;
+  List<Map<String, dynamic>> _pricingPlans = [];
 
   @override
   void initState() {
     super.initState();
     _connectivity.start();
     _keepAlive.start();
+    _loadHomeConfig();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final authService = context.read<AuthService>();
         final themeProvider = context.read<ThemeProvider>();
@@ -96,8 +99,18 @@ class _DashboardPageState extends State<DashboardPage> {
     super.dispose();
   }
 
-  void _onAuthChanged() {    final authService = context.read<AuthService>();
-    if (authService.currentUser != null) {
+  Future<void> _loadHomeConfig() async {
+    final ns = context.read<NoteService>();
+    final config = await ns.getAppConfig();
+    final plans = await ns.getPricingPlans();
+    if (!mounted) return;
+    setState(() {
+      _showCommsButton = config['show_comms_button'] != 'false';
+      _pricingPlans = plans;
+    });
+  }
+
+  void _onAuthChanged() {    final authService = context.read<AuthService>();    if (authService.currentUser != null) {
       authService.removeListener(_onAuthChanged);
       final themeProvider = context.read<ThemeProvider>();
       themeProvider.setUserId(authService.currentUser!.id);
@@ -381,18 +394,19 @@ class _DashboardPageState extends State<DashboardPage> {
                             () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DonateNotesPage())),
                           ),
                           const SizedBox(height: 16),
-                          _buildHubCard(
-                            context,
-                            'Communication',
-                            'Chat with friends and study groups',
-                            Icons.chat_bubble_outline_rounded,
-                            Colors.orange,
-                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ChatsListPage())),
-                          ),
+                          if (_showCommsButton)
+                            _buildHubCard(
+                              context,
+                              'Communication',
+                              'Chat with friends and study groups',
+                              Icons.chat_bubble_outline_rounded,
+                              Colors.orange,
+                              () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ChatsListPage())),
+                            ),
                           const SizedBox(height: 16),
                           _buildNotesyMemoryCard(context),
                           const SizedBox(height: 12),
-                          _buildReportCard(context),
+                          _buildHomeBottomCard(context),
                         ],
                       ),
                     ),
@@ -515,9 +529,10 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  /// Separate Report Bug / Suggest Feature button (links to FeedbackPage,
-  /// same as the profile menu).
-  Widget _buildReportCard(BuildContext context) {
+  /// Homepage bottom card: shows the current plans (read-only display, NOT a
+  /// button) with a "Request a feature" button inside it that opens the
+  /// feature/bug page.
+  Widget _buildHomeBottomCard(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
       elevation: 0,
@@ -526,25 +541,95 @@ class _DashboardPageState extends State<DashboardPage> {
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(color: theme.dividerColor.withOpacity(0.12)),
       ),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.error.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(Icons.bug_report_outlined, size: 20, color: theme.colorScheme.error),
-        ),
-        title: const Text('Report Bug / Suggest Feature', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-        subtitle: const Text('Tell us what\'s broken or what you want', style: TextStyle(fontSize: 12)),
-        trailing: const Icon(Icons.chevron_right, size: 20),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const FeedbackPage()),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.card_membership_outlined, size: 20, color: theme.colorScheme.primary),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text('Plans', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_pricingPlans.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text('No plans available right now.', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _pricingPlans.map((plan) {
+                  final color = _parseColor(plan['color']?.toString() ?? '#607D8B');
+                  final features = (plan['features'] as List?) ?? const [];
+                  return Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: color.withOpacity(0.2)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(plan['name']?.toString() ?? 'Plan',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: color)),
+                        const SizedBox(height: 2),
+                        Text('${plan['price'] ?? 'KSh 0'}${plan['period']?.toString().isNotEmpty == true ? ' ${plan['period']}' : ''}',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        Text('${features.length} features', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            const Divider(height: 24),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.error.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.lightbulb_outline, size: 20, color: theme.colorScheme.error),
+              ),
+              title: const Text('Request a feature', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+              subtitle: const Text('Suggest an idea or report a bug', style: TextStyle(fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const FeedbackPage()),
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  Color _parseColor(String hex) {
+    var h = hex.replaceFirst('#', '');
+    if (h.length == 6) h = 'FF$h';
+    final v = int.tryParse(h, radix: 16) ?? 0xFF607D8B;
+    return Color(v);
   }
 
   /// Happymod-style updater: compares the installed version with the latest

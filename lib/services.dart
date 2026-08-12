@@ -1167,6 +1167,71 @@ class NoteService {
     }
   }
 
+  // --- Pricing plans (DB-driven, shown on the homepage bottom card) ---
+
+  Future<List<Map<String, dynamic>>> getPricingPlans() async {
+    try {
+      final data = await _supabase
+          .from('pricing_plans')
+          .select()
+          .eq('active', true)
+          .order('sort_order', ascending: true);
+      return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('getPricingPlans error: $e');
+      return [];
+    }
+  }
+
+  Future<bool> addPricingPlan({
+    required String name,
+    required String price,
+    required String period,
+    String description = '',
+    List<String> features = const [],
+    String color = '#607D8B',
+    bool popular = false,
+    int sortOrder = 99,
+  }) async {
+    try {
+      await _supabase.from('pricing_plans').insert({
+        'name': name,
+        'price': price,
+        'period': period,
+        'description': description,
+        'features': features,
+        'color': color,
+        'popular': popular,
+        'sort_order': sortOrder,
+        'active': true,
+      });
+      return true;
+    } catch (e) {
+      debugPrint('addPricingPlan error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deletePricingPlan(String id) async {
+    try {
+      await _supabase.from('pricing_plans').delete().eq('id', id);
+      return true;
+    } catch (e) {
+      debugPrint('deletePricingPlan error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> togglePricingPlanActive(String id, bool active) async {
+    try {
+      await _supabase.from('pricing_plans').update({'active': active}).eq('id', id);
+      return true;
+    } catch (e) {
+      debugPrint('togglePricingPlan error: $e');
+      return false;
+    }
+  }
+
   Future<String> getAppDirectory() async {
     final d = await getApplicationDocumentsDirectory();
     final dir = Directory('${d.path}\\NotesCache');
