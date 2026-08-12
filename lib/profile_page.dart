@@ -139,19 +139,19 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                     Text(user.bio!, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.8))),
                   ],
                   const SizedBox(height: 16),
-                  // Edit Profile pill — opens the edit popup
+                  // Edit Profile pill — small, same width as the avatar, centered under it
                   SizedBox(
-                    width: double.infinity,
-                    height: 44,
-                    child: OutlinedButton.icon(
+                    width: 80,
+                    height: 32,
+                    child: OutlinedButton(
                       onPressed: _showEditProfileDialog,
-                      icon: const Icon(Icons.edit_outlined, size: 18),
-                      label: const Text('Edit Profile', style: TextStyle(fontWeight: FontWeight.w600)),
                       style: OutlinedButton.styleFrom(
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         side: BorderSide(color: primaryColor.withOpacity(0.5)),
                         foregroundColor: primaryColor,
                       ),
+                      child: const Text('Edit', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                     ),
                   ),
                 ],
@@ -203,73 +203,81 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Avatar with change button
+                // Avatar with change button — whole image is tappable
                 Center(
-                  child: Stack(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        width: 84,
-                        height: 84,
-                        decoration: BoxDecoration(
-                          color: primaryColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          image: DecorationImage(
-                            image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
-                            fit: BoxFit.cover,
-                          ),
+                      InkWell(
+                        onTap: uploadingAvatar
+                            ? null
+                            : () async {
+                                setDialogState(() => uploadingAvatar = true);
+                                final online = await authService.isOnline();
+                                if (!online) {
+                                  if (dialogCtx.mounted) {
+                                    setDialogState(() => uploadingAvatar = false);
+                                    ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                                      const SnackBar(content: Text('No internet connection'), backgroundColor: Colors.orange),
+                                    );
+                                  }
+                                  return;
+                                }
+                                try {
+                                  final result = await FilePicker.pickFiles(type: FileType.image, allowMultiple: false);
+                                  if (result != null && result.files.single.path != null && dialogCtx.mounted) {
+                                    final success = await authService.updateProfileImage(File(result.files.single.path!));
+                                    if (dialogCtx.mounted) {
+                                      setDialogState(() => uploadingAvatar = false);
+                                      ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(
+                                        content: Text(success ? 'Profile photo updated!' : 'Failed — max 2MB, JPG/PNG/WebP only'),
+                                        backgroundColor: success ? Colors.green : Colors.red,
+                                      ));
+                                    }
+                                  } else if (dialogCtx.mounted) {
+                                    setDialogState(() => uploadingAvatar = false);
+                                  }
+                                } catch (e) {
+                                  if (dialogCtx.mounted) {
+                                    setDialogState(() => uploadingAvatar = false);
+                                    ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+                                  }
+                                }
+                              },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Stack(
+                          children: [
+                            Container(
+                              width: 84,
+                              height: 84,
+                              decoration: BoxDecoration(
+                                color: primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(20),
+                                image: DecorationImage(
+                                  image: NetworkImage(user.avatarUrl ?? AuthService.getDefaultAvatarUrl(user.fullName, user.id)),
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              child: uploadingAvatar
+                                  ? Container(
+                                      decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)),
+                                      child: const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                                    )
+                                  : Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.35),
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: const Center(child: Icon(Icons.camera_alt, color: Colors.white, size: 24)),
+                                    ),
+                            ),
+                          ],
                         ),
-                        child: uploadingAvatar
-                            ? Container(
-                                decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), borderRadius: BorderRadius.circular(20)),
-                                child: const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
-                              )
-                            : null,
                       ),
-                      Positioned(
-                        bottom: -4,
-                        right: -4,
-                        child: InkWell(
-                          onTap: uploadingAvatar
-                              ? null
-                              : () async {
-                                  setDialogState(() => uploadingAvatar = true);
-                                  final online = await authService.isOnline();
-                                  if (!online) {
-                                    if (dialogCtx.mounted) {
-                                      setDialogState(() => uploadingAvatar = false);
-                                      ScaffoldMessenger.of(dialogCtx).showSnackBar(
-                                        const SnackBar(content: Text('No internet connection'), backgroundColor: Colors.orange),
-                                      );
-                                    }
-                                    return;
-                                  }
-                                  try {
-                                    final result = await FilePicker.pickFiles(type: FileType.image, allowMultiple: false);
-                                    if (result != null && result.files.single.path != null && dialogCtx.mounted) {
-                                      final success = await authService.updateProfileImage(File(result.files.single.path!));
-                                      if (dialogCtx.mounted) {
-                                        setDialogState(() => uploadingAvatar = false);
-                                        ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(
-                                          content: Text(success ? 'Profile photo updated!' : 'Failed — max 2MB, JPG/PNG/WebP only'),
-                                          backgroundColor: success ? Colors.green : Colors.red,
-                                        ));
-                                      }
-                                    } else if (dialogCtx.mounted) {
-                                      setDialogState(() => uploadingAvatar = false);
-                                    }
-                                  } catch (e) {
-                                    if (dialogCtx.mounted) {
-                                      setDialogState(() => uploadingAvatar = false);
-                                      ScaffoldMessenger.of(dialogCtx).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
-                                    }
-                                  }
-                                },
-                          child: CircleAvatar(
-                            radius: 14,
-                            backgroundColor: uploadingAvatar ? Colors.grey : primaryColor,
-                            child: const Icon(Icons.edit, size: 14, color: Colors.white),
-                          ),
-                        ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tap to change photo',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
                       ),
                     ],
                   ),
