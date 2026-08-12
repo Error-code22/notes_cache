@@ -1816,7 +1816,134 @@ class AiChatService {
     return allMessages.sublist(allMessages.length - _contextMessages);
   }
 
-  Future<String> getResponse(String msg, List<Map<String, String>> history, {String? imageBase64}) async {
+  // --- Multi-conversation support (signed-in users) ---
+
+  /// All conversations for the user, newest first, pinned on top.
+  Future<List<Map<String, dynamic>>> getConversations(String userId) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final data = await supabase
+          .from('ai_conversations')
+          .select('id, title, pinned, locked, created_at, updated_at')
+          .eq('user_id', userId)
+          .order('pinned', ascending: false)
+          .order('updated_at', ascending: false);
+      return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('getConversations error: $e');
+      return [];
+    }
+  }
+
+  /// Creates a conversation; returns its id, or null on failure.
+  Future<int?> createConversation(String userId, {String title = 'New chat'}) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final res = await supabase
+          .from('ai_conversations')
+          .insert({'user_id': userId, 'title': title})
+          .select('id')
+          .single();
+      return (res['id'] as num).toInt();
+    } catch (e) {
+      debugPrint('createConversation error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> renameConversation(String conversationId, String title) async {
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase
+          .from('ai_conversations')
+          .update({'title': title, 'updated_at': DateTime.now().toIso8601String()})
+          .eq('id', conversationId);
+      return true;
+    } catch (e) {
+      debugPrint('renameConversation error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> pinConversation(String conversationId, bool pinned) async {
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase
+          .from('ai_conversations')
+          .update({'pinned': pinned, 'updated_at': DateTime.now().toIso8601String()})
+          .eq('id', conversationId);
+      return true;
+    } catch (e) {
+      debugPrint('pinConversation error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteConversation(String conversationId) async {
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase.from('ai_conversations').delete().eq('id', conversationId);
+      return true;
+    } catch (e) {
+      debugPrint('deleteConversation error: $e');
+      return false;
+    }
+  }
+
+  /// Messages of one conversation, oldest first.
+  Future<List<Map<String, String>>> loadConversationMessages(String conversationId) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final data = await supabase
+          .from('ai_messages')
+          .select('role, content')
+          .eq('conversation_id', conversationId)
+          .order('created_at', ascending: true);
+      return data.map((m) => Map<String, String>.from(m as Map)).toList();
+    } catch (e) {
+      debugPrint('loadConversationMessages error: $e');
+      return [];
+    }
+  }
+
+  /// Appends a message pair (user + assistant) to a conversation.
+  Future<void> appendConversationMessages(String userId, String conversationId, Map<String, String> userMsg, Map<String, String> assistantMsg) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final cleanUser = Map<String, String>.from(userMsg)..remove('image');
+      final cleanAssistant = Map<String, String>.from(assistantMsg)..remove('image');
+      await supabase.from('ai_messages').insert([
+        {
+          'conversation_id': int.parse(conversationId),
+          'user_id': userId,
+          'role': 'user',
+          'content': cleanUser['content'] ?? '',
+        },
+        {
+          'conversation_id': int.parse(conversationId),
+          'user_id': userId,
+          'role': 'assistant',
+          'content': cleanAssistant['content'] ?? '',
+        },
+      ]);
+      await supabase
+          .from('ai_conversations')
+          .update({'updated_at': DateTime.now().toIso8601String()})
+          .eq('id', conversationId);
+    } catch (e) {
+      debugPrint('appendConversationMessages error: $e');
+    }
+  }
+
+  /// First user message becomes the conversation title (truncated).
+  String titleFromMessage(String content) {
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) return 'New chat';
+    final singleLine = trimmed.replaceAll(RegExp(r'\s+'), ' ');
+    return singleLine.length > 40 ? '${singleLine.substring(0, 40)}…' : singleLine;
+  }
+
+  Future<String> getResponse(String msg, List<Map<String, String>> history, {String? imageBase64, List<String>? imageBase64s}) async {
     final user = Supabase.instance.client.auth.currentUser;
     try {
       final response = await Supabase.instance.client.functions.invoke(
@@ -1826,6 +1953,7 @@ class AiChatService {
           'history': history,
           'userId': user?.id ?? 'guest_user',
           if (imageBase64 != null) 'imageBase64': imageBase64,
+          if (imageBase64s != null && imageBase64s.isNotEmpty) 'imageBase64s': imageBase64s,
         },
       );
 

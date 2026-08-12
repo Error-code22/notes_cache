@@ -69,6 +69,7 @@ dependencies:
   permission_handler: ^13.0.0
   flutter_pdf_annotations: ^1.3.0
   cached_network_image: ^3.4.1
+  local_auth: ^3.0.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -106,6 +107,7 @@ flutter:
   assets:
     - .env
     - assets/images/logo.png
+    - assets/data/decoy_chats.json
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

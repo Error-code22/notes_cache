@@ -150,7 +150,7 @@ serve(async (req) => {
   try {
     const supabase = getSupabase()
     const body = await req.json()
-    const { message, history, imageBase64, action, content, title } = body
+    const { message, history, imageBase64, imageBase64s, action, content, title } = body
 
     // Validate JWT — use the REAL user ID from the token, not client-sent userId
     const { userId, isGuest } = await validateJwt(req)
@@ -176,10 +176,16 @@ serve(async (req) => {
       }
 
       let testContent: any = testMessage;
-      if (body.imageBase64) {
+      const testImages: string[] = (body.imageBase64s && Array.isArray(body.imageBase64s))
+        ? body.imageBase64s.filter((b: string) => typeof b === 'string' && b.length > 0).slice(0, 3)
+        : (typeof body.imageBase64 === 'string' && body.imageBase64.length > 0 ? [body.imageBase64] : []);
+      if (testImages.length > 0) {
         testContent = [
-          { type: 'text', text: testMessage || 'Describe this image.' },
-          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${body.imageBase64}` } },
+          { type: 'text', text: testMessage || `Describe these ${testImages.length} images.` },
+          ...testImages.map((b64: string) => ({
+            type: 'image_url',
+            image_url: { url: `data:image/jpeg;base64,${b64}` }
+          })),
         ];
       }
 
@@ -299,7 +305,10 @@ serve(async (req) => {
     }
 
     // 4. Enforce Limits
-    const isVision = !!imageBase64;
+    const visionImages: string[] = (imageBase64s && Array.isArray(imageBase64s))
+      ? imageBase64s.filter((b: string) => typeof b === 'string' && b.length > 0).slice(0, 3)
+      : (typeof imageBase64 === 'string' && imageBase64.length > 0 ? [imageBase64] : []);
+    const isVision = visionImages.length > 0;
     if (isTrackedUser && isVision && usage.image_count >= imageLimit) {
       return new Response(JSON.stringify({ content: "Whoa there. You've reached your image analysis limit for today. Take a break and I'll see you tomorrow." }), {
         headers: corsHeaders,
@@ -359,11 +368,11 @@ Tone:
     let userContent: any = message;
     if (isVision) {
       userContent = [
-        { type: 'text', text: message },
-        {
+        { type: 'text', text: message || (visionImages.length > 1 ? `Analyze these ${visionImages.length} images.` : 'Analyze this image.') },
+        ...visionImages.map((b64: string) => ({
           type: 'image_url',
-          image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
-        }
+          image_url: { url: `data:image/jpeg;base64,${b64}` }
+        })),
       ];
     }
 
