@@ -505,6 +505,22 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Sets the avatar to an external URL (e.g. DiceBear-generated).
+  Future<bool> updateAvatarUrl(String url) async {
+    if (_currentUser == null) return false;
+    try {
+      final userId = _currentUser!.id;
+      await _supabase.from('profiles').update({'avatar_url': url}).eq('id', userId);
+      final data = await _supabase.from('profiles').select().eq('id', userId).single();
+      _currentUser = UserProfile.fromMap(data, _currentUser!.email);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('updateAvatarUrl error: $e');
+      return false;
+    }
+  }
+
   /// Check magic bytes to validate image file type
   bool _isValidImageMagic(List<int> bytes) {
     // JPEG: FF D8 FF
