@@ -19,7 +19,6 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  Duration _selectedPeriod = const Duration(days: 7);
   bool _isProfilePublic = true;
   bool _isDeleting = false;
   Map<String, String> _appConfig = {};
@@ -569,62 +568,8 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
 
   // ==================== ACTIVITY TAB ====================
 
-  Widget _buildActivityTab(BuildContext context, UserProfile user) {    final noteService = context.read<NoteService>();
-    return Column(
-      children: [
-        // Period selector
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              const Text('Show: '),
-              ChoiceChip(label: const Text('7 days'), selected: _selectedPeriod == const Duration(days: 7), onSelected: (_) => setState(() => _selectedPeriod = const Duration(days: 7))),
-              const SizedBox(width: 8),
-              ChoiceChip(label: const Text('30 days'), selected: _selectedPeriod == const Duration(days: 30), onSelected: (_) => setState(() => _selectedPeriod = const Duration(days: 30))),
-              const SizedBox(width: 8),
-              ChoiceChip(label: const Text('All'), selected: _selectedPeriod == const Duration(days: 365), onSelected: (_) => setState(() => _selectedPeriod = const Duration(days: 365))),
-            ],
-          ),
-        ),
-        Expanded(
-          child: FutureBuilder<List<UserActivity>>(
-            future: noteService.getUserActivity(user.id, period: _selectedPeriod),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.history, size: 48, color: Colors.grey[400]),
-                      const SizedBox(height: 12),
-                      Text('No activity yet', style: TextStyle(color: Colors.grey[600])),
-                    ],
-                  ),
-                );
-              }
-              final activities = snapshot.data!;
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: activities.length,
-                itemBuilder: (context, i) {
-                  final a = activities[i];
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: _getActivityColor(a.type).withOpacity(0.1),
-                      child: Icon(_getActivityIcon(a.type), color: _getActivityColor(a.type), size: 20),
-                    ),
-                    title: Text(a.title),
-                    subtitle: Text(a.description),
-                    trailing: Text(_formatTime(a.timestamp), style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      ],
-    );
+  Widget _buildActivityTab(BuildContext context, UserProfile user) {
+    return _ActivityBody(userId: user.id);
   }
 
   // ==================== SETTINGS TAB ====================
@@ -894,36 +839,6 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     return Colors.blue;
   }
 
-  IconData _getActivityIcon(String type) {
-    switch (type) {
-      case 'upload': return Icons.upload_file;
-      case 'chat': return Icons.chat;
-      case 'search': return Icons.search;
-      case 'ai': return Icons.smart_toy;
-      default: return Icons.circle;
-    }
-  }
-
-  Color _getActivityColor(String type) {
-    switch (type) {
-      case 'upload': return Colors.green;
-      case 'chat': return Colors.blue;
-      case 'search': return Colors.orange;
-      case 'ai': return Colors.purple;
-      default: return Colors.grey;
-    }
-  }
-
-  String _formatTime(DateTime dt) {
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return '${dt.day}/${dt.month}/${dt.year}';
-  }
-
   Future<void> _launchUrl(String url) async {
     try {
       // Ensure URL has a scheme
@@ -1113,6 +1028,124 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
         content: SingleChildScrollView(child: Text(content)),
         actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
       ),
+    );
+  }
+}
+
+/// Self-contained Activity tab: owns its period state + future so the rest of
+/// the profile page never rebuilds on chip taps or list refreshes, and the
+/// DB query only fires once per period selection (not on every parent build).
+class _ActivityBody extends StatefulWidget {
+  final String userId;
+  const _ActivityBody({required this.userId});
+
+  @override
+  State<_ActivityBody> createState() => _ActivityBodyState();
+}
+
+class _ActivityBodyState extends State<_ActivityBody> {
+  Duration _selectedPeriod = const Duration(days: 7);
+  Future<List<UserActivity>>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = context.read<NoteService>().getUserActivity(widget.userId, period: _selectedPeriod);
+  }
+
+  void _setPeriod(Duration period) {
+    if (period == _selectedPeriod) return;
+    setState(() {
+      _selectedPeriod = period;
+      _future = context.read<NoteService>().getUserActivity(widget.userId, period: period);
+    });
+  }
+
+  IconData _getActivityIcon(String type) {
+    switch (type) {
+      case 'upload': return Icons.upload_file;
+      case 'chat': return Icons.chat;
+      case 'search': return Icons.search;
+      case 'ai': return Icons.smart_toy;
+      default: return Icons.circle;
+    }
+  }
+
+  Color _getActivityColor(String type) {
+    switch (type) {
+      case 'upload': return Colors.green;
+      case 'chat': return Colors.blue;
+      case 'search': return Colors.orange;
+      case 'ai': return Colors.purple;
+      default: return Colors.grey;
+    }
+  }
+
+  String _formatTime(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.day}/${dt.month}/${dt.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              const Text('Show: '),
+              ChoiceChip(label: const Text('7 days'), selected: _selectedPeriod == const Duration(days: 7), onSelected: (_) => _setPeriod(const Duration(days: 7))),
+              const SizedBox(width: 8),
+              ChoiceChip(label: const Text('30 days'), selected: _selectedPeriod == const Duration(days: 30), onSelected: (_) => _setPeriod(const Duration(days: 30))),
+              const SizedBox(width: 8),
+              ChoiceChip(label: const Text('All'), selected: _selectedPeriod == const Duration(days: 365), onSelected: (_) => _setPeriod(const Duration(days: 365))),
+            ],
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<List<UserActivity>>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+              if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.history, size: 48, color: Colors.grey[400]),
+                      const SizedBox(height: 12),
+                      Text('No activity yet', style: TextStyle(color: Colors.grey[600])),
+                    ],
+                  ),
+                );
+              }
+              final activities = snapshot.data!;
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: activities.length,
+                itemBuilder: (context, i) {
+                  final a = activities[i];
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: _getActivityColor(a.type).withOpacity(0.1),
+                      child: Icon(_getActivityIcon(a.type), color: _getActivityColor(a.type), size: 20),
+                    ),
+                    title: Text(a.title),
+                    subtitle: Text(a.description),
+                    trailing: Text(_formatTime(a.timestamp), style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
