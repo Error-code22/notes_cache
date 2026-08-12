@@ -1232,6 +1232,53 @@ class NoteService {
     }
   }
 
+  // --- Roadmap items (app's upcoming features, shown on homepage) ---
+
+  Future<List<Map<String, dynamic>>> getRoadmapItems() async {
+    try {
+      final data = await _supabase
+          .from('roadmap_items')
+          .select()
+          .eq('active', true)
+          .order('sort_order', ascending: true);
+      return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('getRoadmapItems error: $e');
+      return [];
+    }
+  }
+
+  Future<bool> addRoadmapItem({
+    required String title,
+    String description = '',
+    String icon = 'construction',
+    int sortOrder = 99,
+  }) async {
+    try {
+      await _supabase.from('roadmap_items').insert({
+        'title': title,
+        'description': description,
+        'icon': icon,
+        'sort_order': sortOrder,
+        'active': true,
+      });
+      return true;
+    } catch (e) {
+      debugPrint('addRoadmapItem error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteRoadmapItem(String id) async {
+    try {
+      await _supabase.from('roadmap_items').delete().eq('id', id);
+      return true;
+    } catch (e) {
+      debugPrint('deleteRoadmapItem error: $e');
+      return false;
+    }
+  }
+
   Future<String> getAppDirectory() async {
     final d = await getApplicationDocumentsDirectory();
     final dir = Directory('${d.path}\\NotesCache');

@@ -59,7 +59,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final ConnectivityService _connectivity = ConnectivityService();
   final SupabaseKeepAliveService _keepAlive = SupabaseKeepAliveService();
   bool _showCommsButton = true;
-  List<Map<String, dynamic>> _pricingPlans = [];
+  List<Map<String, dynamic>> _roadmapItems = [];
 
   @override
   void initState() {
@@ -102,11 +102,11 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _loadHomeConfig() async {
     final ns = context.read<NoteService>();
     final config = await ns.getAppConfig();
-    final plans = await ns.getPricingPlans();
+    final roadmap = await ns.getRoadmapItems();
     if (!mounted) return;
     setState(() {
       _showCommsButton = config['show_comms_button'] != 'false';
-      _pricingPlans = plans;
+      _roadmapItems = roadmap;
     });
   }
 
@@ -529,9 +529,9 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  /// Homepage bottom card: shows the current plans (read-only display, NOT a
-  /// button) with a "Request a feature" button inside it that opens the
-  /// feature/bug page.
+  /// Homepage bottom card: shows the app's upcoming-features roadmap
+  /// (read-only display, NOT a button) with a "Request a feature" button
+  /// inside it that opens the feature/bug page.
   Widget _buildHomeBottomCard(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
@@ -555,45 +555,41 @@ class _DashboardPageState extends State<DashboardPage> {
                     color: theme.colorScheme.primary.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(Icons.card_membership_outlined, size: 20, color: theme.colorScheme.primary),
+                  child: Icon(Icons.construction_rounded, size: 20, color: theme.colorScheme.primary),
                 ),
                 const SizedBox(width: 12),
                 const Expanded(
-                  child: Text('Plans', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                  child: Text("What's Coming", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            if (_pricingPlans.isEmpty)
+            if (_roadmapItems.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text('No plans available right now.', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                child: Text('Nothing planned yet — request a feature below!', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
               )
             else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _pricingPlans.map((plan) {
-                  final color = _parseColor(plan['color']?.toString() ?? '#607D8B');
-                  final features = (plan['features'] as List?) ?? const [];
-                  return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: color.withOpacity(0.2)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
+              Column(
+                children: _roadmapItems.map((item) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
                       children: [
-                        Text(plan['name']?.toString() ?? 'Plan',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: color)),
-                        const SizedBox(height: 2),
-                        Text('${plan['price'] ?? 'KSh 0'}${plan['period']?.toString().isNotEmpty == true ? ' ${plan['period']}' : ''}',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 4),
-                        Text('${features.length} features', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                        Icon(_roadmapIcon(item['icon']?.toString()), size: 18, color: theme.colorScheme.primary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(item['title']?.toString() ?? 'Coming soon',
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                              if ((item['description']?.toString() ?? '').isNotEmpty)
+                                Text(item['description'].toString(),
+                                    style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   );
@@ -625,11 +621,17 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Color _parseColor(String hex) {
-    var h = hex.replaceFirst('#', '');
-    if (h.length == 6) h = 'FF$h';
-    final v = int.tryParse(h, radix: 16) ?? 0xFF607D8B;
-    return Color(v);
+  IconData _roadmapIcon(String? name) {
+    switch (name) {
+      case 'mic': return Icons.mic_rounded;
+      case 'notifications': return Icons.notifications_active_rounded;
+      case 'draw': return Icons.draw_rounded;
+      case 'play_circle': return Icons.play_circle_fill_rounded;
+      case 'upload': return Icons.upload_file_rounded;
+      case 'translate': return Icons.translate_rounded;
+      case 'quiz': return Icons.quiz_rounded;
+      default: return Icons.construction_rounded;
+    }
   }
 
   /// Happymod-style updater: compares the installed version with the latest

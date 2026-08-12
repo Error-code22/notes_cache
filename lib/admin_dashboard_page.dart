@@ -28,6 +28,7 @@ class AdminDashboardPage extends StatelessWidget {
     {'name': 'Help & Support', 'desc': 'Contact & channels', 'icon': Icons.headset_mic_rounded, 'color': Color(0xFFFFA726), 'page': 7},
     {'name': 'App Updates', 'desc': 'Announcements', 'icon': Icons.campaign_rounded, 'color': Color(0xFF7E57C2), 'page': 8},
     {'name': 'Plans', 'desc': 'Manage subscription plans', 'icon': Icons.card_membership_rounded, 'color': Color(0xFF26C6DA), 'page': 9},
+    {'name': 'Roadmap', 'desc': 'App feature plans', 'icon': Icons.construction_rounded, 'color': Color(0xFF26A69A), 'page': 11},
     {'name': 'Docs & Legal', 'desc': 'About, terms & privacy', 'icon': Icons.description_rounded, 'color': Color(0xFF8D6E63), 'page': 10},
   ];
 
@@ -43,6 +44,7 @@ class AdminDashboardPage extends StatelessWidget {
     const UpdatesManagerPage(),
     const _PlansManagerPage(),
     const _DocsAndLegalPage(),
+    const _RoadmapManagerPage(),
   ];
 
   @override
@@ -1180,6 +1182,180 @@ class _PlansManagerPageState extends State<_PlansManagerPage> {
                           trailing: IconButton(
                             icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
                             onPressed: () => _deletePlan(plan['id'].toString()),
+                          ),
+                        ),
+                      ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 12. ROADMAP MANAGER — app feature plans (feeds homepage "What's Coming")
+// ═══════════════════════════════════════════════════════════════
+
+class _RoadmapManagerPage extends StatefulWidget {
+  const _RoadmapManagerPage();
+  @override State<_RoadmapManagerPage> createState() => _RoadmapManagerPageState();
+}
+
+class _RoadmapManagerPageState extends State<_RoadmapManagerPage> {
+  List<Map<String, dynamic>> _items = [];
+  bool _loading = true;
+  final _title = TextEditingController();
+  final _description = TextEditingController();
+  String _icon = 'construction';
+
+  static const _icons = [
+    ('mic', 'Audio / Voice'),
+    ('notifications', 'Push notifications'),
+    ('draw', 'Draw / Annotate'),
+    ('play_circle', 'Video'),
+    ('upload', 'Upload'),
+    ('translate', 'Translate'),
+    ('quiz', 'Quiz'),
+    ('construction', 'General'),
+  ];
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  @override
+  void dispose() { _title.dispose(); _description.dispose(); super.dispose(); }
+
+  Future<void> _load() async {
+    final ns = context.read<NoteService>();
+    final all = await ns.getRoadmapItems();
+    if (!mounted) return;
+    setState(() { _items = all; _loading = false; });
+  }
+
+  Future<void> _addItem() async {
+    final title = _title.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Title is required.'), backgroundColor: Colors.orange));
+      return;
+    }
+    final ok = await context.read<NoteService>().addRoadmapItem(
+      title: title,
+      description: _description.text.trim(),
+      icon: _icon,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok ? 'Added to roadmap!' : 'Failed to add.'),
+      backgroundColor: ok ? Colors.green : Colors.red,
+    ));
+    if (ok) {
+      _title.clear(); _description.clear();
+      await _load();
+    }
+  }
+
+  Future<void> _deleteItem(String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove from roadmap?'),
+        content: const Text('It will disappear from the homepage "What\'s Coming" card.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Remove', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final success = await context.read<NoteService>().deleteRoadmapItem(id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(success ? 'Removed.' : 'Failed to remove.'),
+      backgroundColor: success ? Colors.green : Colors.red,
+    ));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Roadmap Manager')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(color: theme.dividerColor.withValues(alpha: 0.08)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Add a planned feature', style: TextStyle(fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 12),
+                          TextField(controller: _title, decoration: const InputDecoration(labelText: 'Title (e.g. Audio notes)', border: OutlineInputBorder())),
+                          const SizedBox(height: 10),
+                          TextField(controller: _description, maxLines: 2,
+                              decoration: const InputDecoration(labelText: 'Description (optional)', border: OutlineInputBorder())),
+                          const SizedBox(height: 10),
+                          DropdownButtonFormField<String>(
+                            initialValue: _icon,
+                            decoration: const InputDecoration(labelText: 'Icon', border: OutlineInputBorder()),
+                            items: [for (final (value, label) in _icons) DropdownMenuItem(value: value, child: Text(label))],
+                            onChanged: (v) { if (v != null) setState(() => _icon = v); },
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: _addItem,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add to Roadmap'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('${_items.length} planned feature(s)', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  if (_items.isEmpty)
+                    const Padding(padding: EdgeInsets.all(16), child: Text('Nothing planned yet.'))
+                  else
+                    for (final item in _items)
+                      Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 8),
+                        color: theme.cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(color: theme.dividerColor.withValues(alpha: 0.08)),
+                        ),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
+                            child: Icon(Icons.construction, color: theme.colorScheme.primary, size: 20),
+                          ),
+                          title: Text(item['title']?.toString() ?? 'Planned', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                          subtitle: (item['description']?.toString() ?? '').isNotEmpty
+                              ? Text(item['description'].toString(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))
+                              : null,
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                            onPressed: () => _deleteItem(item['id'].toString()),
                           ),
                         ),
                       ),
