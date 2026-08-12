@@ -1843,9 +1843,14 @@ class UpdateService {
 
 /// Monitors internet connectivity and exposes [isOnline] as a [ValueNotifier].
 /// Call [start] once (e.g. in [DashboardPage.initState]) and [dispose] when done.
+/// Uses a 2-consecutive-results debounce so a single flaky DNS lookup doesn't
+/// flip the banner back and forth every few seconds.
 class ConnectivityService {
   final ValueNotifier<bool> isOnline = ValueNotifier<bool>(true);
   Timer? _timer;
+  int _consecutiveSuccesses = 0;
+  int _consecutiveFailures = 0;
+  static const int _flipThreshold = 2;
 
   void start() {
     _check(); // immediate first check
@@ -1859,13 +1864,27 @@ class ConnectivityService {
   }
 
   Future<void> _check() async {
+    bool online;
     try {
       final result = await InternetAddress.lookup('google.com')
           .timeout(const Duration(seconds: 3));
-      final online = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-      if (isOnline.value != online) isOnline.value = online;
+      online = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
     } catch (_) {
-      if (isOnline.value) isOnline.value = false;
+      online = false;
+    }
+
+    if (online) {
+      _consecutiveFailures = 0;
+      _consecutiveSuccesses++;
+      if (_consecutiveSuccesses >= _flipThreshold && !isOnline.value) {
+        isOnline.value = true;
+      }
+    } else {
+      _consecutiveSuccesses = 0;
+      _consecutiveFailures++;
+      if (_consecutiveFailures >= _flipThreshold && isOnline.value) {
+        isOnline.value = false;
+      }
     }
   }
 }
