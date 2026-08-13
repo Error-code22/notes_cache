@@ -547,9 +547,8 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  /// Homepage bottom card: shows the app's upcoming-features roadmap
-  /// (read-only display, NOT a button) with a "Request a feature" button
-  /// inside it that opens the feature/bug page.
+  /// Homepage bottom card: a "What's Coming" button that opens the full
+  /// roadmap page.
   Widget _buildHomeBottomCard(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
@@ -559,97 +558,34 @@ class _DashboardPageState extends State<DashboardPage> {
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(color: theme.dividerColor.withOpacity(0.12)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.construction_rounded, size: 20, color: theme.colorScheme.primary),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text("What's Coming", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                ),
-              ],
+      child: Column(
+        children: [
+          ListTile(
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.construction_rounded, size: 20, color: theme.colorScheme.primary),
             ),
-            const SizedBox(height: 12),
-            if (_roadmapItems.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text('Nothing planned yet — request a feature below!', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-              )
-            else
-              Column(
-                children: _roadmapItems.map((item) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Icon(_roadmapIcon(item['icon']?.toString()), size: 18, color: theme.colorScheme.primary),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(item['title']?.toString() ?? 'Coming soon',
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                              if ((item['description']?.toString() ?? '').isNotEmpty)
-                                Text(item['description'].toString(),
-                                    style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-            const Divider(height: 24),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.error.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(Icons.lightbulb_outline, size: 20, color: theme.colorScheme.error),
-              ),
-              title: const Text('Request a feature', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-              subtitle: const Text('Suggest an idea or report a bug', style: TextStyle(fontSize: 12)),
-              trailing: const Icon(Icons.chevron_right, size: 20),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const FeedbackPage()),
-              ),
+            title: const Text("What's Coming", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            subtitle: Text(
+              _roadmapItems.isEmpty
+                  ? 'See upcoming features'
+                  : '${_roadmapItems.length} feature${_roadmapItems.length > 1 ? 's' : ''} in the pipeline',
+              style: const TextStyle(fontSize: 12),
             ),
-          ],
-        ),
+            trailing: const Icon(Icons.chevron_right, size: 20),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const WhatsComingPage()),
+            ),
+          ),
+        ],
       ),
     );
-  }
-
-  IconData _roadmapIcon(String? name) {
-    switch (name) {
-      case 'mic': return Icons.mic_rounded;
-      case 'notifications': return Icons.notifications_active_rounded;
-      case 'draw': return Icons.draw_rounded;
-      case 'play_circle': return Icons.play_circle_fill_rounded;
-      case 'upload': return Icons.upload_file_rounded;
-      case 'translate': return Icons.translate_rounded;
-      case 'quiz': return Icons.quiz_rounded;
-      default: return Icons.construction_rounded;
-    }
   }
 
   /// Happymod-style updater: compares the installed version with the latest
@@ -864,6 +800,135 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+IconData roadmapIconFor(String? name) {
+  switch (name) {
+    case 'mic': return Icons.mic_rounded;
+    case 'notifications': return Icons.notifications_active_rounded;
+    case 'draw': return Icons.draw_rounded;
+    case 'play_circle': return Icons.play_circle_fill_rounded;
+    case 'upload': return Icons.upload_file_rounded;
+    case 'translate': return Icons.translate_rounded;
+    case 'quiz': return Icons.quiz_rounded;
+    default: return Icons.construction_rounded;
+  }
+}
+
+/// Full "What's Coming" page: lists all planned features (roadmap) with
+/// a "Request a feature" action at the bottom.
+class WhatsComingPage extends StatefulWidget {
+  const WhatsComingPage({super.key});
+
+  @override
+  State<WhatsComingPage> createState() => _WhatsComingPageState();
+}
+
+class _WhatsComingPageState extends State<WhatsComingPage> {
+  List<Map<String, dynamic>> _items = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final items = await context.read<NoteService>().getRoadmapItems();
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text("What's Coming")),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.rocket_launch_outlined, color: Colors.indigo),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'NotesCache is in active development. Here\'s what we\'re building — and you can suggest what\'s next!',
+                            style: TextStyle(fontSize: 13, height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  if (_items.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Center(
+                        child: Text('Nothing planned yet — request a feature below!', style: TextStyle(color: Colors.grey[500])),
+                      ),
+                    )
+                  else
+                    for (final item in _items)
+                      Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        color: theme.cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(color: theme.dividerColor.withOpacity(0.08)),
+                        ),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+                            child: Icon(roadmapIconFor(item['icon']?.toString()), color: theme.colorScheme.primary, size: 20),
+                          ),
+                          title: Text(item['title']?.toString() ?? 'Coming soon', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                          subtitle: (item['description']?.toString() ?? '').isNotEmpty
+                              ? Text(item['description'].toString(), style: const TextStyle(fontSize: 12))
+                              : null,
+                        ),
+                      ),
+                  const SizedBox(height: 20),
+                  const Divider(),
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.error.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(Icons.lightbulb_outline, size: 20, color: theme.colorScheme.error),
+                    ),
+                    title: const Text('Request a feature', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                    subtitle: const Text('Suggest an idea or report a bug', style: TextStyle(fontSize: 12)),
+                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const FeedbackPage()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
