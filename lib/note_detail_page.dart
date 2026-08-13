@@ -218,11 +218,40 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
               () => _openWithMode(isExternal: false),
               isComingSoon: false,
             ),
+            const SizedBox(height: 12),
+            _buildReaderOption(
+              Icons.language_rounded,
+              'View on Website',
+              'Open in the browser — works on any device (iPhone, Mac, PC)',
+              Colors.indigo,
+              () => _openOnWebsite(),
+            ),
             const SizedBox(height: 24),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _openOnWebsite() async {
+    final url = _resolveFileUrl();
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This note has no file to open.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final webUrl = 'https://notescache.netlify.app/view?url=${Uri.encodeComponent(url)}';
+    final uri = Uri.parse(webUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open browser: $webUrl'), backgroundColor: Colors.orange),
+        );
+      }
+    }
   }
 
   Widget _buildReaderOption(IconData icon, String title, String subtitle, Color color, VoidCallback onTap, {bool isComingSoon = false}) {
