@@ -1,6 +1,38 @@
 # Project Progress Log
 
-## Latest Milestone: Security Hardening, Vision AI, Speed Audit (2026-08-12)
+## Latest Milestone: Web Viewer + PWA, Notesy Overhaul, Docs Expansion (2026-08-13)
+
+### Web viewer + PWA (for iOS/Mac/PC users)
+- **PWA**: manifest + service worker (offline shell) + iOS meta tags → "Add to Home Screen" works on iPhone.
+- **`/view` document viewer** at notescache.netlify.app/view?url=... — renders PDF (iframe stream), DOCX (docx-preview), images/audio/video (native), text/code. No server, files public-by-URL.
+- **App → website bridge**: note reader picker has "View on Website" — passes `?ext=` so Cloudinary's extension-less URLs render correctly.
+- vue-office reviewed: JS/Vue only — useful on the web, not in Flutter. Confirms WebView-fidelity plan for DOCX/PPTX later.
+- Streaming reality: PDF/images/audio/video stream; DOCX fetches into memory (zip must be fully parsed by docx-preview — inherent to the format).
+
+### Notesy overhaul (v1.0.4 feature set)
+- **3-image vision** (Qwen 3.6 27B, array support in edge function, capped at 3).
+- **Multi-conversation history**: `ai_conversations` + `ai_messages` tables (RLS own-data); sidebar drawer with pin/rename/delete/new; split into Chats/Private sections; auto-title from first message.
+- **Vault mode**: shield button — tap = decoy chat instantly, hold 3.5s (progress ring) = biometrics/PIN gate; decoy chats from bundled JSON asset (zero tokens); auto-lock on background; blue theme; vault chats separate in sidebar.
+- **Pill input** floating above nav buttons (SafeArea), Gemini-style.
+- **Beta notices**: BETA badge in app bar + one-time disclaimer popup + empty-state note.
+- Fixed: Scaffold.of drawer crash, framework deactivation assert after PIN dialogs, infinite spinner on vault ring, double-fire after long-press.
+
+### Website + README
+- Features section removed from site; "What's Coming" roadmap section added.
+- README trimmed to user-facing (less clone bait — removed tech stack, DB setup, secrets, structure).
+- Stats: 64 total GitHub downloads (v1.0.3: 13, v1.0.2: 7, v1.0.1: 22, v1.0.0: 22). GitHub traffic + Netlify visitor APIs need paid/auth access — not available.
+- v1.0.4 tagged + built (APKs + Windows); **release upload pending user action** (no GitHub token).
+
+### App UX polish
+- Homepage "What's Coming" → button → full WhatsComingPage (roadmap list + request feature).
+- Fixed Android 11+ browser intents (explicit `<queries>` for https/http — url_launcher).
+- Fixed Next.js workspace-root warning (turbopack.root).
+
+### Stats (2026-08-13)
+- GitHub downloads: 64 total. v1.0.4: 0 (not yet published).
+- Deferred: ODT/ODS/ODP/RTF/EPUB native parsers, Notesy voice replies, FCM push, AI summary backfill (39/47), Telegram backfill (0/47).
+
+## Previous Milestone: Security Hardening, Vision AI, Speed Audit (2026-08-12)
 
 ### Security hardening (all live on DB — migration `20260812000000_security_hardening.sql`)
 - `app_config` — write policies gated to **admins only** (was writable by any authenticated user).

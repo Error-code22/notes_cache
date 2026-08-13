@@ -1,8 +1,8 @@
 # NotesCache Plan 🗺️
 
-Status as of **2026-08-12**. Anything in a checkbox list without ✅ is next up.
+Status as of **2026-08-13**. Anything in a checkbox list without ✅ is next up.
 
-## 🎯 Tomorrow (2026-08-13) — Notesy retention features
+## 🎯 Next up — Notesy retention features
 
 1. [ ] **Notesy voice replies (TTS)** — Notesy reads answers aloud (`flutter_tts`, free). Killer for studying on the go.
 2. [ ] **Flashcards → Memory Lab** — one-tap "save these flashcards" from Notesy into a real deck.
@@ -10,13 +10,36 @@ Status as of **2026-08-12**. Anything in a checkbox list without ✅ is next up.
 4. [ ] **Share chat** — export a conversation as text/image to share with classmates.
 5. [ ] **Weekly study summary** — "This week: X topics, Y questions, Z downloads" (activity data exists).
 
+## 🎯 Full document reader (in-app, native parsers)
+
+- [ ] **ODT** — zip+xml `content.xml` → paragraphs (same pattern as DOCX).
+- [ ] **ODS** — zip+xml → table grid (reuse xlsx grid UI).
+- [ ] **ODP** — zip+xml → slides (same as PPTX pattern).
+- [ ] **RTF** — parse control words → plain text.
+- [ ] **EPUB** — zip → xhtml → text reader.
+- [ ] Legacy binary DOC/XLS stay device-viewer fallback (OLE2, not worth parsing).
+
+## 🎯 Web tier 3 (parked — big)
+
+- [ ] **Full web app** (auth + notes + year isolation + Notesy in browser) — essentially rebuilding the Flutter app in React. RLS blocks guest note reads → needs web login. Only if a real web product is wanted.
+- [ ] **Web PPTX/XLSX rendering** — their JS libs are paid/limited; app remains the full reader for now.
+- [ ] **Cloudinary fl_pdf / server-side conversion** for web previews of non-streamable formats.
+
 ### Also queued
 - [ ] **FCM push notifications** — biggest gap (notifications die when app force-stopped).
 - [ ] **Batch AI summaries for old notes** — 39/47 notes missing summaries; one admin button.
 - [ ] **Telegram backup backfill** — 0/47 notes backed up; `telegram-restore` currently useless.
 - [ ] **Terms/privacy on website?** — decide whether to migrate from in-app dialogs to web pages (keep in-app for now).
+- [ ] **v1.0.4 GitHub release upload** — tag + APKs + Windows zip built; user must publish (no token).
 
-## ✅ Done (recent era — v1.0.4 feature set)
+## ✅ Done (recent era — 2026-08-13)
+
+- **Web viewer + PWA** — installable on iPhone/Mac (manifest+SW+iOS meta), `/view` document viewer (PDF streams, DOCX via docx-preview, images/audio/video native), app "View on Website" bridge with `?ext=`.
+- **Homepage "What's Coming" button** → full roadmap page.
+- **Android 11+ browser intent fix** (explicit `<queries>`).
+- **Next.js workspace-root warning fixed** (turbopack.root).
+
+## ✅ Done (v1.0.4 feature set — 2026-08-12)
 
 - **Public launch**: repo public, GitHub release v1.0.0 (3 clean APKs), landing page live at **notescache.netlify.app**, direct-download link for WhatsApp groups.
 - **Secret-leak cleanup**: `.env` stripped to public-only, git history purged, APKs rebuilt + verified secret-free, all leaked keys rotated (Groq/Cloudinary/Telegram/Supabase; GCP disabled by Google; Gemini ignored).
