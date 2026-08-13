@@ -9,6 +9,7 @@ import { useSearchParams } from 'next/navigation'
 function ViewerContent() {
   const params = useSearchParams()
   const url = params.get('url') || ''
+  const extParam = (params.get('ext') || '').toLowerCase()
   const [mode, setMode] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState('')
   const [ext, setExt] = useState('')
@@ -27,11 +28,26 @@ function ViewerContent() {
       setError('That URL looks invalid.')
       return
     }
-    const clean = url.split('?')[0].split('#')[0].toLowerCase()
-    const e = clean.includes('.') ? clean.substring(clean.lastIndexOf('.')) : ''
+    // Cloudinary URLs have no extension — trust the ?ext= param the app sends.
+    // Otherwise derive from the URL path, only when the last segment looks
+    // like a real extension (short, after the final slash).
+    let e = ''
+    if (extParam.startsWith('.')) {
+      e = extParam
+    } else if (extParam) {
+      e = '.' + extParam
+    }
+    if (!e) {
+      const path = new URL(url).pathname
+      const last = path.substring(path.lastIndexOf('/') + 1)
+      const dot = last.lastIndexOf('.')
+      if (dot > 0 && last.length - dot <= 5) {
+        e = last.substring(dot).toLowerCase()
+      }
+    }
     setExt(e)
     setMode('ready')
-  }, [url])
+  }, [url, extParam])
 
   useEffect(() => {
     if (mode !== 'ready') return
