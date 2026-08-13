@@ -241,7 +241,10 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       );
       return;
     }
-    final webUrl = 'https://notescache.netlify.app/view?url=${Uri.encodeComponent(url)}';
+    // Cloudinary URLs carry no extension — pass the real one from the title
+    // so the web viewer knows what to render.
+    final ext = _resolveFileExt();
+    final webUrl = 'https://notescache.netlify.app/view?url=${Uri.encodeComponent(url)}&ext=${Uri.encodeComponent(ext)}';
     final uri = Uri.parse(webUrl);
     try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
