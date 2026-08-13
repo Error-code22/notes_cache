@@ -243,9 +243,9 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     }
     final webUrl = 'https://notescache.netlify.app/view?url=${Uri.encodeComponent(url)}';
     final uri = Uri.parse(webUrl);
-    if (await canLaunchUrl(uri)) {
+    try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open browser: $webUrl'), backgroundColor: Colors.orange),
