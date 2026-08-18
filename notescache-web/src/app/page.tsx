@@ -1,14 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-)
+import { signOut, supabase, useAuth } from '../lib/auth'
 
 export default function Home() {
+  const { user, profile } = useAuth()
   const [showComms, setShowComms] = useState(true)
 
   useEffect(() => {
@@ -21,15 +17,20 @@ export default function Home() {
     })()
   }, [])
 
+  const displayName = user ? (profile?.full_name || 'Student') : 'Guest'
+  const isGuest = !user
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* ── AppBar (app-like) ── */}
       <header className="bg-white border-b sticky top-0 z-20">
         <div className="max-w-3xl mx-auto px-5 h-16 flex items-center justify-between">
-          <div>
-            <div className="font-bold text-gray-900">Guest</div>
-            <div className="text-[11px] text-gray-400 uppercase tracking-wide">Guest Mode</div>
-          </div>
+          <a href={isGuest ? '/' : '/profile'} className="hover:opacity-80 transition">
+            <div className="font-bold text-gray-900">{displayName}</div>
+            <div className="text-[11px] text-gray-400 uppercase tracking-wide">
+              {isGuest ? 'Guest Mode' : (profile?.role || 'student').toUpperCase()}
+            </div>
+          </a>
           <div className="flex items-center gap-2">
             <a
               href="/downloads"
@@ -37,26 +38,38 @@ export default function Home() {
             >
               Download App
             </a>
-            <a
-              href="/downloads"
-              className="w-8 h-8 rounded-full bg-indigo-600/10 flex items-center justify-center"
-              title="Account"
-            >
-              <span className="text-indigo-600 text-sm">👤</span>
-            </a>
+            {isGuest ? (
+              <a
+                href="/login"
+                className="w-8 h-8 rounded-full bg-indigo-600/10 flex items-center justify-center hover:bg-indigo-600/20 transition"
+                title="Sign in"
+              >
+                <span className="text-indigo-600 text-sm">👤</span>
+              </a>
+            ) : (
+              <button
+                onClick={() => signOut()}
+                className="w-8 h-8 rounded-full bg-indigo-600/10 flex items-center justify-center hover:bg-indigo-600/20 transition"
+                title="Sign out"
+              >
+                <span className="text-indigo-600 text-sm">🚪</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-5 py-4">
         {/* ── Demo-mode banner (guests) ── */}
-        <div className="bg-amber-500 text-white rounded-xl px-4 py-2.5 flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <span>ℹ️</span>
-            <span className="text-[13px] font-medium">Demo mode: browsing only. Get the app for full access.</span>
+        {isGuest && (
+          <div className="bg-amber-500 text-white rounded-xl px-4 py-2.5 flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <span>ℹ️</span>
+              <span className="text-[13px] font-medium">Demo mode: browsing only. Get the app for full access.</span>
+            </div>
+            <a href="/login" className="text-[12px] font-bold underline">SIGN IN</a>
           </div>
-          <a href="/downloads" className="text-[12px] font-bold underline">SIGN IN</a>
-        </div>
+        )}
 
         {/* ── Hub cards (app replica) ── */}
         <div className="space-y-4">
@@ -75,7 +88,7 @@ export default function Home() {
           </a>
 
           <a
-            href="/downloads"
+            href="/donate"
             className="flex items-center gap-5 bg-white rounded-3xl border border-gray-100 p-6 hover:shadow-md hover:border-pink-300 transition"
           >
             <div className="p-4 rounded-2xl bg-pink-600/10">
@@ -90,7 +103,7 @@ export default function Home() {
 
           {showComms && (
             <a
-              href="/downloads"
+              href="/communication"
               className="flex items-center gap-5 bg-white rounded-3xl border border-gray-100 p-6 hover:shadow-md hover:border-orange-300 transition"
             >
               <div className="p-4 rounded-2xl bg-orange-600/10">
@@ -134,6 +147,19 @@ export default function Home() {
               <div className="text-[12px] text-gray-500">See upcoming features</div>
             </div>
             <span className="text-gray-300">›</span>
+          </a>
+        </div>
+
+        {/* ── Secondary links (app menu items) ── */}
+        <div className="mt-8 grid grid-cols-3 gap-2">
+          <a href="/updates" className="text-center py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium text-gray-700 hover:border-indigo-400 hover:text-indigo-600 transition">
+            📣 Updates
+          </a>
+          <a href="/feedback" className="text-center py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium text-gray-700 hover:border-indigo-400 hover:text-indigo-600 transition">
+            🐞 Feedback
+          </a>
+          <a href="/pricing" className="text-center py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium text-gray-700 hover:border-indigo-400 hover:text-indigo-600 transition">
+            💳 Plans
           </a>
         </div>
       </main>
