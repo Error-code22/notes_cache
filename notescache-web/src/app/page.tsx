@@ -1,168 +1,157 @@
-'use client'
+import Link from 'next/link'
 
-import { useEffect, useState } from 'react'
-import { signOut, supabase, useAuth } from '../lib/auth'
+const WHATSAPP_GROUP = 'https://chat.whatsapp.com/DkqyCtURIAiKOhEijE8rZT'
+const WHATSAPP_SUPPORT = 'https://wa.me/254703300084'
+const GITHUB_REPO = 'https://github.com/Error-code22/notes_cache'
+const RELEASE_PAGE = 'https://github.com/Error-code22/notes_cache/releases'
+const APK_ARM64 = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk'
+const APK_V7A = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-armeabi-v7a.apk'
+const WIN_ZIP = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-Windows.zip'
+
+const CURRENT_VERSION = '1.0.4'
+const WHATS_NEW = 'Notesy overhaul: multi-image vision, chat history, vault mode, speed optimizations'
 
 export default function Home() {
-  const { user, profile } = useAuth()
-  const [showComms, setShowComms] = useState(true)
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await supabase.from('app_config').select('key, value')
-        const row = (data || []).find((r: { key: string }) => r.key === 'show_comms_button')
-        if (row && row.value === 'false') setShowComms(false)
-      } catch { /* ignore */ }
-    })()
-  }, [])
-
-  const displayName = user ? (profile?.full_name || 'Student') : 'Guest'
-  const isGuest = !user
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* ── AppBar (app-like) ── */}
-      <header className="bg-white border-b sticky top-0 z-20">
-        <div className="max-w-3xl mx-auto px-5 h-16 flex items-center justify-between">
-          <a href={isGuest ? '/' : '/profile'} className="hover:opacity-80 transition">
-            <div className="font-bold text-gray-900">{displayName}</div>
-            <div className="text-[11px] text-gray-400 uppercase tracking-wide">
-              {isGuest ? 'Guest Mode' : (profile?.role || 'student').toUpperCase()}
-            </div>
-          </a>
+    <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white">
+      {/* Version bar */}
+      <div className="bg-indigo-600 text-white text-sm">
+        <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <span className="font-semibold">v{CURRENT_VERSION}</span>
+            <span className="hidden sm:inline text-indigo-200">|</span>
+            <span className="hidden sm:inline text-indigo-100">{WHATS_NEW}</span>
+          </div>
+          <a
+            href={APK_ARM64}
+            className="text-xs font-medium bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition"
+          >
+            Download Latest
+          </a>
+        </div>
+      </div>
+
+      <header className="border-b bg-white/80 backdrop-blur-sm">
+        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+          <h1 className="text-xl font-bold text-indigo-600">NotesCache</h1>
+          <div className="flex items-center gap-4">
             <a
-              href="/downloads"
-              className="px-4 py-2 text-sm font-medium text-indigo-600 hover:text-indigo-800 transition"
+              href={RELEASE_PAGE}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-gray-500 hover:text-indigo-600 transition hidden sm:inline"
             >
-              Download App
+              Changelog
             </a>
-            {isGuest ? (
-              <a
-                href="/login"
-                className="w-8 h-8 rounded-full bg-indigo-600/10 flex items-center justify-center hover:bg-indigo-600/20 transition"
-                title="Sign in"
-              >
-                <span className="text-indigo-600 text-sm">👤</span>
-              </a>
-            ) : (
-              <button
-                onClick={() => signOut()}
-                className="w-8 h-8 rounded-full bg-indigo-600/10 flex items-center justify-center hover:bg-indigo-600/20 transition"
-                title="Sign out"
-              >
-                <span className="text-indigo-600 text-sm">🚪</span>
-              </button>
-            )}
+            <a
+              href={GITHUB_REPO}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 text-indigo-600 hover:text-indigo-800 transition text-sm font-medium"
+            >
+              GitHub
+            </a>
           </div>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-5 py-4">
-        {/* ── Demo-mode banner (guests) ── */}
-        {isGuest && (
-          <div className="bg-amber-500 text-white rounded-xl px-4 py-2.5 flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <span>ℹ️</span>
-              <span className="text-[13px] font-medium">Demo mode: browsing only. Get the app for full access.</span>
+      <main className="max-w-4xl mx-auto px-4 py-16">
+        <div className="text-center">
+          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+            Many Notes. One Place.
+          </h2>
+          <p className="text-lg text-gray-600 mb-10 max-w-xl mx-auto">
+            Access lecture notes by year and semester, chat with classmates, and get instant AI-powered study help.
+          </p>
+
+          <div className="bg-white rounded-2xl shadow-sm border p-8 max-w-lg mx-auto">
+            <h3 className="text-xl font-semibold mb-2">Download the App</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              Works on <span className="font-semibold">Android 7+</span> and <span className="font-semibold">Windows</span>.
+            </p>
+            <div className="flex flex-col gap-3">
+              <a
+                href={APK_ARM64}
+                className="px-6 py-4 bg-indigo-600 text-white rounded-xl text-lg font-medium hover:bg-indigo-700 transition flex items-center justify-center gap-2"
+              >
+                Download for most phones (64-bit)
+              </a>
+              <a
+                href={APK_V7A}
+                className="px-6 py-4 border border-indigo-600 text-indigo-600 rounded-xl text-lg font-medium hover:bg-indigo-50 transition flex items-center justify-center gap-2"
+              >
+                Download for older 32-bit phones
+              </a>
+              <a
+                href={WIN_ZIP}
+                className="px-6 py-4 border border-gray-300 text-gray-700 rounded-xl text-lg font-medium hover:bg-gray-50 transition flex items-center justify-center gap-2"
+              >
+                Download for Windows
+              </a>
+              <a
+                href={RELEASE_PAGE}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-gray-500 hover:text-indigo-600 transition"
+              >
+                All releases on GitHub
+              </a>
             </div>
-            <a href="/login" className="text-[12px] font-bold underline">SIGN IN</a>
+            <p className="text-xs text-gray-400 mt-4">
+              Not sure which one? Try the 64-bit version first. If your phone says "not compatible," use the 32-bit one.
+            </p>
           </div>
-        )}
 
-        {/* ── Hub cards (app replica) ── */}
-        <div className="space-y-4">
-          <a
-            href="/notes"
-            className="flex items-center gap-5 bg-white rounded-3xl border border-gray-100 p-6 hover:shadow-md hover:border-blue-300 transition"
-          >
-            <div className="p-4 rounded-2xl bg-blue-600/10">
-              <span className="text-3xl">📚</span>
-            </div>
-            <div className="flex-1">
-              <div className="font-bold text-gray-900 text-lg">Academic Notes</div>
-              <div className="text-[13px] text-gray-500">Browse and read the shared library</div>
-            </div>
-            <span className="text-gray-300">›</span>
-          </a>
-
-          <a
-            href="/donate"
-            className="flex items-center gap-5 bg-white rounded-3xl border border-gray-100 p-6 hover:shadow-md hover:border-pink-300 transition"
-          >
-            <div className="p-4 rounded-2xl bg-pink-600/10">
-              <span className="text-3xl">❤️</span>
-            </div>
-            <div className="flex-1">
-              <div className="font-bold text-gray-900 text-lg">Donate Notes</div>
-              <div className="text-[13px] text-gray-500">Share notes with everyone on the app</div>
-            </div>
-            <span className="text-gray-300">›</span>
-          </a>
-
-          {showComms && (
+          <div className="mt-10 grid sm:grid-cols-2 gap-4 max-w-lg mx-auto">
             <a
-              href="/communication"
-              className="flex items-center gap-5 bg-white rounded-3xl border border-gray-100 p-6 hover:shadow-md hover:border-orange-300 transition"
+              href={WHATSAPP_GROUP}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-green-50 border border-green-200 text-green-700 p-4 rounded-xl font-medium hover:bg-green-100 transition"
             >
-              <div className="p-4 rounded-2xl bg-orange-600/10">
-                <span className="text-3xl">💬</span>
-              </div>
-              <div className="flex-1">
-                <div className="font-bold text-gray-900 text-lg">Communication</div>
-                <div className="text-[13px] text-gray-500">Chat with friends and study groups</div>
-              </div>
-              <span className="text-gray-300">›</span>
+              Join the WhatsApp group
             </a>
-          )}
-
-          <a
-            href="/chat"
-            className="flex items-center gap-5 bg-white rounded-3xl border border-violet-200 p-6 hover:shadow-md hover:border-violet-300 transition"
-          >
-            <div className="p-4 rounded-2xl bg-violet-600/10">
-              <span className="text-3xl">🧠</span>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <div className="font-bold text-gray-900 text-lg">Notesy Memory Lab</div>
-                <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-black">NEW</span>
-              </div>
-              <div className="text-[13px] text-gray-500">Quizzes, flashcards & memory tools</div>
-            </div>
-            <span className="text-gray-300">›</span>
-          </a>
-
-          {/* ── What's Coming ── */}
-          <a
-            href="/whats-coming"
-            className="flex items-center gap-4 bg-white rounded-3xl border border-gray-100 p-5 hover:shadow-md hover:border-indigo-300 transition"
-          >
-            <div className="p-3 rounded-2xl bg-indigo-600/10">
-              <span className="text-xl">🚧</span>
-            </div>
-            <div className="flex-1">
-              <div className="font-semibold text-gray-900">What's Coming</div>
-              <div className="text-[12px] text-gray-500">See upcoming features</div>
-            </div>
-            <span className="text-gray-300">›</span>
-          </a>
+            <a
+              href={WHATSAPP_SUPPORT}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-gray-50 border border-gray-200 text-gray-700 p-4 rounded-xl font-medium hover:bg-gray-100 transition"
+            >
+              Get support on WhatsApp
+            </a>
+          </div>
         </div>
 
-        {/* ── Secondary links (app menu items) ── */}
-        <div className="mt-8 grid grid-cols-3 gap-2">
-          <a href="/updates" className="text-center py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium text-gray-700 hover:border-indigo-400 hover:text-indigo-600 transition">
-            📣 Updates
-          </a>
-          <a href="/feedback" className="text-center py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium text-gray-700 hover:border-indigo-400 hover:text-indigo-600 transition">
-            🐞 Feedback
-          </a>
-          <a href="/pricing" className="text-center py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium text-gray-700 hover:border-indigo-400 hover:text-indigo-600 transition">
-            💳 Plans
-          </a>
+        {/* Roadmap */}
+        <div className="mt-20 bg-white border border-gray-200 rounded-2xl p-8 max-w-3xl mx-auto">
+          <h3 className="text-2xl font-bold text-center text-gray-900 mb-2">What's coming</h3>
+          <p className="text-center text-gray-600 mb-8 text-sm">NotesCache is in active development. Here's what we're building next.</p>
+          <div className="space-y-4">
+            {[
+              { title: 'Voice replies', desc: 'Notesy reads answers aloud — perfect for studying on the go.' },
+              { title: 'Flashcards to Memory Lab', desc: 'Save Notesy flashcards into your own revision decks in one tap.' },
+              { title: 'Ask about this note', desc: 'Jump from any note straight into a Notesy conversation about it.' },
+              { title: 'Share chats', desc: 'Export and share conversations with classmates.' },
+              { title: 'Weekly study summaries', desc: 'See what you studied each week: topics, questions, downloads.' },
+              { title: 'Push notifications', desc: 'Get notified when new notes land in your year.' },
+            ].map((r) => (
+              <div key={r.title} className="flex items-start gap-3">
+                <span className="mt-1 w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
+                <div>
+                  <div className="font-semibold text-gray-900 text-sm">{r.title}</div>
+                  <div className="text-sm text-gray-500">{r.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </main>
+
+      <footer className="border-t bg-white mt-16">
+        <div className="max-w-4xl mx-auto px-4 py-8 text-center text-gray-500 text-sm">
+          NotesCache — built for students, by students.
+        </div>
+      </footer>
     </div>
   )
 }
