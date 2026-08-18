@@ -16,9 +16,20 @@ export default function LoginPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.push('/')
+    let done = false
+    const check = () => {
+      supabase.auth.getSession().then(({ data }) => {
+        if (!done && data.session) router.push('/')
+      })
+    }
+    check()
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!done && session) router.push('/')
     })
+    return () => {
+      done = true
+      sub.subscription.unsubscribe()
+    }
   }, [router])
 
   async function submit() {

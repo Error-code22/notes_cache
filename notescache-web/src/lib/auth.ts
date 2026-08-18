@@ -6,6 +6,14 @@ import { useEffect, useState } from 'react'
 export const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    auth: {
+      flowType: 'pkce',
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  },
 )
 
 export type Profile = {
@@ -25,12 +33,28 @@ export function useAuth() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+    // Hard timeout so a stuck OAuth exchange can never leave the UI spinning.
+    const guard = setTimeout(() => {
+      if (!cancelled) setLoading(false)
+    }, 8000)
+
     supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null)
-      setLoading(false)
+      if (!cancelled) {
+        setUser(data.session?.user ?? null)
+        setLoading(false)
+        clearTimeout(guard)
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setUser(null)
+        setLoading(false)
+        clearTimeout(guard)
+      }
     })
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return
       setUser(session?.user ?? null)
       if (!session?.user) {
         setProfile(null)
@@ -38,7 +62,11 @@ export function useAuth() {
       }
     })
 
-    return () => sub.subscription.unsubscribe()
+    return () => {
+      cancelled = true
+      clearTimeout(guard)
+      sub.subscription.unsubscribe()
+    }
   }, [])
 
   // Fetch profile whenever the user changes
