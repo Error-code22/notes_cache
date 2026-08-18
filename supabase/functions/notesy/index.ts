@@ -15,6 +15,8 @@ let supabaseClient: any = null
 
 const ALLOWED_ORIGINS = [
   'https://wgxsumbvhzwljxyozdsd.supabase.co',
+  'https://notescache.netlify.app',
+  'https://notescache.netlify.app/',
   'http://localhost',
   'http://localhost:3000',
   'http://localhost:8080',

@@ -1,157 +1,348 @@
-import Link from 'next/link'
+'use client'
 
-const WHATSAPP_GROUP = 'https://chat.whatsapp.com/DkqyCtURIAiKOhEijE8rZT'
-const WHATSAPP_SUPPORT = 'https://wa.me/254703300084'
-const GITHUB_REPO = 'https://github.com/Error-code22/notes_cache'
-const RELEASE_PAGE = 'https://github.com/Error-code22/notes_cache/releases'
-const APK_ARM64 = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk'
-const APK_V7A = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-armeabi-v7a.apk'
-const WIN_ZIP = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-Windows.zip'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createClient } from '@supabase/supabase-js'
 
-const CURRENT_VERSION = '1.0.4'
-const WHATS_NEW = 'Notesy overhaul: multi-image vision, chat history, vault mode, speed optimizations'
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+)
+
+const NOTESY_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/notesy`
+
+type Note = {
+  id: string
+  title: string
+  lecturer_name?: string
+  target_year?: number
+  semester?: number
+  gdrive_id?: string
+  file_size?: number
+  category?: string
+  created_at?: string
+  summary?: string
+}
+
+type ChatMsg = { role: 'user' | 'assistant'; content: string }
+
+const GUEST_LIMIT = 3
+const storageKey = 'notesy_web_history'
+
+function typeOf(n: Note): string {
+  const t = (n.title || '').toLowerCase()
+  const c = (n.category || '').toLowerCase()
+  if (t.endsWith('.pdf') || c === 'pdf') return 'pdf'
+  if (t.endsWith('.ppt') || t.endsWith('.pptx') || c === 'slides') return 'ppt'
+  if (t.endsWith('.doc') || t.endsWith('.docx') || c === 'document') return 'doc'
+  if (t.endsWith('.xls') || t.endsWith('.xlsx') || t.endsWith('.csv')) return 'xls'
+  if (t.endsWith('.mp4') || t.endsWith('.mov') || t.endsWith('.mkv')) return 'vid'
+  if (t.endsWith('.mp3') || t.endsWith('.wav') || t.endsWith('.m4a')) return 'aud'
+  if (t.endsWith('.jpg') || t.endsWith('.jpeg') || t.endsWith('.png') || t.endsWith('.webp')) return 'img'
+  if (t.endsWith('.py') || t.endsWith('.js') || t.endsWith('.dart') || t.endsWith('.html') || t.endsWith('.json')) return 'code'
+  if (t.endsWith('.txt') || t.endsWith('.md')) return 'txt'
+  return 'other'
+}
+
+const TYPE_META: Record<string, { label: string; color: string }> = {
+  pdf: { label: 'PDF', color: '#EF5350' },
+  doc: { label: 'DOC', color: '#42A5F5' },
+  ppt: { label: 'PPT', color: '#FFA726' },
+  xls: { label: 'XLS', color: '#66BB6A' },
+  vid: { label: 'VID', color: '#5C6BC0' },
+  aud: { label: 'AUD', color: '#EC407A' },
+  img: { label: 'IMG', color: '#AB47BC' },
+  code: { label: 'CODE', color: '#78909C' },
+  txt: { label: 'TXT', color: '#26A69A' },
+  other: { label: 'FILE', color: '#90A4AE' },
+}
 
 export default function Home() {
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white">
-      {/* Version bar */}
-      <div className="bg-indigo-600 text-white text-sm">
-        <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold">v{CURRENT_VERSION}</span>
-            <span className="hidden sm:inline text-indigo-200">|</span>
-            <span className="hidden sm:inline text-indigo-100">{WHATS_NEW}</span>
-          </div>
-          <a
-            href={APK_ARM64}
-            className="text-xs font-medium bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition"
-          >
-            Download Latest
-          </a>
-        </div>
-      </div>
+  const [notes, setNotes] = useState<Note[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [year, setYear] = useState<number | null>(null)
+  const [semester, setSemester] = useState<number | null>(null)
+  const [typeFilter, setTypeFilter] = useState<string | null>(null)
+  const [years, setYears] = useState<number[]>([])
+  const [installEvt, setInstallEvt] = useState<Event | null>(null)
+  const [showChat, setShowChat] = useState(false)
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const chatRef = useRef<HTMLDivElement>(null)
 
-      <header className="border-b bg-white/80 backdrop-blur-sm">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-indigo-600">NotesCache</h1>
-          <div className="flex items-center gap-4">
-            <a
-              href={RELEASE_PAGE}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-gray-500 hover:text-indigo-600 transition hidden sm:inline"
-            >
-              Changelog
-            </a>
-            <a
-              href={GITHUB_REPO}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 text-indigo-600 hover:text-indigo-800 transition text-sm font-medium"
-            >
-              GitHub
-            </a>
+  // ── Load notes (guests can read all) ──
+  useEffect(() => {
+    let q = supabase.from('notes').select('*').order('created_at', { ascending: false }).limit(200)
+    if (year !== null) q = q.eq('target_year', year)
+    if (semester !== null) q = q.eq('semester', semester)
+    q.then(({ data, error }) => {
+      if (error) console.error('notes fetch', error)
+      const rows = (data as Note[]) || []
+      setNotes(rows)
+      setYears(Array.from(new Set(rows.map((n) => n.target_year).filter((y): y is number => !!y))).sort())
+      setLoading(false)
+    })
+  }, [year, semester])
+
+  // ── Search (debounced client-side on loaded set — 200 notes max) ──
+  const filtered = useMemo(() => {
+    let list = notes
+    if (search.trim()) {
+      const s = search.toLowerCase()
+      list = list.filter((n) => (n.title || '').toLowerCase().includes(s))
+    }
+    if (typeFilter) list = list.filter((n) => typeOf(n) === typeFilter)
+    return list
+  }, [notes, search, typeFilter])
+
+  // ── PWA install prompt (Chrome/Edge) ──
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault()
+      setInstallEvt(e)
+    }
+    window.addEventListener('beforeinstallprompt', handler)
+    return () => window.removeEventListener('beforeinstallprompt', handler)
+  }, [])
+
+  // ── Notesy guest history (localStorage) ──
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey)
+      if (raw) setChatMsgs(JSON.parse(raw))
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
+  }, [chatMsgs, chatLoading])
+
+  const usedCount = chatMsgs.filter((m) => m.role === 'user').length
+  const limitReached = usedCount >= GUEST_LIMIT
+
+  async function sendChat() {
+    const text = chatInput.trim()
+    if (!text || chatLoading || limitReached) return
+    const next = [...chatMsgs, { role: 'user' as const, content: text }]
+    setChatMsgs(next)
+    setChatInput('')
+    setChatLoading(true)
+    try {
+      const res = await fetch(NOTESY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history: chatMsgs.slice(-5) }),
+      })
+      const data = await res.json()
+      const reply = data?.content || 'Sorry, Notesy hit a snag. Try again?'
+      const final = [...next, { role: 'assistant' as const, content: reply }]
+      setChatMsgs(final)
+      try { localStorage.setItem(storageKey, JSON.stringify(final)) } catch { /* ignore */ }
+    } catch (e) {
+      setChatMsgs([...next, { role: 'assistant', content: 'Could not reach Notesy. Check your connection.' }])
+      console.error(e)
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  function viewUrl(n: Note): string {
+    const url = n.gdrive_id || ''
+    let ext = ''
+    const m = (n.title || '').match(/\.(pdf|docx|doc|pptx|ppt|txt|md|csv|xlsx|xls|jpg|jpeg|png|mp4|mp3|m4a|mov|mkv|webm)$/i)
+    if (m) ext = m[1].toLowerCase()
+    return `/view?url=${encodeURIComponent(url)}&ext=${encodeURIComponent(ext)}`
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* ── Top bar (app-like) ── */}
+      <header className="bg-white border-b sticky top-0 z-20">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+          <a href="/" className="font-bold text-indigo-600 text-lg">NotesCache</a>
+          <div className="flex items-center gap-2">
+            <a href="/downloads" className="px-3 py-2 text-sm text-gray-600 hover:text-indigo-600 transition">Download App</a>
+            {installEvt && (
+              <button
+                onClick={() => {
+                  const evt = installEvt as unknown as { prompt: () => Promise<void> }
+                  evt.prompt()
+                  setInstallEvt(null)
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
+              >
+                Install App
+              </button>
+            )}
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-16">
-        <div className="text-center">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-            Many Notes. One Place.
-          </h2>
-          <p className="text-lg text-gray-600 mb-10 max-w-xl mx-auto">
-            Access lecture notes by year and semester, chat with classmates, and get instant AI-powered study help.
-          </p>
-
-          <div className="bg-white rounded-2xl shadow-sm border p-8 max-w-lg mx-auto">
-            <h3 className="text-xl font-semibold mb-2">Download the App</h3>
-            <p className="text-sm text-gray-500 mb-6">
-              Works on <span className="font-semibold">Android 7+</span> and <span className="font-semibold">Windows</span>.
-            </p>
-            <div className="flex flex-col gap-3">
-              <a
-                href={APK_ARM64}
-                className="px-6 py-4 bg-indigo-600 text-white rounded-xl text-lg font-medium hover:bg-indigo-700 transition flex items-center justify-center gap-2"
-              >
-                Download for most phones (64-bit)
-              </a>
-              <a
-                href={APK_V7A}
-                className="px-6 py-4 border border-indigo-600 text-indigo-600 rounded-xl text-lg font-medium hover:bg-indigo-50 transition flex items-center justify-center gap-2"
-              >
-                Download for older 32-bit phones
-              </a>
-              <a
-                href={WIN_ZIP}
-                className="px-6 py-4 border border-gray-300 text-gray-700 rounded-xl text-lg font-medium hover:bg-gray-50 transition flex items-center justify-center gap-2"
-              >
-                Download for Windows
-              </a>
-              <a
-                href={RELEASE_PAGE}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-gray-500 hover:text-indigo-600 transition"
-              >
-                All releases on GitHub
-              </a>
-            </div>
-            <p className="text-xs text-gray-400 mt-4">
-              Not sure which one? Try the 64-bit version first. If your phone says "not compatible," use the 32-bit one.
-            </p>
-          </div>
-
-          <div className="mt-10 grid sm:grid-cols-2 gap-4 max-w-lg mx-auto">
-            <a
-              href={WHATSAPP_GROUP}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-green-50 border border-green-200 text-green-700 p-4 rounded-xl font-medium hover:bg-green-100 transition"
-            >
-              Join the WhatsApp group
-            </a>
-            <a
-              href={WHATSAPP_SUPPORT}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-gray-50 border border-gray-200 text-gray-700 p-4 rounded-xl font-medium hover:bg-gray-100 transition"
-            >
-              Get support on WhatsApp
-            </a>
-          </div>
+      <main className="max-w-6xl mx-auto px-4 py-6">
+        {/* ── Mobile-ish note toolbar ── */}
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search notes…"
+            className="flex-1 min-w-[180px] px-4 py-2 rounded-full border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <select
+            value={year ?? ''}
+            onChange={(e) => setYear(e.target.value ? Number(e.target.value) : null)}
+            className="px-3 py-2 rounded-full border border-gray-300 bg-white text-sm"
+          >
+            <option value="">All years</option>
+            {years.map((y) => <option key={y} value={y}>Year {y}</option>)}
+          </select>
+          <select
+            value={semester ?? ''}
+            onChange={(e) => setSemester(e.target.value ? Number(e.target.value) : null)}
+            className="px-3 py-2 rounded-full border border-gray-300 bg-white text-sm"
+          >
+            <option value="">All semesters</option>
+            <option value={1}>Semester 1</option>
+            <option value={2}>Semester 2</option>
+          </select>
         </div>
 
-        {/* Roadmap */}
-        <div className="mt-20 bg-white border border-gray-200 rounded-2xl p-8 max-w-3xl mx-auto">
-          <h3 className="text-2xl font-bold text-center text-gray-900 mb-2">What's coming</h3>
-          <p className="text-center text-gray-600 mb-8 text-sm">NotesCache is in active development. Here's what we're building next.</p>
-          <div className="space-y-4">
-            {[
-              { title: 'Voice replies', desc: 'Notesy reads answers aloud — perfect for studying on the go.' },
-              { title: 'Flashcards to Memory Lab', desc: 'Save Notesy flashcards into your own revision decks in one tap.' },
-              { title: 'Ask about this note', desc: 'Jump from any note straight into a Notesy conversation about it.' },
-              { title: 'Share chats', desc: 'Export and share conversations with classmates.' },
-              { title: 'Weekly study summaries', desc: 'See what you studied each week: topics, questions, downloads.' },
-              { title: 'Push notifications', desc: 'Get notified when new notes land in your year.' },
-            ].map((r) => (
-              <div key={r.title} className="flex items-start gap-3">
-                <span className="mt-1 w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
+        {/* ── Type filter chips ── */}
+        <div className="flex flex-wrap gap-1.5 mb-5">
+          <button
+            onClick={() => setTypeFilter(null)}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition ${typeFilter === null ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'}`}
+          >
+            All files
+          </button>
+          {Object.entries(TYPE_META).map(([key, meta]) => (
+            <button
+              key={key}
+              onClick={() => setTypeFilter(typeFilter === key ? null : key)}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition ${typeFilter === key ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'}`}
+              style={typeFilter === key ? { backgroundColor: meta.color } : undefined}
+            >
+              {meta.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Notes grid ── */}
+        {loading ? (
+          <div className="text-center py-20 text-gray-500">Loading notes…</div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="text-5xl mb-4">📭</div>
+            <p className="text-gray-600 font-medium">No notes found</p>
+            <p className="text-sm text-gray-500 mt-1">Try a different year, semester, or search term.</p>
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map((n) => {
+              const t = typeOf(n)
+              const meta = TYPE_META[t]
+              const view = viewUrl(n)
+              return (
+                <a
+                  key={n.id}
+                  href={view}
+                  className="bg-white rounded-2xl border border-gray-200 p-4 hover:shadow-md hover:border-indigo-300 transition flex flex-col gap-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="px-2 py-0.5 rounded-md text-[10px] font-bold text-white"
+                      style={{ backgroundColor: meta.color }}
+                    >
+                      {meta.label}
+                    </span>
+                    {n.semester ? (
+                      <span className="text-[11px] text-gray-500">Sem {n.semester}</span>
+                    ) : null}
+                  </div>
+                  <div className="font-semibold text-gray-900 text-sm leading-snug line-clamp-2">{n.title}</div>
+                  <div className="text-xs text-gray-500">
+                    {n.lecturer_name ? `By ${n.lecturer_name}` : `Year ${n.target_year ?? '—'}`}
+                  </div>
+                </a>
+              )
+            })}
+          </div>
+        )}
+
+        {/* ── Notesy chat (floating) ── */}
+        {showChat && (
+          <div className="fixed bottom-4 right-4 w-[92vw] max-w-sm h-[520px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col z-30 overflow-hidden">
+            <div className="px-4 py-3 bg-indigo-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🤖</span>
                 <div>
-                  <div className="font-semibold text-gray-900 text-sm">{r.title}</div>
-                  <div className="text-sm text-gray-500">{r.desc}</div>
+                  <div className="font-semibold text-sm">Notesy</div>
+                  <div className="text-[10px] text-indigo-200">Beta — answers can be imperfect</div>
                 </div>
               </div>
-            ))}
+              <button onClick={() => setShowChat(false)} className="text-white/80 hover:text-white">✕</button>
+            </div>
+            <div ref={chatRef} className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-50">
+              {chatMsgs.length === 0 && (
+                <div className="text-center text-gray-400 text-xs py-8">
+                  Ask about your notes, homework, or any study topic.
+                </div>
+              )}
+              {chatMsgs.map((m, i) => (
+                <div key={i} className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${m.role === 'user' ? 'ml-auto bg-indigo-600 text-white rounded-br-sm' : 'bg-white border border-gray-200 rounded-bl-sm'}`}>
+                  {m.content}
+                </div>
+              ))}
+              {chatLoading && <div className="text-xs text-gray-400 px-1">Notesy is thinking…</div>}
+            </div>
+            <div className="p-3 border-t bg-white">
+              {limitReached ? (
+                <div className="text-center text-xs text-gray-500 py-2">
+                  Demo limit reached. <a href="/downloads" className="text-indigo-600 font-medium">Get the app</a> for the full experience.
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') sendChat() }}
+                    placeholder="Ask Notesy…"
+                    className="flex-1 px-3 py-2 rounded-full border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
+                  <button
+                    onClick={sendChat}
+                    disabled={chatLoading}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-full text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition"
+                  >
+                    Send
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </main>
 
-      <footer className="border-t bg-white mt-16">
-        <div className="max-w-4xl mx-auto px-4 py-8 text-center text-gray-500 text-sm">
-          NotesCache — built for students, by students.
+      {/* ── Floating Notesy button ── */}
+      <button
+        onClick={() => setShowChat(!showChat)}
+        className="fixed bottom-4 right-4 w-14 h-14 rounded-full bg-indigo-600 text-white text-2xl shadow-lg hover:bg-indigo-700 transition z-30 flex items-center justify-center"
+        aria-label="Ask Notesy"
+      >
+        🤖
+      </button>
+
+      {/* iOS hint — Add to Home Screen */}
+      {!installEvt && (
+        <div className="fixed bottom-20 right-4 z-30 hidden sm:block">
+          <a
+            href="/downloads"
+            className="bg-white border border-gray-200 rounded-xl px-4 py-2 text-xs text-gray-600 shadow-md hover:shadow-lg transition inline-block"
+          >
+            iPhone? Add this site to your Home Screen to use it like an app ↗
+          </a>
         </div>
-      </footer>
+      )}
     </div>
   )
 }
