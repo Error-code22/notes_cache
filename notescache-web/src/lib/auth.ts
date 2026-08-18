@@ -83,9 +83,9 @@ export async function signUpWithEmail(email: string, password: string, fullName:
 export async function signInWithGoogle() {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    // Point at the project callback (always allow-listed) so the flow works
-    // on localhost AND the deployed site without auth-config changes.
-    options: { redirectTo: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/callback` },
+    // Localhost is allow-listed now — redirect back to wherever the user is
+    // (works for npm run dev AND the deployed site).
+    options: { redirectTo: window.location.origin },
   })
   if (error) throw new Error(error.message)
 }
