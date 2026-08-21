@@ -1,6 +1,13 @@
 # NotesCache Plan 🗺️
 
-Status as of **2026-08-13**. Anything in a checkbox list without ✅ is next up.
+Status as of **2026-08-18**. Anything in a checkbox list without ✅ is next up.
+
+## 🎯 Web — current focus (site is a simple landing + /view; not close to done)
+
+- [ ] **Decide the web's future**: simple download hub (current) vs. notes browsing (needs anon read policy + web login) vs. full app replica (was tried 2026-08-18, homepage glitched — code preserved in git `2de5382..4e8a3ae`, reverted in `f77c9ee`).
+- [ ] **Website UI polish** — hero, features, roadmap, downloads, footer with terms/privacy.
+- [ ] **Terms/privacy on web?** — migrate from in-app dialogs or keep in-app only.
+- [ ] **Web PPTX/XLSX rendering** — JS libs are paid/limited; app remains the full reader.
 
 ## 🎯 Next up — Notesy retention features
 
@@ -84,6 +91,7 @@ Status as of **2026-08-13**. Anything in a checkbox list without ✅ is next up.
 
 ## 🔮 Later / conditional
 
+- [ ] **Offline AI (maybe)** — on-device model (llama.cpp via `flutter_llama` / MediaPipe `ai_edge`; 1B–3B Q4 ≈ 300MB–1GB download). Researched 2026-08-18: feasible & production-ready, BUT poor fit now — users on limited bundles, big quality gap vs cloud 70B, offline RAG needs local embeddings. If ever: opt-in download pack, "offline mode = simpler answers" label, hybrid routing (cloud when online). Cheaper first step: offline conversation cache (read past Notesy chats offline).
 - [ ] **Desktop workspace dashboard** (designed, not yet built — mockup reviewed):
   - Shell: sidebar nav (Dashboard/Notes/Communication/Memory Lab), top bar with ⌘K-style search, split main view — standard desktop grammar, all Flutter-native (no new plugins)
   - Widgets and their honest data sources:

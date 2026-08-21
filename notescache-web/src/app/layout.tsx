@@ -36,8 +36,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           dangerouslySetInnerHTML={{
             __html: `
+              // Service worker: only in production. In dev (localhost) the
+              // cache-first SW serves stale HTML with dead chunk URLs, which
+              // loops the page. Also unregister any stale SW + clear its cache.
               if ('serviceWorker' in navigator) {
+                var isDev = ['localhost', '127.0.0.1'].indexOf(window.location.hostname) !== -1;
                 window.addEventListener('load', function () {
+                  if (isDev) {
+                    navigator.serviceWorker.getRegistrations().then(function (regs) {
+                      regs.forEach(function (r) { r.unregister(); });
+                    });
+                    if (window.caches) {
+                      window.caches.keys().then(function (keys) {
+                        keys.forEach(function (k) { window.caches.delete(k); });
+                      });
+                    }
+                    return;
+                  }
                   navigator.serviceWorker.register('/sw.js').catch(function (e) {
                     console.warn('SW registration failed', e);
                   });
