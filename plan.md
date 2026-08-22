@@ -17,6 +17,13 @@ Status as of **2026-08-18**. Anything in a checkbox list without ✅ is next up.
 4. [ ] **Share chat** — export a conversation as text/image to share with classmates.
 5. [ ] **Weekly study summary** — "This week: X topics, Y questions, Z downloads" (activity data exists).
 
+## 🎯 Notesy voice (researched 2026-08-18 — stays on Groq, no new keys)
+
+- [ ] **Voice dictation** — mic button in chat input → record → Groq `whisper-large-v3-turbo` transcribes (`/audio/transcriptions`) → text into the chat box or sent directly. `record` package for capture; keys stay in edge function secrets.
+- [ ] **Voice replies** — speaker button on each Notesy reply → Groq `canopylabs/orpheus-v1-english` TTS (`/audio/speech`) → audio bytes back → play via audioplayers (already in deps). Same audio pipeline, reverse direction.
+- [ ] **New `notesy` actions**: `transcribe` (audio → text) and `speak` (text → audio).
+- [ ] Privacy note: audio goes to Groq for transcription — same trust level as existing text; user's voice passes through briefly.
+
 ## 🎯 Full document reader (in-app, native parsers)
 
 - [ ] **ODT** — zip+xml `content.xml` → paragraphs (same pattern as DOCX).
