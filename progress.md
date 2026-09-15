@@ -1,5 +1,150 @@
 # Project Progress Log
 
+## Latest Milestone: Full Web App Port + Client-Side PPTX→PDF (MiMo, 2026-09-15)
+
+> Logged by **MiMo** (MiCode agent session). Existing history below left intact.
+
+### 1. notesy Edge Function 503 (boot crash)
+- **Root cause:** Duplicate `let supabaseClient: any = null` (line ~16 and again after the new provider helpers). Deno/TS SyntaxError at module load → Supabase 503 even when deploy shows ACTIVE.
+- **Fix:** Removed the second declaration. esbuild parse check passed.
+- **Not the cause:** `deno.land/std@0.168.0` serve import, `reasoning_effort: 'none'`, brace-count false positive from a regex literal.
+
+### 2. Full Flutter → web page clone (`notescache-web`)
+- Homepage rebuilt to match the Flutter dashboard: real name, role line + ADMIN pill, dark-mode toggle, avatar menu, demo banner (guests only), hub cards (Academic Notes / Donate / Communication if `show_comms_button` / Notesy Memory Lab NEW / What's Coming with live roadmap count).
+- Shared `AppShell` (history.back, account menu) + `lib/utils` + `lib/auth` (PKCE) + `lib/theme`.
+- Routes: `/` `/notes` `/note?id=` `/view` `/chat` `/communication` `/donate` `/login` (forgot password + policy) `/profile` `/settings` `/feedback` `/updates` `/pricing` `/admin` `/whats-coming` `/downloads`.
+- Notesy web: conversations drawer, pin/rename/delete/vault, private study, up to 3 images, guest 3 / user 20 daily limits, localStorage guest history.
+- Communication: friend code, add friend, create/join groups, realtime messages.
+- Donate → shared `notes` library (RLS `user_id = auth.uid()`); year defaults to profile year.
+- Notes list: own uploads OR profile year (matches app isolation + “always see mine”).
+- Admin: 12-card grid; user roles, feedback, AI config + test model + cleanup summaries, comms/chat toggles, announcements, plans/roadmap/docs editors.
+- Build: 17 static routes, Next 16 + Tailwind 4, `output: 'export'`.
+- **Not on web:** local device docs scan, native PDF annotate, biometrics vault, heavy admin restore/reindex.
+
+### 3. Web document viewer (`/view`)
+- **PDF:** fetch as blob, force `application/pdf`, iframe; `#pagemode=none&navpanes=0&view=FitH` (no thumbnail rail).
+- **DOCX:** docx-preview with real page size CSS (816px, paper shadow).
+- **XLSX/CSV:** SheetJS in-browser table (multi-sheet tabs).
+- **Text/JSON/code:** fetch + pre.
+- **Images:** load + `fl_inline` retry.
+- **Back:** history.back (was always `/` → homepage).
+- **Microsoft/Google Office embeds removed** as primary (Cloudinary raw URLs → “File not found”).
+- **HTTP 400 regression:** injecting `fl_inline` on all fetches broke some raw files — original URL tried first.
+
+### 4. PPTX → PDF without Gotenberg (client-side dual storage)
+- User rejected Gotenberg / extra services.
+- New `notescache-web/src/lib/pptx-to-pdf.ts`: JSZip parse + jsPDF landscape pages (text + embedded images).
+- **Upload flow:** original PPTX → Cloudinary → `notes.gdrive_id`; browser-built PDF → Cloudinary → `notes.pdf_url`.
+- **Open flow:** web/in-app use `pdf_url`; external/device uses original PPTX. Old notes without `pdf_url` convert on open and best-effort save.
+- **Parser bug:** `/<a:t[^>]*>/` also matched `<a:tbl>` and dumped raw XML into the PDF. Fixed to `/<a:t(?:\s[^>]*)?>/` + reject markup-looking captures.
+- **UX:** `ConvertOverlay` with per-slide progress (“Slide X of Y” + percent). Same overlay on Donate.
+- Optional future quality path (not implemented): Flutter **desktop** Office COM / `soffice` batch on the laptop to overwrite `pdf_url` with native-quality PDFs.
+
+### 5. Files Touched (this session)
+| Area | Files |
+|------|--------|
+| Edge | `supabase/functions/notesy/index.ts` (dup `supabaseClient` removed; batch category case fix) |
+| Web shell | `src/lib/auth.ts`, `theme.tsx`, `utils.ts`, `pptx-to-pdf.ts`, `components/AppShell.tsx`, `ConvertOverlay.tsx`, `icons.tsx` |
+| Web pages | `page.tsx`, `notes/`, `note/`, `view/`, `chat/`, `communication/`, `donate/`, `login/`, `profile/`, `settings/`, `feedback/`, `updates/`, `pricing/`, `admin/`, `whats-coming/`, `downloads/` |
+| CSS | `globals.css` (docx page styles) |
+| Deps | `jszip`, `jspdf` |
+
+### 6. Status / Open
+- Web app builds clean (17 routes). **Not deployed** — live Netlify still the old landing page.
+- Client PDF is simplified (not PowerPoint-pixel-perfect). Desktop Office batch still the quality upgrade path.
+- Legacy `.ppt` (binary) still weak on web.
+- Convert-overlay + FitH PDF params need a hard-refresh to pick up.
+
+### 7. Deploy
+```powershell
+cd notescache-web
+npx netlify deploy --prod --build
+```
+
+---
+
+## Previous Latest Milestone: Multi-Provider AI, PDF Conversion Pipeline, DOCX Fix (2026-09-15)
+
+### 1. AI Multi-Provider Architecture (Groq + Gemini)
+- **Why:** Groq-only meant any outage or rate limit killed all AI features. Gemini free-tier adds redundancy.
+- **What changed:**
+  - Edge function (`notesy/index.ts`) now has `groqChat()`, `geminiChat()`, `callProvider()`, `callSingleProvider()`, `groqCallWithRetry()` — unified abstraction that tries primary provider, falls back to secondary.
+  - `geminiChat()` converts OpenAI-format messages/tools/images to Gemini's native format (contents + systemInstruction + functionDeclarations).
+  - `list_models` action hits live provider APIs to return available models per provider.
+  - `test_model` action accepts `provider` param, routes to correct provider.
+  - `summarize` action reads multi-provider config, uses `stripThinking()`, `reasoning_effort: 'none'`.
+  - Main chat flow migrated from `for (const keyInfo of GROQ_KEYS)` + `groqCall()` → `callProvider()` with primary+fallback provider/model pairs.
+  - Post-tool-call follow-up also migrated to `callProvider()`.
+- **Admin dashboard (`admin_dashboard_page.dart`):**
+  - Provider+model dropdowns (Groq/Gemini) with live-populated model lists via `list_models`.
+  - Fallback provider+model dropdowns for text and vision.
+  - "Last verified" timestamps, `_ModelTester` with provider+model selection.
+  - Model selection now shows a green SnackBar toast ("Text model set to X").
+- **Secrets:** Gemini key stored as `Gemini_Key_1` in Supabase Edge Function secrets (matching env var name in edge function).
+- **Known issue:** Overflow on model dropdowns — `isExpanded: true` added but may need further layout work on narrow screens.
+
+### 2. PPTX/Publisher → PDF Conversion Pipeline
+- **Why:** PPTX and Publisher files had no working in-app editor. PDF is universally readable. DOCX deliberately excluded (has native editor with save-back).
+- **What changed:**
+  - **Schema:** New `pdf_url` column on `notes` table (migration `20260915120000_add_pdf_url_to_notes.sql`). Original file in `gdrive_id` is never replaced.
+  - **Edge function:** New `convert-to-pdf` function — downloads source from Cloudinary, sends to Gotenberg (LibreOffice-based), uploads resulting PDF back to Cloudinary, optionally updates `pdf_url` in DB.
+  - **Upload flow (`upload_note_page.dart`):** After upload succeeds, background call to `convert-to-pdf` for PPTX/Publisher files. Non-blocking — original upload always succeeds.
+  - **Note model (`models.dart`):** Added `pdfUrl` field. `saveNote()` accepts `pdfUrl`.
+  - **Viewing routing (`note_detail_page.dart`):**
+    - Device Default Viewer: always original. If no app found + `pdf_url` exists → offers PDF fallback dialog.
+    - In-App Reader: PPTX/Publisher with `pdf_url` → downloads PDF, opens in pdfrx. Falls back to native PptxViewerPage.
+    - View on Website: sends `pdf_url` + `ext=.pdf` to web viewer.
+  - **Web viewer (`notescache-web`):** `viewUrl()` uses `pdf_url` for PPTX/Publisher. Type detection includes `.pub` extension and `publisher` category.
+  - **Admin batch action:** "Convert All to PDF" button in admin dashboard → `batch_convert_to_pdf` action in notesy edge function. Finds all `category IN ('Slides', 'Publisher')` without `pdf_url`, converts one by one.
+- **Publisher support added (was missing):** `.pub` extension in allowed upload list, `Publisher` category assignment, type detection in notes page and web viewer.
+
+### 3. DOCX Bold/Italic Rendering Fix
+- **Why:** The DOCX viewer showed raw `**bold**` and `_italic_` markers as literal text instead of styled text.
+- **Root cause:** `DocxService.paragraphsToText()` flattened structured paragraph data (with `'b'`/`'i'` flags) into markdown-ish text, which was dumped into a plain `TextField`.
+- **Fix (`docx_editor_page.dart`):** In read-only mode (`onSave == null`), uses `_buildRichText()` — a `RichText` widget with `TextSpan` children styled with `FontWeight.bold` / `FontStyle.italic` based on the flags. Editor mode still uses `TextField` for editing.
+- **DOCX deliberately NOT converted to PDF** — it has a working native editor with save-back capability. Only PPTX/Publisher get the PDF treatment.
+
+### 4. Bug Fixes
+- **PDF download-instead-of-render on `/view`:** Cloudinary raw URLs default to `Content-Disposition: attachment`. Fixed with `inlineUrl()` function injecting `fl_inline` into Cloudinary raw URLs. PDF iframe wraps URL through `inlineUrl()`.
+- **AI summary showing raw ``:** Added `stripThinking()` function removing `<think>...</think>` and `<reasoning>...</reasoning>` blocks. Applied to summarize output and chat `sanitizeContent()`. Added `cleanup_summaries` admin action for one-time DB cleanup.
+- **Error leaking to users:** Edge function catch block was returning `error.message` directly (including provider names, API details). Now returns generic messages ("AI is temporarily unavailable"). Real error logged server-side.
+- **Gemini image format:** `geminiChat()` now handles `image_url`, raw base64, and `image` type with `source.data`. Also handles messages with `image` property at top level.
+- **Gemini API key not configured:** Edge function was reading `GEMINI_API_KEY` but secret was named `Gemini_Key_1`. Fixed env var name.
+- **AI Control Room overflow:** Added `isDense: true`, reduced `contentPadding`, added `isExpanded: true` to model dropdowns. (May still need work on very narrow screens.)
+- **Gemini fallback model list empty:** `_refreshFallbackTextModels()` read provider from stale state before `setState` updated it. Fixed by adding `{String? provider}` parameter — caller passes value directly. Added `onRefreshModels` callback to `_fallbackRow` widget.
+- **Edge function 503 crash (earlier):** Duplicate `let supabaseClient: any = null` declaration found and removed.
+
+### 5. Files Changed
+| File | Changes |
+|------|---------|
+| `lib/models.dart` | Added `pdfUrl` field to `Note` class |
+| `lib/services.dart` | `saveNote()` accepts `pdfUrl` |
+| `lib/r2_service.dart` | Added `convertToPdf()` method to `CloudinaryService` |
+| `lib/upload_note_page.dart` | Publisher category, `.pub` in allowed extensions, background PDF conversion trigger |
+| `lib/note_detail_page.dart` | PDF routing for In-App/Website, no-app fallback dialog, Publisher in ext regex/category |
+| `lib/editors/docx_editor_page.dart` | RichText with styled TextSpans for read-only mode |
+| `lib/admin_dashboard_page.dart` | Multi-provider UI, batch convert button, model selection toasts, overflow fixes |
+| `lib/notes_page.dart` | Publisher type detection and icon mapping |
+| `notescache-web/src/app/view/page.tsx` | `inlineUrl()` for Cloudinary inline delivery |
+| `notescache-web/src/app/notes/page.tsx` | `pdf_url` in Note type, Publisher in type detection, `viewUrl()` uses pdf_url |
+| `supabase/functions/notesy/index.ts` | Multi-provider architecture, `batch_convert_to_pdf` action, error sanitization, Gemini image handling, thinking block stripper |
+| `supabase/functions/convert-to-pdf/index.ts` | New edge function for Gotenberg-based PDF conversion |
+| `supabase/migrations/20260915120000_add_pdf_url_to_notes.sql` | New migration adding `pdf_url` column |
+
+### 6. Deployment Status
+- Edge functions (`notesy`, `convert-to-pdf`): ✅ Deployed
+- Database migration (`pdf_url` column): ✅ Applied
+- Flutter APK: ⏸️ Not built yet (user asked to stop)
+- Gotenberg server: ⏸️ Not deployed yet (needed for PDF conversion to actually work)
+
+### 7. Still Open / Not Done
+- **Gotenberg server not deployed.** The `convert-to-pdf` edge function is wired up but needs a running Gotenberg instance (`GOTENBERG_URL` env var). Until then, conversion calls silently fail and `pdf_url` stays null.
+- **APK not built.** Run `flutter build apk --debug` when ready.
+- **Overflow on narrow screens.** Model dropdowns may still overflow on very small devices. `isExpanded: true` helps but may need `LayoutBuilder` + dynamic flex.
+- **Multi-year architecture recommendations** from plan.md still noted but not acted on: flat metadata/tags, content-addressable dedup, offline-first defaults, versioning, cold storage tiering, long-retention account model.
+
+---
+
 ## Latest Milestone: Web Viewer + PWA, Notesy Overhaul, Docs Expansion (2026-08-13)
 
 ### Web viewer + PWA (for iOS/Mac/PC users)

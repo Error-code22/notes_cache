@@ -785,7 +785,7 @@ class NoteService {
     }
   }
 
-  Future<bool> saveNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, String? summary, int? fileSize, String? userId, int? telegramMsgId, String? telegramFileId}) async {
+  Future<bool> saveNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, String? summary, int? fileSize, String? userId, int? telegramMsgId, String? telegramFileId, String? pdfUrl}) async {
     try {
       await _supabase.from('notes').insert({
         'title': title,
@@ -801,6 +801,7 @@ class NoteService {
         if (telegramMsgId != null) 'telegram_msg_id': telegramMsgId,
         if (telegramFileId != null) 'telegram_file_id': telegramFileId,
         if (userId != null) 'user_id': userId,
+        if (pdfUrl != null) 'pdf_url': pdfUrl,
       });
       return true;
     } catch (e) { debugPrint('saveNote error: $e'); return false; }
@@ -824,6 +825,17 @@ class NoteService {
       return true;
     } catch (e) {
       debugPrint('updateNoteSummary error: $e');
+      return false;
+    }
+  }
+
+  /// Updates a note's pdf_url after client-side conversion.
+  Future<bool> updateNotePdfUrl(String noteId, String pdfUrl) async {
+    try {
+      await _supabase.from('notes').update({'pdf_url': pdfUrl}).eq('id', noteId);
+      return true;
+    } catch (e) {
+      debugPrint('updateNotePdfUrl error: $e');
       return false;
     }
   }

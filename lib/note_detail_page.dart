@@ -9,6 +9,7 @@ import 'models.dart';
 import 'services.dart';
 import 'r2_service.dart';
 import 'file_viewer_page.dart';
+import 'editors/pptx_to_pdf.dart';
 
 class NoteDetailPage extends StatefulWidget {
   final Note note;
@@ -46,11 +47,20 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
   }
 
   /// Determines the real file extension from the note title first
-  /// (Cloudinary URLs usually have no extension), falling back to the URL.
+  /// (Cloudinary URLs usually have no extension), then category, then URL.
   String _resolveFileExt() {
     final lowerTitle = widget.note.title.toLowerCase();
-    final titleMatch = RegExp(r'\.(pdf|docx|doc|pptx|ppt|txt|md|csv|xlsx|xls|jpg|jpeg|png|mp4|mp3|wav|mov|mkv|m4a)$').firstMatch(lowerTitle);
+    final titleMatch = RegExp(r'\.(pdf|docx|doc|pptx|ppt|pub|txt|md|csv|xlsx|xls|jpg|jpeg|png|mp4|mp3|wav|mov|mkv|m4a)$').firstMatch(lowerTitle);
     if (titleMatch != null) return '.${titleMatch.group(1)}';
+    // Fallback: use the stored category field (set during upload from the real extension)
+    final cat = (widget.note.category ?? '').toLowerCase();
+    if (cat == 'pdf') return '.pdf';
+    if (cat == 'slides') return '.pptx';
+    if (cat == 'publisher') return '.pub';
+    if (cat == 'document') return '.docx';
+    if (cat == 'image') return '.jpg';
+    if (cat == 'video') return '.mp4';
+    if (cat == 'audio') return '.mp3';
     final url = _resolveFileUrl();
     if (url.isNotEmpty) {
       final pathParts = Uri.parse(url).path.split('.');
@@ -192,42 +202,44 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) => Container(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
-            const SizedBox(height: 20),
-            Text('How would you like to read?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
-            const SizedBox(height: 8),
-            const Text('Choose your preferred reading experience', style: TextStyle(fontSize: 13, color: Colors.grey)),
-            const SizedBox(height: 24),
-            
-            _buildReaderOption(
-              Icons.system_update_alt_rounded,
-              'Device Default Viewer',
-              'Open using your phone\'s built-in apps',
-              Colors.blue,
-              () => _openWithMode(isExternal: true),
-            ),
-            const SizedBox(height: 12),
-            _buildReaderOption(
-              Icons.auto_stories_rounded,
-              'In-App Reader',
-              'Fast, clean, and distraction-free (Recommended)',
-              Colors.orange,
-              () => _openWithMode(isExternal: false),
-              isComingSoon: false,
-            ),
-            const SizedBox(height: 12),
-            _buildReaderOption(
-              Icons.language_rounded,
-              'View on Website',
-              'Open in the browser — works on any device (iPhone, Mac, PC)',
-              Colors.indigo,
-              () => _openOnWebsite(),
-            ),
-            const SizedBox(height: 24),
-          ],
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 20),
+              Text('How would you like to read?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
+              const SizedBox(height: 8),
+              const Text('Choose your preferred reading experience', style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const SizedBox(height: 24),
+              
+              _buildReaderOption(
+                Icons.system_update_alt_rounded,
+                'Device Default Viewer',
+                'Open using your phone\'s built-in apps',
+                Colors.blue,
+                () => _openWithMode(isExternal: true),
+              ),
+              const SizedBox(height: 12),
+              _buildReaderOption(
+                Icons.auto_stories_rounded,
+                'In-App Reader',
+                'Fast, clean, and distraction-free (Recommended)',
+                Colors.orange,
+                () => _openWithMode(isExternal: false),
+                isComingSoon: false,
+              ),
+              const SizedBox(height: 12),
+              _buildReaderOption(
+                Icons.language_rounded,
+                'View on Website',
+                'Open in the browser — works on any device (iPhone, Mac, PC)',
+                Colors.indigo,
+                () => _openOnWebsite(),
+              ),
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );
@@ -241,10 +253,12 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       );
       return;
     }
-    // Cloudinary URLs carry no extension — pass the real one from the title
-    // so the web viewer knows what to render.
+    // For PPTX/Publisher: prefer pdf_url for web viewing (better compatibility)
     final ext = _resolveFileExt();
-    final webUrl = 'https://notescache.netlify.app/view?url=${Uri.encodeComponent(url)}&ext=${Uri.encodeComponent(ext)}';
+    final isConvertibleFormat = ['pptx', 'ppt', 'pub'].contains(ext.replaceFirst('.', ''));
+    final webUrl = (isConvertibleFormat && widget.note.pdfUrl != null && widget.note.pdfUrl!.isNotEmpty)
+        ? 'https://notescache.netlify.app/view?url=${Uri.encodeComponent(widget.note.pdfUrl!)}&ext=${Uri.encodeComponent('.pdf')}'
+        : 'https://notescache.netlify.app/view?url=${Uri.encodeComponent(url)}&ext=${Uri.encodeComponent(ext)}';
     final uri = Uri.parse(webUrl);
     try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -329,7 +343,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       // Fallback: extract from title
       if (ext.isEmpty) {
         final lowerTitle = widget.note.title.toLowerCase();
-        final hasExtension = lowerTitle.contains(RegExp(r'\.(pdf|docx|doc|pptx|ppt|txt|md|jpg|png|jpeg|mp4|mp3|wav|mov|mkv|py|java|cpp|dart|csv|xlsx|xls|json|html)$'));
+        final hasExtension = lowerTitle.contains(RegExp(r'\.(pdf|docx|doc|pptx|ppt|pub|txt|md|jpg|png|jpeg|mp4|mp3|wav|mov|mkv|py|java|cpp|dart|csv|xlsx|xls|json|html)$'));
         if (hasExtension) {
           final match = RegExp(r'\.([a-zA-Z0-9]+)$').firstMatch(lowerTitle);
           if (match != null) ext = '.${match.group(1)}';
@@ -337,22 +351,79 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
           ext = (widget.note.category ?? '').toLowerCase().contains('pdf') ? '.pdf' : '.txt';
         }
       }
+
+      // For In-App Reader: prefer pdf_url for PPTX/Publisher files
+      final isConvertibleFormat = ['pptx', 'ppt', 'pub'].contains(ext.replaceFirst('.', ''));
+      final hasPdf = widget.note.pdfUrl != null && widget.note.pdfUrl!.isNotEmpty;
+      final usePdf = !isExternal && isConvertibleFormat && hasPdf;
+
+      // Determine which file to download
+      final String downloadUrl;
+      final String downloadExt;
+      if (usePdf) {
+        downloadUrl = widget.note.pdfUrl!;
+        downloadExt = '.pdf';
+      } else if (!isExternal && isConvertibleFormat && !hasPdf) {
+        // No PDF yet — convert on device for in-app reader
+        final originalUrl = _resolveFileUrl();
+        if (originalUrl.isNotEmpty) {
+          setState(() => _isLoading = true);
+          final response = await http.get(Uri.parse(originalUrl)).timeout(const Duration(seconds: 60));
+          if (response.statusCode == 200) {
+            // Write PPTX to temp file
+            final tempDir = Directory.systemTemp;
+            final tempPptx = File('${tempDir.path}${Platform.pathSeparator}temp_${widget.note.id}.pptx');
+            await tempPptx.writeAsBytes(response.bodyBytes);
+            try {
+              final pdfBytes = await PptxToPdf.convert(tempPptx, title: widget.note.title);
+              final tempPdf = File('${tempDir.path}${Platform.pathSeparator}temp_${widget.note.id}.pdf');
+              await tempPdf.writeAsBytes(pdfBytes);
+              // Upload PDF to Cloudinary and persist pdf_url
+              try {
+                final noteService = context.read<NoteService>();
+                final auth = context.read<AuthService>();
+                final pdfUrl = await CloudinaryService().uploadFile(
+                  file: tempPdf,
+                  userId: auth.currentUser?.id ?? 'guest',
+                  folder: 'notes',
+                );
+                if (pdfUrl != null) {
+                  await noteService.updateNotePdfUrl(widget.note.id, pdfUrl);
+                }
+              } catch (_) {}
+              // Open the local PDF
+              Navigator.push(context, MaterialPageRoute(
+                builder: (context) => FileViewerPage(file: tempPdf, title: widget.note.title, onSave: _uploadEditedFile),
+              ));
+              return;
+            } catch (e) {
+              debugPrint('On-the-fly PDF conversion failed: $e');
+              // Fall through to open original PPTX
+            }
+          }
+        }
+        // Fallback: open original
+        downloadUrl = originalUrl;
+        downloadExt = ext;
+      } else {
+        downloadUrl = _resolveFileUrl();
+        downloadExt = ext;
+      }
       
-      final fileName = '${widget.note.title.replaceAll(' ', '_')}$ext';
+      final fileName = '${widget.note.title.replaceAll(' ', '_')}$downloadExt';
       final filePath = '$appDirPath\\$fileName';
       final file = File(filePath);
 
       if (!await file.exists()) {
-        final url = _resolveFileUrl();
-        if (url.isNotEmpty) {
+        if (downloadUrl.isNotEmpty) {
           // Download from Cloudinary / Google Drive
-          final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
-          debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
+          final response = await http.get(Uri.parse(downloadUrl)).timeout(const Duration(seconds: 60));
+          debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $downloadUrl');
           if (response.statusCode != 200) {
             if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
               throw Exception('This file is no longer available on the server (HTTP ${response.statusCode}). It may have been removed by the uploader.');
             }
-            throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $url');
+            throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $downloadUrl');
           }
           await file.writeAsBytes(response.bodyBytes);
         } else {
@@ -364,7 +435,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       unawaited(context.read<NoteService>().logDownload(widget.note.id, await file.length()));
 
       // Auto-index for AI search the first time this note is opened
-      if (['.pdf', '.txt', '.md'].contains(ext.toLowerCase())) {
+      if (['.pdf', '.txt', '.md'].contains(downloadExt.toLowerCase())) {
         unawaited(context.read<NoteService>().ensureIndexedForAi(file, widget.note.title));
       }
 
@@ -378,14 +449,35 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
             // file:// URI to an intent crashes Android 7+ (FileUriExposedException)
             final result = await OpenFilex.open(file.path);
             if (mounted && result.type != ResultType.done) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(result.type == ResultType.noAppToOpen
-                      ? 'No app installed on this device can open ${ext.toUpperCase()} files.'
-                      : 'Could not open externally: ${result.message}'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
+              // No app found — offer PDF fallback if available
+              if (result.type == ResultType.noAppToOpen && widget.note.pdfUrl != null && widget.note.pdfUrl!.isNotEmpty) {
+                final fallback = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('No app found'),
+                    content: Text('No app can open ${ext.toUpperCase()} files. A PDF version is available.'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')),
+                      ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('OPEN PDF VERSION')),
+                    ],
+                  ),
+                );
+                if (fallback == true && mounted) {
+                  // Re-invoke with isExternal: false to open the PDF via In-App Reader
+                  setState(() => _isLoading = false);
+                  _openWithMode(isExternal: false);
+                  return;
+                }
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(result.type == ResultType.noAppToOpen
+                        ? 'No app installed on this device can open ${ext.toUpperCase()} files.'
+                        : 'Could not open externally: ${result.message}'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+              }
             }
           } else {
             final uri = Uri.file(file.path);

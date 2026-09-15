@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -626,7 +627,13 @@ class _DashboardPageState extends State<DashboardPage> {
       builder: (ctx) => AlertDialog(
         title: const Text("What's New"),
         content: SingleChildScrollView(
-          child: Text(notes, style: const TextStyle(fontSize: 13, height: 1.4)),
+          child: MarkdownBody(
+            data: notes,
+            styleSheet: MarkdownStyleSheet(
+              p: const TextStyle(fontSize: 13, height: 1.4),
+              listBullet: const TextStyle(fontSize: 13),
+            ),
+          ),
         ),
         actions: [
           TextButton(

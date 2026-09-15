@@ -122,6 +122,37 @@ class CloudinaryService {
     }
   }
 
+  /// Converts a document (PPTX, Publisher) to PDF via server-side LibreOffice.
+  /// Returns the PDF URL on success, null on failure (graceful — never blocks upload).
+  Future<String?> convertToPdf({
+    required String sourceUrl,
+    String? noteId,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_functionUrl/convert-to-pdf'),
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': dotenv.env['SUPABASE_ANON_KEY'] ?? '',
+          'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? dotenv.env['SUPABASE_ANON_KEY'] ?? ''}',
+        },
+        body: jsonEncode({'sourceUrl': sourceUrl, 'noteId': noteId}),
+      ).timeout(const Duration(seconds: 120));
+
+      if (response.statusCode == 200) {
+        final data = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+        if (data['success'] == true) {
+          return data['pdfUrl'] as String?;
+        }
+      }
+      debugPrint('CloudinaryService: convertToPdf failed: HTTP ${response.statusCode}');
+      return null;
+    } catch (e) {
+      debugPrint('CloudinaryService: convertToPdf error: $e');
+      return null;
+    }
+  }
+
   /// Extract the public_id from a Cloudinary URL
   static String? extractPublicIdFromUrl(String url) {
     try {

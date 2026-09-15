@@ -89,6 +89,7 @@ class Note {
   final String? gDriveId;
   final String? category;
   final String? summary;
+  final String? pdfUrl;
   final bool isFromCache;
 
   Note({
@@ -102,6 +103,7 @@ class Note {
     this.gDriveId,
     this.category,
     this.summary,
+    this.pdfUrl,
     this.isFromCache = false,
   });
 
@@ -117,6 +119,7 @@ class Note {
       gDriveId: map['gdrive_id'],
       category: map['category'],
       summary: map['summary'],
+      pdfUrl: map['pdf_url'],
       isFromCache: isFromCache,
     );
   }

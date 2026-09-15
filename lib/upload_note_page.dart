@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'r2_service.dart';
 import 'services.dart';
 import 'models.dart';
+import 'editors/pptx_to_pdf.dart';
 
 class UploadNotePage extends StatefulWidget {
   const UploadNotePage({super.key});
@@ -56,7 +57,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
     try {
       FilePickerResult? result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png', 'txt', 'md', 'csv', 'xls', 'xlsx', 'mp4', 'mp3', 'wav', 'mov', 'mkv', 'm4a', 'py', 'java', 'cpp', 'dart', 'html', 'json'],
+        allowedExtensions: ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'pub', 'jpg', 'jpeg', 'png', 'txt', 'md', 'csv', 'xls', 'xlsx', 'mp4', 'mp3', 'wav', 'mov', 'mkv', 'm4a', 'py', 'java', 'cpp', 'dart', 'html', 'json'],
         allowMultiple: true,
       );
 
@@ -144,6 +145,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
         String category = 'Note';
         if (ext == 'pdf') category = 'PDF';
         else if (ext == 'pptx' || ext == 'ppt') category = 'Slides';
+        else if (ext == 'pub') category = 'Publisher';
         else if (ext == 'docx' || ext == 'doc') category = 'Document';
         else if (['jpg', 'jpeg', 'png'].contains(ext)) category = 'Image';
         else if (ext == 'txt' || ext == 'md') category = 'Text';
@@ -257,6 +259,34 @@ class _UploadNotePageState extends State<UploadNotePage> {
                 await noteService.updateNoteSummary(noteId, summary);
                 return summary;
               });
+            }
+          }
+
+          // Background PDF conversion for presentations (client-side, no server needed)
+          if (['pptx', 'ppt'].contains(ext) && uploadResult.url != null) {
+            final noteId = await noteService.getNoteIdByTitle(finalTitle);
+            if (noteId != null) {
+              try {
+                final pdfBytes = await PptxToPdf.convert(file, title: finalTitle);
+                // Write PDF to temp file for upload
+                final tempDir = Directory.systemTemp;
+                final pdfFile = File('${tempDir.path}${Platform.pathSeparator}${noteId}_converted.pdf');
+                await pdfFile.writeAsBytes(pdfBytes);
+                // Upload PDF to Cloudinary
+                final pdfUrl = await CloudinaryService().uploadFile(
+                  file: pdfFile,
+                  userId: authService.currentUser?.id ?? 'guest',
+                  folder: 'notes',
+                );
+                if (pdfUrl != null) {
+                  await noteService.updateNotePdfUrl(noteId, pdfUrl);
+                  debugPrint('PDF conversion succeeded: $pdfUrl');
+                }
+                // Cleanup temp file
+                await pdfFile.delete();
+              } catch (e) {
+                debugPrint('PDF conversion failed (non-blocking): $e');
+              }
             }
           }
         }

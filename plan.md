@@ -125,3 +125,34 @@ Status as of **2026-08-18**. Anything in a checkbox list without ✅ is next up.
 ## Done-but-caveated (watch items)
 - flutter_pdf_annotations is a brand-new (April 2026) MIT plugin — test on real devices before trusting important docs.
 - Cloudinary Media Delivery ACL was blocking all PDFs (`deny or ACL failure`); fixed via console checkbox ("PDFs and zip files delivery") + raw-type uploads as insurance.
+
+## Architecture Review — 2026-09-11
+
+Assessment against multi-year notes app architectural recommendations.
+
+### 1. Flat metadata + tags, not folder hierarchy
+**✅ Covered.** Notes are flat DB records (`notes` table) with `target_year`, `semester`, `lecturer_name`, `category`, and `content` columns. No nested folder structure. Cross-cutting queries work — RLS filters by year level but `ilike` search spans all notes the user can see. No `tags` or `topic`/`unit_code` columns exist yet, but the schema is flat and additive — adding a `tags TEXT[]` column or `unit_code TEXT` column is trivial without restructuring. The `donated_notes` table mirrors the same flat pattern.
+
+### 2. Metadata/file separation
+**✅ Covered.** Files live in Cloudinary (object storage) — the `notes` table stores only `gdrive_id` (Cloudinary public ID or Google Drive ID) and `file_size`. No raw file bytes in the DB. Telegram backup is a secondary blob store, also reference-only (`telegram_msg_id`, `telegram_file_id`). The DB never stores file content — `content` is the extracted text body, not the binary.
+
+### 3. Full-text search on note content
+**⚠️ Partially covered.** Title search exists (`ilike('title', ...)`) but content search does not — `content` column (extracted text) has no GIN/FTS index. The `chunks` table has FTS for AI RAG, but that's separate from user-facing search. The `donated_notes` table has a GIN index on `title` but not `content`. Gap: user-facing search is title-only; adding `to_tsvector` on `notes.content` would enable full-text search without changing the UI.
+
+### 4. Content-addressable storage / dedup
+**⚠️ Partially covered.** `findDuplicateNote` checks file size + fuzzy title match before upload and prompts the user. This is metadata-level dedup, not content-addressable — if two users upload the same file with different titles, it creates two Cloudinary blobs. True hash-based dedup (SHA-256 on upload, reuse existing blob) doesn't exist. Cloudinary 25-credit pool is the cost pressure; hash dedup would reduce storage but is not urgent at current scale.
+
+### 5. Offline-first as default
+**⚠️ Partially covered.** Notes list is cached to SharedPreferences (metadata only). "Download All for Offline" is an explicit opt-in bulk download. The app doesn't block on network for reads (cached metadata + local file fallback), but writes (uploads) always require network. New notes are not written locally first with background sync — the upload flow goes straight to Cloudinary + Supabase. The offline model is "read cached, download on demand" not true local-first with sync.
+
+### 6. Versioning instead of overwrite on reupload
+**❌ Not covered.** When a note is re-uploaded (e.g., editor save-back), `updateNoteFileUrl` overwrites the existing Cloudinary blob and updates the DB record in place. No prior versions are retained. The `chunks` table replaces old chunks on re-index. No version history exists anywhere — a student who overwrites a note loses the old version permanently.
+
+### 7. Cold storage tiering for old years
+**⚠️ Partially covered (schema-compatible).** The `target_year` column on `notes` already partitions data by year. When a student graduates, their year's notes could be flagged or moved to cheaper storage (R2 cold tier, or a `archived BOOLEAN` column). The flat schema supports this without rewrite. No implementation exists yet — noted as future consideration, appropriate for current scale.
+
+### 8. Operational hardening
+**⚠️ Partially covered.** (a) Secrets in `.env` were cleaned up — only public values (Supabase URL/anon key, Google client IDs) ship in the APK. Groq/Cloudinary/Telegram keys are in edge function secrets only. **However**, `GOOGLE_DRIVE_CLIENT_ID` and `GOOGLE_DRIVE_CLIENT_SECRET` are still in `.env` — the client secret is not truly secret for OAuth web flows, but worth noting. (b) No pre-commit or CI secret scanner exists — the leak was caught by external scanners after going public. (c) Search debounce exists in `notes_page.dart` and `donate_notes_page.dart` (350ms `Timer`). Config caching was flagged in the speed audit but `getAppConfig()` still hits Supabase on every call with no in-memory cache — 8+ call sites, no memoization.
+
+### 9. Long-retention account model
+**⚠️ Partially covered.** Data export (JSON share) and full account delete (avatar, notes, chats, AI usage, feedback, profile) both work. Supabase auth handles password recovery via email. **Gaps for 4-year retention**: (a) Google OAuth refresh tokens are stored locally and expire — no server-side refresh mechanism; if a user changes Google accounts or clears app data, they could lose access. (b) Email changes are not supported — if a student's university email deactivates after graduation, account recovery depends on that email. (c) No account migration path if Supabase changes its auth provider. These are low-risk for a 4-year span but worth noting for true long-retention.

@@ -1,1 +1,47 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+/* docx-preview: paper-like pages that fill a readable column */
+.docx-viewport .docx-wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.docx-viewport section.docx {
+  width: min(816px, 100%) !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12) !important;
+  background: #fff !important;
+  color: #111 !important;
+  overflow-x: auto;
+}
+
+.docx-viewport .docx-wrapper > section.docx {
+  padding: 48px 56px !important;
+}
+
+@media (max-width: 640px) {
+  .docx-viewport .docx-wrapper > section.docx {
+    padding: 24px 20px !important;
+  }
+}
+
+.docx-host {
+  width: 100%;
+  max-width: 816px;
+}

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const GROQ_KEYS = [
@@ -7,11 +8,255 @@ const GROQ_KEYS = [
   { name: 'INVENTER', key: Deno.env.get("GROQ_KEY_INVENTER") },
 ].filter(k => k.key);
 
+const GEMINI_KEY = Deno.env.get("Gemini_Key_1")
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
 const SUPABASE_ANON_KEY = Deno.env.get("NOTESCACHE_ANON_KEY")
 
 let supabaseClient: any = null
+
+// ── Strip model thinking/reasoning blocks from response text ──
+// Models like openai/gpt-oss-120b may emit <think>...</think> blocks.
+// This removes them so raw reasoning never reaches the user.
+function stripThinking(text: string): string {
+  if (!text) return text
+  // Remove <think>...</think> blocks (may span multiple lines)
+  let clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  // Also handle partial/unterminated thinking blocks (model stopped mid-think)
+  clean = clean.replace(/<think>[\s\S]*$/gi, '').trim()
+  // Handle </think> tags (some models use these)
+  clean = clean.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '').trim()
+  clean = clean.replace(/<reasoning>[\s\S]*$/gi, '').trim()
+  return clean || text // fall back to original if stripping left nothing
+}
+
+// ── Provider call functions ───────────────────────────────────
+
+async function groqChat(
+  apiKey: string,
+  model: string,
+  body: Record<string, any>,
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, model }),
+  })
+  if (response.ok) {
+    return { ok: true, data: await response.json() }
+  }
+  const err = await response.json().catch(() => ({}))
+  return { ok: false, error: err.error?.message || 'Unknown Groq error' }
+}
+
+async function groqListModels(apiKey: string): Promise<{ ok: boolean; models?: string[]; error?: string }> {
+  const response = await fetch('https://api.groq.com/openai/v1/models', {
+    headers: { 'Authorization': `Bearer ${apiKey}` },
+  })
+  if (!response.ok) return { ok: false, error: 'Failed to fetch Groq models' }
+  const data = await response.json()
+  const models = (data.data || [])
+    .map((m: any) => m.id)
+    .filter((id: string) => !id.includes('whisper') && !id.includes('prompt-guard') && !id.includes('tts') && !id.includes('orpheus'))
+    .sort()
+  return { ok: true, models }
+}
+
+async function geminiChat(
+  apiKey: string,
+  model: string,
+  body: Record<string, any>,
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  // Convert OpenAI-style messages to Gemini format
+  const contents: any[] = []
+  let systemInstruction: any = null
+
+  for (const msg of body.messages || []) {
+    if (msg.role === 'system') {
+      systemInstruction = { parts: [{ text: msg.content }] }
+      continue
+    }
+    if (msg.role === 'tool') {
+      // Tool results — append as functionResponse
+      const lastFunc = contents.length > 0 ? contents[contents.length - 1] : null
+      if (lastFunc?.role === 'functionResponse') {
+        lastFunc.parts.push({ functionResponse: { name: msg.name || 'unknown', response: { result: msg.content } } })
+      } else {
+        contents.push({
+          role: 'functionResponse',
+          parts: [{ functionResponse: { name: msg.name || 'unknown', response: { result: msg.content } } }]
+        })
+      }
+      continue
+    }
+    const parts: any[] = []
+    if (typeof msg.content === 'string') {
+      parts.push({ text: msg.content })
+    } else if (Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part.type === 'text') {
+          parts.push({ text: part.text })
+        } else if (part.type === 'image_url') {
+          // Extract base64 from data URL — handle various formats
+          const url = part.image_url?.url || ''
+          const match = url.match(/^data:image\/\w+;base64,(.+)$/s)
+          if (match) {
+            parts.push({ inlineData: { mimeType: 'image/jpeg', data: match[1] } })
+          } else if (url.length > 100 && !url.startsWith('http')) {
+            // Might be raw base64 without data: prefix
+            parts.push({ inlineData: { mimeType: 'image/jpeg', data: url } })
+          }
+        } else if (part.type === 'image') {
+          // Fallback: some clients send 'image' type with base64 data
+          const b64 = part.source?.data || part.data || ''
+          if (b64) parts.push({ inlineData: { mimeType: 'image/jpeg', data: b64 } })
+        }
+      }
+    }
+    // Handle messages with image property at top level (non-standard format)
+    if (parts.length === 0 && msg.image) {
+      const b64 = typeof msg.image === 'string' ? msg.image : msg.image.data || ''
+      if (b64) parts.push({ inlineData: { mimeType: 'image/jpeg', data: b64 } })
+    }
+    if (parts.length > 0) {
+      contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts })
+    }
+  }
+
+  // Convert tools to Gemini format
+  const geminiTools = (body.tools || []).map((t: any) => ({
+    functionDeclarations: (Array.isArray(t) ? t : [t]).map((fn: any) => ({
+      name: fn.function?.name || fn.name,
+      description: fn.function?.description || fn.description,
+      parameters: fn.function?.parameters || fn.parameters,
+    }))
+  })).flatMap((t: any) => t.functionDeclarations ? [{ functionDeclarations: t.functionDeclarations }] : [])
+
+  const payload: Record<string, any> = { contents }
+  if (systemInstruction) payload.systemInstruction = systemInstruction
+  if (geminiTools.length > 0) payload.tools = geminiTools
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  )
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    return { ok: false, error: err.error?.message || 'Unknown Gemini error' }
+  }
+
+  const data = await response.json()
+  const candidate = data.candidates?.[0]
+  if (!candidate?.content?.parts) {
+    return { ok: false, error: 'No response from Gemini' }
+  }
+
+  // Convert Gemini response back to OpenAI-style format
+  const message: any = { role: 'assistant', content: null, tool_calls: null }
+  const textParts = candidate.content.parts.filter((p: any) => p.text)
+  const funcParts = candidate.content.parts.filter((p: any) => p.functionCall)
+
+  if (textParts.length > 0) {
+    message.content = textParts.map((p: any) => p.text).join('')
+  }
+  if (funcParts.length > 0) {
+    message.tool_calls = funcParts.map((p: any, i: number) => ({
+      id: `call_${i}`,
+      type: 'function',
+      function: {
+        name: p.functionCall.name,
+        arguments: JSON.stringify(p.functionCall.args || {}),
+      }
+    }))
+  }
+
+  return { ok: true, data: { choices: [{ message }] } }
+}
+
+async function geminiListModels(apiKey: string): Promise<{ ok: boolean; models?: string[]; error?: string }> {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`)
+  if (!response.ok) return { ok: false, error: 'Failed to fetch Gemini models' }
+  const data = await response.json()
+  const models = (data.models || [])
+    .map((m: any) => m.name?.replace('models/', ''))
+    .filter((id: string) => id && (id.includes('gemini') || id.includes('gemma')) && !id.includes('embedding') && !id.includes('tts') && !id.includes('transcribe') && !id.includes('lyria') && !id.includes('veo') && !id.includes('antigravity') && !id.includes('deep-research') && !id.includes('robotics'))
+    .sort()
+  return { ok: true, models }
+}
+
+// ── Unified provider call with fallback ───────────────────────
+
+interface ProviderConfig {
+  provider: string
+  model: string
+}
+
+async function callProvider(
+  primary: ProviderConfig,
+  fallback: ProviderConfig | null,
+  body: Record<string, any>,
+): Promise<{ ok: boolean; data?: any; error?: string; usedFallback?: boolean }> {
+  // Try primary
+  const primaryResult = await callSingleProvider(primary, body)
+  if (primaryResult.ok) return { ...primaryResult, usedFallback: false }
+
+  console.warn(`Notesy: Primary provider ${primary.provider}/${primary.model} failed: ${primaryResult.error}`)
+
+  // Try fallback
+  if (fallback && fallback.model) {
+    console.log(`Notesy: Falling back to ${fallback.provider}/${fallback.model}`)
+    const fallbackResult = await callSingleProvider(fallback, body)
+    if (fallbackResult.ok) return { ...fallbackResult, usedFallback: true }
+    console.error(`Notesy: Fallback also failed: ${fallbackResult.error}`)
+  }
+
+  return { ok: false, error: primaryResult.error }
+}
+
+async function callSingleProvider(
+  config: ProviderConfig,
+  body: Record<string, any>,
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  if (config.provider === 'gemini') {
+    if (!GEMINI_KEY) return { ok: false, error: 'Gemini API key not configured' }
+    return geminiChat(GEMINI_KEY, config.model, body)
+  }
+  // Default: Groq (with key rotation)
+  for (const keyInfo of GROQ_KEYS) {
+    const result = await groqCallWithRetry(keyInfo.key!, config.model, body)
+    if (result.ok) return result
+    // If it's a model-not-found error, try next key; otherwise fail fast
+    if (!result.error?.includes('does not exist') && !result.error?.includes('not have access')) {
+      return result
+    }
+  }
+  return { ok: false, error: 'All Groq keys failed' }
+}
+
+async function groqCallWithRetry(
+  apiKey: string,
+  model: string,
+  body: Record<string, any>,
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const result = await groqChat(apiKey, model, body)
+  if (result.ok) return result
+
+  // Groq sometimes rejects tool-calling — retry without tools
+  const errMsg = result.error || ''
+  if (errMsg.includes('Failed to call a function') || errMsg.includes('failed_generation')) {
+    const retry = await groqChat(apiKey, model, { ...body, tools: [], tool_choice: 'none' })
+    if (retry.ok) return retry
+    return { ok: false, error: retry.error || errMsg }
+  }
+
+  return result
+}
 
 const ALLOWED_ORIGINS = [
   'https://wgxsumbvhzwljxyozdsd.supabase.co',
@@ -157,22 +402,37 @@ serve(async (req) => {
     // Validate JWT — use the REAL user ID from the token, not client-sent userId
     const { userId, isGuest } = await validateJwt(req)
 
-    if (GROQ_KEYS.length === 0) {
+    if (GROQ_KEYS.length === 0 && !GEMINI_KEY) {
       return jsonResponse({ content: 'Notesy is missing its AI key configuration. Please ask an admin to check the Edge Function secrets.' }, 503, corsHeaders)
     }
 
+    // ── LIST MODELS ACTION — returns live available models per provider ──
+    if (action === 'list_models') {
+      if (isGuest) return jsonResponse({ error: 'Admins only.' }, 403, corsHeaders)
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', userId).single();
+      if (!profile?.role?.toLowerCase().includes('admin')) return jsonResponse({ error: 'Admins only.' }, 403, corsHeaders)
+
+      const provider = String(body.provider || 'groq').trim()
+      if (provider === 'gemini') {
+        if (!GEMINI_KEY) return jsonResponse({ models: [], error: 'Gemini API key not configured' }, 200, corsHeaders)
+        const result = await geminiListModels(GEMINI_KEY)
+        return jsonResponse(result, 200, corsHeaders)
+      }
+      // Default: Groq
+      if (GROQ_KEYS.length === 0) return jsonResponse({ models: [], error: 'No Groq keys configured' }, 200, corsHeaders)
+      const result = await groqListModels(GROQ_KEYS[0].key!)
+      return jsonResponse(result, 200, corsHeaders)
+    }
+
     // ── ADMIN MODEL TEST ACTION (not a chat message; no usage counted) ──
-    // Lets admins probe any Groq model (text or vision) directly from the
-    // Admin Dashboard > AI Control Room > Test Model.
     if (action === 'test_model') {
-      const testModel = String(body.model || 'llama-3.3-70b-versatile').trim();
+      const testModel = String(body.model || 'openai/gpt-oss-120b').trim();
+      const testProvider = String(body.provider || 'groq').trim();
       const testMessage = String(body.message || '').trim();
       if (!isGuest) {
         const { data: profile } = await supabase.from('profiles').select('role').eq('id', userId).single();
         const isAdmin = profile?.role?.toLowerCase().includes('admin') === true;
-        if (!isAdmin) {
-          return jsonResponse({ content: 'Admins only.' }, 403, corsHeaders);
-        }
+        if (!isAdmin) return jsonResponse({ content: 'Admins only.' }, 403, corsHeaders);
       } else {
         return jsonResponse({ content: 'Admins only.' }, 403, corsHeaders);
       }
@@ -191,29 +451,15 @@ serve(async (req) => {
         ];
       }
 
-      for (const keyInfo of GROQ_KEYS) {
-        try {
-          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${keyInfo.key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: testModel,
-              messages: [{ role: 'user', content: testContent }],
-              temperature: 0.7,
-            }),
-          });
-          if (response.ok) {
-            const data = await response.json();
-            const text = data.choices?.[0]?.message?.content || '';
-            return jsonResponse({ content: text.trim() }, 200, corsHeaders);
-          }
-          const errData = await response.json();
-          console.error(`Notesy: test_model key ${keyInfo.name} failed: ${errData.error?.message || 'Unknown'}`);
-        } catch (e) {
-          console.error(`Notesy: test_model network error with key ${keyInfo.name}: ${e}`);
-        }
+      const result = await callSingleProvider(
+        { provider: testProvider, model: testModel },
+        { messages: [{ role: 'user', content: testContent }], temperature: 0.7 }
+      );
+      if (result.ok) {
+        const text = result.data.choices?.[0]?.message?.content || '';
+        return jsonResponse({ content: text.trim() }, 200, corsHeaders);
       }
-      return jsonResponse({ content: 'Test failed — all Groq keys errored. See function logs.' }, 200, corsHeaders);
+      return jsonResponse({ content: `Test failed: ${result.error}` }, 200, corsHeaders);
     }
 
     // ── AI SUMMARY ACTION (not a chat message; no usage counted) ──
@@ -223,30 +469,142 @@ serve(async (req) => {
         return jsonResponse({ content: '' }, 200, corsHeaders)
       }
       const { data: summaryConfig } = await supabase.from('app_config').select('key, value');
-      const modelToUse = summaryConfig?.find(c => c.key === 'ai_model')?.value || 'llama-3.3-70b-versatile';
+      const textProvider = summaryConfig?.find(c => c.key === 'ai_text_provider')?.value || 'groq';
+      const textModel = summaryConfig?.find(c => c.key === 'ai_model')?.value || 'openai/gpt-oss-120b';
+      const textFallbackProvider = summaryConfig?.find(c => c.key === 'ai_text_fallback_provider')?.value || '';
+      const textFallbackModel = summaryConfig?.find(c => c.key === 'ai_text_fallback_model')?.value || '';
       const summaryMessages = [
         { role: 'system', content: 'You are Notesy, a study assistant. Write a concise summary of the given document (title + extracted text). Output ONLY:\n1. A 2-3 sentence overview.\n2. "Key points:" followed by up to 5 short bullet points (each starting with "- ").\nDo not add greetings, commentary, or markdown headers.' },
         { role: 'user', content: `Document title: ${title || 'Untitled'}\n\nDocument text:\n${summaryText.length > 9000 ? summaryText.substring(0, 9000) : summaryText}` }
       ];
-      for (const keyInfo of GROQ_KEYS) {
-        try {
-          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${keyInfo.key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: modelToUse, messages: summaryMessages, temperature: 0.4 })
-          });
-          if (response.ok) {
-            const data = await response.json();
-            const text = data.choices?.[0]?.message?.content || '';
-            return jsonResponse({ content: text.trim() }, 200, corsHeaders)
-          }
-          const errData = await response.json();
-          console.error(`Notesy: summary key ${keyInfo.name} failed: ${errData.error?.message || 'Unknown'}`);
-        } catch (e) {
-          console.error(`Notesy: summary network error with key ${keyInfo.name}: ${e}`);
-        }
+      const result = await callProvider(
+        { provider: textProvider, model: textModel },
+        textFallbackModel ? { provider: textFallbackProvider, model: textFallbackModel } : null,
+        { messages: summaryMessages, temperature: 0.4, reasoning_effort: 'none' }
+      );
+      if (result.ok) {
+        const text = result.data.choices?.[0]?.message?.content || '';
+        return jsonResponse({ content: stripThinking(text.trim()) }, 200, corsHeaders)
       }
       return jsonResponse({ content: '' }, 200, corsHeaders)
+    }
+    // ──────────────────────────────────────────────────────────
+
+    // ── ADMIN CLEANUP: strip thinking blocks from existing summaries ──
+    if (action === 'cleanup_summaries') {
+      if (isGuest) return jsonResponse({ error: 'Admins only.' }, 403, corsHeaders)
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', userId).single();
+      if (!profile?.role?.toLowerCase().includes('admin')) return jsonResponse({ error: 'Admins only.' }, 403, corsHeaders)
+
+      const { data: notes } = await supabase.from('notes').select('id, summary').not('summary', 'is', null);
+      let cleaned = 0;
+      let cleared = 0;
+      if (notes) {
+        for (const note of notes) {
+          const original = note.summary;
+          if (!original) continue;
+          const stripped = stripThinking(original);
+          if (stripped !== original) {
+            if (stripped.trim().length < 20) {
+              // Summary was all thinking — clear it so it gets regenerated
+              await supabase.from('notes').update({ summary: null }).eq('id', note.id);
+              cleared++;
+            } else {
+              await supabase.from('notes').update({ summary: stripped }).eq('id', note.id);
+              cleaned++;
+            }
+          }
+        }
+      }
+      return jsonResponse({ cleaned, cleared, total: notes?.length ?? 0 }, 200, corsHeaders)
+    }
+    // ──────────────────────────────────────────────────────────
+
+    // ── ADMIN BATCH: convert PPTX/Publisher notes to PDF ──
+    if (action === 'batch_convert_to_pdf') {
+      if (isGuest) return jsonResponse({ error: 'Admins only.' }, 403, corsHeaders)
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', userId).single();
+      if (!profile?.role?.toLowerCase().includes('admin')) return jsonResponse({ error: 'Admins only.' }, 403, corsHeaders)
+
+      const gotenbergUrl = Deno.env.get('GOTENBERG_URL')
+      if (!gotenbergUrl) return jsonResponse({ error: 'GOTENBERG_URL not configured' }, 500, corsHeaders)
+
+      // Find notes without pdf_url that are convertible
+      const { data: notes } = await supabase
+        .from('notes')
+        .select('id, title, gdrive_id, category')
+        .is('pdf_url', null)
+        .in('category', ['Slides', 'Publisher', 'slides', 'publisher'])
+
+      let converted = 0
+      let failed = 0
+      const errors: string[] = []
+
+      if (notes && notes.length > 0) {
+        for (const note of notes) {
+          if (!note.gdrive_id) { failed++; continue }
+          try {
+            // 1. Download source
+            const sourceRes = await fetch(note.gdrive_id)
+            if (!sourceRes.ok) { failed++; errors.push(`${note.title}: download failed`); continue }
+            const sourceBytes = new Uint8Array(await sourceRes.arrayBuffer())
+
+            // 2. Gotenberg conversion
+            const ext = (note.title.split('.').pop() || 'bin').toLowerCase()
+            const gotenbergForm = new FormData()
+            gotenbergForm.append('files', new Blob([sourceBytes]), `${note.title}.${ext}`)
+            const gotRes = await fetch(`${gotenbergUrl}/forms/libreoffice/convert`, {
+              method: 'POST', body: gotenbergForm,
+            })
+            if (!gotRes.ok) { failed++; errors.push(`${note.title}: conversion failed`); continue }
+
+            // 3. Upload PDF to Cloudinary
+            const pdfBytes = new Uint8Array(await gotRes.arrayBuffer())
+            let base64 = ''
+            const chunkSize = 8192
+            for (let i = 0; i < pdfBytes.length; i += chunkSize) {
+              const chunk = pdfBytes.slice(i, i + chunkSize)
+              base64 += btoa(String.fromCharCode(...chunk))
+            }
+            const dataUri = `data:application/pdf;base64,${base64}`
+            const timestamp = Date.now()
+            const randomId = Math.random().toString(36).substring(2, 8)
+            const pdfPublicId = `notes/converted/${timestamp}_${randomId}`
+
+            const sortedParams: Record<string, string> = {
+              folder: 'notes', public_id: pdfPublicId,
+              timestamp: Math.floor(Date.now() / 1000).toString(),
+            }
+            const signString = Object.keys(sortedParams).sort().map(k => `${k}=${sortedParams[k]}`).join('&') + Deno.env.get('CLOUDINARY_API_SECRET')!
+            const encoder = new TextEncoder()
+            const hashBuffer = await crypto.subtle.digest('SHA-1', encoder.encode(signString))
+            const signature = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
+
+            const uploadForm = new FormData()
+            uploadForm.append('file', dataUri)
+            uploadForm.append('folder', 'notes')
+            uploadForm.append('public_id', pdfPublicId)
+            uploadForm.append('timestamp', sortedParams.timestamp)
+            uploadForm.append('api_key', Deno.env.get('CLOUDINARY_API_KEY')!)
+            uploadForm.append('signature', signature)
+
+            const uploadRes = await fetch(
+              `https://api.cloudinary.com/v1_1/${Deno.env.get('CLOUDINARY_CLOUD_NAME')}/raw/upload`,
+              { method: 'POST', body: uploadForm }
+            )
+            if (!uploadRes.ok) { failed++; errors.push(`${note.title}: PDF upload failed`); continue }
+            const uploadResult = await uploadRes.json()
+
+            // 4. Update note
+            await supabase.from('notes').update({ pdf_url: uploadResult.secure_url }).eq('id', note.id)
+            converted++
+          } catch (e) {
+            failed++
+            errors.push(`${note.title}: ${e.message}`)
+          }
+        }
+      }
+      return jsonResponse({ converted, failed, total: notes?.length ?? 0, errors: errors.slice(0, 10) }, 200, corsHeaders)
     }
     // ──────────────────────────────────────────────────────────
 
@@ -278,9 +636,18 @@ serve(async (req) => {
     const { data: config } = await supabase.from('app_config').select('key, value');
     const textLimit = parseInt(config?.find(c => c.key === 'ai_daily_text_limit')?.value || '50');
     const imageLimit = parseInt(config?.find(c => c.key === 'ai_daily_image_limit')?.value || '10');
-    const selectedModel = config?.find(c => c.key === 'ai_model')?.value || 'llama-3.3-70b-versatile';
-    const visionModel = config?.find(c => c.key === 'ai_vision_model')?.value || 'qwen/qwen3.6-27b';
     const webSearchEnabled = config?.find(c => c.key === 'ai_web_search')?.value !== 'false';
+
+    // Provider + model config (new multi-provider system)
+    const textProvider = config?.find(c => c.key === 'ai_text_provider')?.value || 'groq';
+    const selectedModel = config?.find(c => c.key === 'ai_model')?.value || 'openai/gpt-oss-120b';
+    const textFallbackProvider = config?.find(c => c.key === 'ai_text_fallback_provider')?.value || '';
+    const textFallbackModel = config?.find(c => c.key === 'ai_text_fallback_model')?.value || '';
+
+    const visionProvider = config?.find(c => c.key === 'ai_vision_provider')?.value || 'groq';
+    const visionModel = config?.find(c => c.key === 'ai_vision_model')?.value || 'qwen/qwen3.6-27b';
+    const visionFallbackProvider = config?.find(c => c.key === 'ai_vision_fallback_provider')?.value || '';
+    const visionFallbackModel = config?.find(c => c.key === 'ai_vision_fallback_model')?.value || '';
 
     // 2. Get/Update User Usage. Guests have no server-side rate limiting.
     const isTrackedUser = !isGuest;
@@ -358,7 +725,10 @@ Tone:
 - Be concise unless the student asks for detail.
 - IMPORTANT: Never output raw function call syntax like <function=name> or JSON tool calls in your response text. If you need to call a tool, use the structured tool_calls mechanism only.`
 
-    const modelToUse = isVision ? visionModel : selectedModel;
+    const primaryProvider = isVision ? visionProvider : textProvider;
+    const primaryModel = isVision ? visionModel : selectedModel;
+    const fallbackProvider = isVision ? visionFallbackProvider : textFallbackProvider;
+    const fallbackModel = isVision ? visionFallbackModel : textFallbackModel;
 
     // --- RAG: Search lecture document chunks ---
     const ragContext = await searchDocumentChunks(message);
@@ -383,10 +753,6 @@ Tone:
       ...(Array.isArray(history) ? history : []),
       { role: 'user', content: userContent }
     ]
-
-    // Attempt Groq call with rotation
-    let aiMessage;
-    let lastError;
 
     const tools = [
       {
@@ -473,77 +839,26 @@ Tone:
       }] : [])
     ];
 
-    for (const keyInfo of GROQ_KEYS) {
-      try {
-        console.log(`Notesy: Attempting call using key: ${keyInfo.name} (Vision: ${isVision})`);
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${keyInfo.key}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: modelToUse,
-            messages,
-            tools,
-            tool_choice: 'auto'
-          })
-        });
+    // Call primary provider, fallback to secondary if configured
+    const callResult = await callProvider(
+      { provider: primaryProvider, model: primaryModel },
+      fallbackModel ? { provider: fallbackProvider, model: fallbackModel } : null,
+      { messages, tools, tool_choice: 'auto' }
+    );
 
-        if (response.ok) {
-          const data = await response.json();
-          aiMessage = data.choices[0].message;
-          console.log(`Notesy: Success using key: ${keyInfo.name}`);
-          break; // Exit loop on success
-        } else {
-          const errorData = await response.json();
-          const errMsg = errorData.error?.message || 'Unknown error';
-          console.error(`Notesy: Key ${keyInfo.name} failed: ${errMsg}`);
+    if (!callResult.ok) throw new Error(`All providers failed. Last error: ${callResult.error}`);
+    if (callResult.usedFallback) console.log(`Notesy: Used fallback provider for ${isVision ? 'vision' : 'text'}`);
 
-          // Groq sometimes rejects tool-calling generations
-          // ("Failed to call a function"). Retry the same prompt WITHOUT
-          // tools so the user still gets an answer.
-          if (errMsg.includes('Failed to call a function') || errMsg.includes('failed_generation')) {
-            const retry = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${keyInfo.key}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                model: modelToUse,
-                messages,
-                tools: [],
-                tool_choice: 'none'
-              })
-            });
-            if (retry.ok) {
-              const retryData = await retry.json();
-              aiMessage = retryData.choices[0].message;
-              console.log(`Notesy: Success (no-tools fallback) using key: ${keyInfo.name}`);
-              break;
-            }
-            const retryError = await retry.json().catch(() => ({}));
-            lastError = retryError.error?.message || errMsg;
-            continue;
-          }
-
-          lastError = errMsg;
-        }
-      } catch (e) {
-        console.error(`Notesy: Network error with key ${keyInfo.name}: ${e}`);
-        lastError = e.message;
-      }
-    }
-
-    if (!aiMessage) throw new Error(`All Groq keys failed. Last error: ${lastError}`);
+    let aiMessage = callResult.data.choices[0].message;
 
     // Sanitize: strip any raw tool-call syntax that leaked into content
     // This happens when the model returns function calls as plain text instead of structured tool_calls
     function sanitizeContent(content: string | null): string {
       if (!content) return '';
+      // Strip model thinking/reasoning blocks
+      let clean = stripThinking(content);
       // Remove <function=name {...}></function> patterns
-      let clean = content.replace(/<function=[^>]*>[\s\S]*?<\/function>/g, '').trim();
+      clean = clean.replace(/<function=[^>]*>[\s\S]*?<\/function>/g, '').trim();
       // Remove ```json { "function": ... } ``` blocks that are tool calls
       clean = clean.replace(/```json\s*\{[\s\S]*?"function"[\s\S]*?```/g, '').trim();
       return clean || "I'm working on finding that information. Could you rephrase your question?";
@@ -585,15 +900,10 @@ Tone:
         }
 
         // Final response with tool result
-        const finalKey = GROQ_KEYS[0].key;
-        const secondResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${finalKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: modelToUse,
+        const secondResult = await callProvider(
+          { provider: primaryProvider, model: primaryModel },
+          fallbackModel ? { provider: fallbackProvider, model: fallbackModel } : null,
+          {
             messages: [
               ...messages,
               aiMessage,
@@ -603,15 +913,13 @@ Tone:
                 content: toolResult
               }
             ]
-          })
-        });
+          }
+        );
 
-        if (secondResponse.ok) {
-          const secondData = await secondResponse.json();
-          aiMessage = secondData.choices[0].message;
+        if (secondResult.ok) {
+          aiMessage = secondResult.data.choices[0].message;
         } else {
-          const errData = await secondResponse.json();
-          console.error('Second Groq call failed:', errData);
+          console.error('Second Groq call failed:', secondResult.error);
           // Fall back to the first message content if available
           if (!aiMessage.content) {
             aiMessage = { content: 'I had trouble processing that. Could you try rephrasing?' };
@@ -634,7 +942,12 @@ Tone:
     })
 
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error('Notesy error:', error.message)
+    // Never leak internal error details to the client
+    const safeMessage = error.message?.includes('providers failed')
+      ? 'AI is temporarily unavailable. Please try again in a moment.'
+      : 'Something went wrong. Please try again.';
+    return new Response(JSON.stringify({ error: safeMessage }), {
       status: 500,
       headers: corsHeaders,
     })
