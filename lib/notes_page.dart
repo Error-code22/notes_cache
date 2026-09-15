@@ -99,7 +99,7 @@ class _NotesPageState extends State<NotesPage> {
     final title = n.title.toLowerCase();
     final category = (n.category ?? '').toLowerCase();
     if (title.endsWith('.pdf') || category == 'pdf') return 'pdf';
-    if (title.endsWith('.pptx') || title.endsWith('.ppt') || category == 'slides' || category == 'presentation') return 'ppt';
+    if (title.endsWith('.pptx') || title.endsWith('.ppt') || title.endsWith('.pub') || category == 'slides' || category == 'presentation' || category == 'publisher') return 'ppt';
     if (title.endsWith('.docx') || title.endsWith('.doc') || category == 'document' || category == 'word') return 'doc';
     if (title.endsWith('.xlsx') || title.endsWith('.xls') || title.endsWith('.csv') || category == 'spreadsheet') return 'xls';
     if (title.endsWith('.mp4') || title.endsWith('.mov') || title.endsWith('.mkv') || category == 'video' || category == 'vid') return 'vid';
@@ -557,7 +557,7 @@ class _NotesPageState extends State<NotesPage> {
       fileIcon = Icons.picture_as_pdf_rounded;
       fileColor = Colors.red;
       typeLabel = 'PDF';
-    } else if (title.endsWith('.pptx') || title.endsWith('.ppt') || category == 'slides' || category == 'presentation') {
+    } else if (title.endsWith('.pptx') || title.endsWith('.ppt') || title.endsWith('.pub') || category == 'slides' || category == 'presentation' || category == 'publisher') {
       fileIcon = Icons.slideshow_rounded;
       fileColor = Colors.orange;
       typeLabel = 'PPT';

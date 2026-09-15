@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -9,6 +10,7 @@ import 'package:file_picker/file_picker.dart';
 import 'services.dart';
 import 'models.dart';
 import 'user_manager_page.dart';
+import 'editors/office_com_converter.dart';
 
 // ═══════════════════════════════════════════════════════════════
 // ADMIN DASHBOARD — Responsive Grid
@@ -60,7 +62,7 @@ class AdminDashboardPage extends StatelessWidget {
           crossAxisCount: cols,
           mainAxisSpacing: 14,
           crossAxisSpacing: 14,
-          childAspectRatio: 1.1,
+          childAspectRatio: 1.05,
         ),
         itemCount: _cards.length,
         itemBuilder: (_, i) => _DashboardCard(
@@ -370,7 +372,7 @@ class _ContentVaultPageState extends State<_ContentVaultPage> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 5. AI CONTROL ROOM — model, search, limits
+// 5. AI CONTROL ROOM — multi-provider model config
 // ═══════════════════════════════════════════════════════════════
 
 class _AIControlRoomPage extends StatefulWidget {
@@ -379,12 +381,30 @@ class _AIControlRoomPage extends StatefulWidget {
 }
 
 class _AIControlRoomPageState extends State<_AIControlRoomPage> {
-  String _model = 'llama-3.3-70b-versatile';
+  // Text model
+  String _textProvider = 'groq';
+  String _textModel = 'openai/gpt-oss-120b';
+  String _textFallbackProvider = '';
+  String _textFallbackModel = '';
+  List<String> _textModels = [];
+  List<String> _textFallbackModels = [];
+  DateTime? _textModelsVerified;
+
+  // Vision model
+  String _visionProvider = 'groq';
   String _visionModel = 'qwen/qwen3.6-27b';
+  String _visionFallbackProvider = '';
+  String _visionFallbackModel = '';
+  List<String> _visionModels = [];
+  List<String> _visionFallbackModels = [];
+  DateTime? _visionModelsVerified;
+
   bool _webSearch = true;
   final _textLimit = TextEditingController();
   final _imageLimit = TextEditingController();
   bool _loading = true;
+  bool _loadingTextModels = false;
+  bool _loadingVisionModels = false;
 
   @override
   void initState() {
@@ -397,19 +417,266 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
     final c = await ns.getAppConfig();
     if (!mounted) return;
     setState(() {
-      _model = c['ai_model'] ?? 'llama-3.3-70b-versatile';
+      _textProvider = c['ai_text_provider'] ?? 'groq';
+      _textModel = c['ai_model'] ?? 'openai/gpt-oss-120b';
+      _textFallbackProvider = c['ai_text_fallback_provider'] ?? '';
+      _textFallbackModel = c['ai_text_fallback_model'] ?? '';
+      _visionProvider = c['ai_vision_provider'] ?? 'groq';
       _visionModel = c['ai_vision_model'] ?? 'qwen/qwen3.6-27b';
+      _visionFallbackProvider = c['ai_vision_fallback_provider'] ?? '';
+      _visionFallbackModel = c['ai_vision_fallback_model'] ?? '';
       _webSearch = c['ai_web_search'] != 'false';
       _textLimit.text = c['ai_daily_text_limit'] ?? '50';
       _imageLimit.text = c['ai_daily_image_limit'] ?? '10';
       _loading = false;
     });
+    _refreshTextModels();
+    _refreshVisionModels();
+    if (_textFallbackProvider.isNotEmpty) _refreshFallbackTextModels(provider: _textFallbackProvider);
+    if (_visionFallbackProvider.isNotEmpty) _refreshFallbackVisionModels(provider: _visionFallbackProvider);
   }
 
   @override
   void dispose() { _textLimit.dispose(); _imageLimit.dispose(); super.dispose(); }
 
   Future<void> _save(String k, String v) async => context.read<NoteService>().updateAppConfig(k, v);
+
+  Future<void> _refreshTextModels() async {
+    setState(() => _loadingTextModels = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+        'action': 'list_models',
+        'provider': _textProvider,
+      });
+      final raw = response.data;
+      final data = raw is String ? jsonDecode(raw) : raw;
+      final models = (data is Map && data['models'] is List)
+          ? (data['models'] as List).map((e) => e.toString()).toList()
+          : <String>[];
+      if (data is Map && data['error'] != null) {
+        debugPrint('list_models error: ${data['error']}');
+      }
+      if (mounted) setState(() {
+        _textModels = models;
+        _textModelsVerified = DateTime.now();
+        _loadingTextModels = false;
+        if (!models.contains(_textModel) && models.isNotEmpty) _textModel = models.first;
+        if (!models.contains(_textFallbackModel)) _textFallbackModel = '';
+      });
+    } catch (e) {
+      debugPrint('list_models exception: $e');
+      if (mounted) setState(() { _loadingTextModels = false; _textModels = []; });
+    }
+  }
+
+  Future<void> _refreshVisionModels() async {
+    setState(() => _loadingVisionModels = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+        'action': 'list_models',
+        'provider': _visionProvider,
+      });
+      final raw = response.data;
+      final data = raw is String ? jsonDecode(raw) : raw;
+      final models = (data is Map && data['models'] is List)
+          ? (data['models'] as List).map((e) => e.toString()).toList()
+          : <String>[];
+      if (mounted) setState(() {
+        _visionModels = models;
+        _visionModelsVerified = DateTime.now();
+        _loadingVisionModels = false;
+        if (!models.contains(_visionModel) && models.isNotEmpty) _visionModel = models.first;
+        if (!models.contains(_visionFallbackModel)) _visionFallbackModel = '';
+      });
+    } catch (e) {
+      debugPrint('list_models vision exception: $e');
+      if (mounted) setState(() { _loadingVisionModels = false; _visionModels = []; });
+    }
+  }
+
+  Future<void> _refreshFallbackTextModels({String? provider}) async {
+    final p = provider ?? _textFallbackProvider;
+    if (p.isEmpty) { setState(() => _textFallbackModels = []); return; }
+    try {
+      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+        'action': 'list_models',
+        'provider': p,
+      });
+      final raw = response.data;
+      debugPrint('fallback text models raw: $raw');
+      final data = raw is String ? jsonDecode(raw) : raw;
+      final models = (data is Map && data['models'] is List)
+          ? (data['models'] as List).map((e) => e.toString()).toList()
+          : <String>[];
+      if (data is Map && data['error'] != null) {
+        debugPrint('fallback text list_models error: ${data['error']}');
+      }
+      debugPrint('fallback text models for $p: $models');
+      if (mounted) setState(() { _textFallbackModels = models; });
+    } catch (e) {
+      debugPrint('fallback text list_models exception: $e');
+    }
+  }
+
+  Future<void> _refreshFallbackVisionModels({String? provider}) async {
+    final p = provider ?? _visionFallbackProvider;
+    if (p.isEmpty) { setState(() => _visionFallbackModels = []); return; }
+    try {
+      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+        'action': 'list_models',
+        'provider': p,
+      });
+      final raw = response.data;
+      debugPrint('fallback vision models raw: $raw');
+      final data = raw is String ? jsonDecode(raw) : raw;
+      final models = (data is Map && data['models'] is List)
+          ? (data['models'] as List).map((e) => e.toString()).toList()
+          : <String>[];
+      if (data is Map && data['error'] != null) {
+        debugPrint('fallback vision list_models error: ${data['error']}');
+      }
+      debugPrint('fallback vision models for $p: $models');
+      if (mounted) setState(() { _visionFallbackModels = models; });
+    } catch (e) {
+      debugPrint('fallback vision list_models exception: $e');
+    }
+  }
+
+  String _verifiedLabel(DateTime? t) {
+    if (t == null) return 'Never verified';
+    final diff = DateTime.now().difference(t);
+    if (diff.inSeconds < 60) return 'Verified ${diff.inSeconds}s ago';
+    if (diff.inMinutes < 60) return 'Verified ${diff.inMinutes}m ago';
+    return 'Verified ${diff.inHours}h ago';
+  }
+
+  Widget _providerModelRow({
+    required String provider,
+    required String model,
+    required List<String> models,
+    required bool loading,
+    required DateTime? verified,
+    required String label,
+    required ValueChanged<String?> onProviderChanged,
+    required ValueChanged<String?> onModelChanged,
+    required VoidCallback onRefresh,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            flex: 2,
+            child: DropdownButtonFormField<String>(
+              initialValue: provider.isEmpty ? null : provider,
+              isDense: true,
+              decoration: InputDecoration(
+                labelText: 'Provider',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'groq', child: Text('Groq')),
+                DropdownMenuItem(value: 'gemini', child: Text('Gemini')),
+              ],
+              onChanged: (v) {
+                if (v == null) return;
+                onProviderChanged(v);
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 3,
+            child: DropdownButtonFormField<String>(
+              initialValue: models.contains(model) ? model : null,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Model',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                suffixIcon: loading
+                    ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)))
+                    : IconButton(icon: const Icon(Icons.refresh, size: 18), onPressed: onRefresh, tooltip: 'Refresh model list'),
+              ),
+              items: models.map((m) => DropdownMenuItem(value: m, child: Text(m, overflow: TextOverflow.ellipsis))).toList(),
+              onChanged: onModelChanged,
+            ),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        Text(_verifiedLabel(verified), style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+      ],
+    );
+  }
+
+  Widget _fallbackRow({
+    required String provider,
+    required String model,
+    required List<String> models,
+    required ValueChanged<String?> onProviderChanged,
+    required ValueChanged<String?> onModelChanged,
+    required void Function(String provider) onRefreshModels,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 12),
+        Text('Fallback (if primary fails)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[600])),
+        const SizedBox(height: 6),
+        Row(children: [
+          Expanded(
+            flex: 2,
+            child: DropdownButtonFormField<String>(
+              initialValue: provider.isEmpty ? null : provider,
+              isDense: true,
+              decoration: InputDecoration(
+                labelText: 'Fallback Provider',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              ),
+              items: const [
+                DropdownMenuItem(value: '', child: Text('None')),
+                DropdownMenuItem(value: 'groq', child: Text('Groq')),
+                DropdownMenuItem(value: 'gemini', child: Text('Gemini')),
+              ],
+              onChanged: (v) {
+                onProviderChanged(v ?? '');
+                if (v != null && v.isNotEmpty) onRefreshModels(v);
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 3,
+            child: DropdownButtonFormField<String>(
+              initialValue: model.isEmpty ? null : model,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Fallback Model',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              ),
+              items: [const DropdownMenuItem(value: '', child: Text('None'))]
+                .followedBy(models.map((m) => DropdownMenuItem(value: m, child: Text(m, overflow: TextOverflow.ellipsis)))).toList(),
+              onChanged: (v) {
+                onModelChanged(v ?? '');
+                if (v != null && v.isNotEmpty && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Fallback model set to $v'), backgroundColor: Colors.green, duration: const Duration(seconds: 2)),
+                  );
+                }
+              },
+            ),
+          ),
+        ]),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -420,42 +687,91 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                const Text('Model', style: TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'llama-3.3-70b-versatile', label: Text('70B'), icon: Icon(Icons.speed)),
-                    ButtonSegment(value: 'llama-3.1-8b-instant', label: Text('8B'), icon: Icon(Icons.bolt)),
-                  ],
-                  selected: {_model},
-                  onSelectionChanged: (s) { setState(() => _model = s.first); _save('ai_model', s.first); },
-                ),
-                const SizedBox(height: 4),
-                Text(_model == 'llama-3.3-70b-versatile' ? '70B: Smarter, slower' : '8B: Faster, lighter',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-                const SizedBox(height: 16),
-                const Text('Vision Model (images)', style: TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: _visionModel,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.image_outlined),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'qwen/qwen3.6-27b', child: Text('Qwen 3.6 27B (vision)')),
-                    DropdownMenuItem(value: 'llama-3.2-11b-vision-preview', child: Text('Llama 3.2 11B Vision (legacy)')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _visionModel = v);
-                    _save('ai_vision_model', v);
+                // ── TEXT MODEL ──
+                _providerModelRow(
+                  provider: _textProvider,
+                  model: _textModel,
+                  models: _textModels,
+                  loading: _loadingTextModels,
+                  verified: _textModelsVerified,
+                  label: 'Text Model',
+                  onProviderChanged: (v) {
+                    setState(() { _textProvider = v!; });
+                    _save('ai_text_provider', v!);
+                    _refreshTextModels();
                   },
+                  onModelChanged: (v) {
+                    if (v == null) return;
+                    setState(() { _textModel = v; });
+                    _save('ai_model', v);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Text model set to $v'), backgroundColor: Colors.green, duration: const Duration(seconds: 2)),
+                      );
+                    }
+                  },
+                  onRefresh: _refreshTextModels,
                 ),
-                const SizedBox(height: 4),
-                Text('Used when a user attaches an image. Qwen 3.6 27B is Groq\'s current vision model.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-                const SizedBox(height: 16),
+                _fallbackRow(
+                  provider: _textFallbackProvider,
+                  model: _textFallbackModel,
+                  models: _textFallbackModels,
+                  onProviderChanged: (v) {
+                    setState(() { _textFallbackProvider = v!; });
+                    _save('ai_text_fallback_provider', v!);
+                  },
+                  onModelChanged: (v) {
+                    setState(() { _textFallbackModel = v!; });
+                    _save('ai_text_fallback_model', v!);
+                  },
+                  onRefreshModels: (p) => _refreshFallbackTextModels(provider: p),
+                ),
+                const SizedBox(height: 20),
+                const Divider(),
+                const SizedBox(height: 12),
+                // ── VISION MODEL ──
+                _providerModelRow(
+                  provider: _visionProvider,
+                  model: _visionModel,
+                  models: _visionModels,
+                  loading: _loadingVisionModels,
+                  verified: _visionModelsVerified,
+                  label: 'Vision Model (images)',
+                  onProviderChanged: (v) {
+                    setState(() { _visionProvider = v!; });
+                    _save('ai_vision_provider', v!);
+                    _refreshVisionModels();
+                  },
+                  onModelChanged: (v) {
+                    if (v == null) return;
+                    setState(() { _visionModel = v; });
+                    _save('ai_vision_model', v);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Vision model set to $v'), backgroundColor: Colors.green, duration: const Duration(seconds: 2)),
+                      );
+                    }
+                  },
+                  onRefresh: _refreshVisionModels,
+                ),
+                _fallbackRow(
+                  provider: _visionFallbackProvider,
+                  model: _visionFallbackModel,
+                  models: _visionFallbackModels,
+                  onProviderChanged: (v) {
+                    setState(() { _visionFallbackProvider = v!; });
+                    _save('ai_vision_fallback_provider', v!);
+                  },
+                  onModelChanged: (v) {
+                    setState(() { _visionFallbackModel = v!; });
+                    _save('ai_vision_fallback_model', v!);
+                  },
+                  onRefreshModels: (p) => _refreshFallbackVisionModels(provider: p),
+                ),
+                const SizedBox(height: 20),
+                const Divider(),
+                const SizedBox(height: 12),
+                // ── WEB SEARCH + LIMITS ──
                 SwitchListTile(
                   title: const Text('Web Search'),
                   subtitle: const Text('Let AI search the internet when notes don\'t have the answer'),
@@ -483,9 +799,26 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
                   label: const Text('Save Limits'),
                 ),
                 const Divider(height: 32),
+                // ── CLEANUP SUMMARIES ──
+                const Text('Cleanup Summaries', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 4),
+                const Text('Strip raw thinking/reasoning blocks from existing AI summaries in the DB.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 12),
+                _CleanupSummariesButton(),
+                const SizedBox(height: 16),
+                // ── BATCH CONVERT TO PDF ──
+                const Text('Batch Convert to PDF', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 4),
+                const Text('Convert PPTX/DOCX/Publisher notes to PDF using Microsoft Office. Requires Windows + Office installed.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 12),
+                _BatchConvertButton(),
+                const Divider(height: 32),
+                // ── TEST MODEL ──
                 const Text('Test Model', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                 const SizedBox(height: 4),
-                const Text('Probe any model directly — text or image. No usage counted.',
+                const Text('Probe any provider+model — text or image. No usage counted.',
                     style: TextStyle(fontSize: 12, color: Colors.grey)),
                 const SizedBox(height: 12),
                 _ModelTester(),
@@ -495,24 +828,19 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
   }
 }
 
-/// Admin-only model probe: pick a model, type a prompt, optionally attach an
-/// image, and see the raw Groq response (via the notesy `test_model` action).
+/// Admin-only model probe: pick provider + model, type a prompt, optionally
+/// attach an image, and see the raw response.
 class _ModelTester extends StatefulWidget {
   const _ModelTester();
-
   @override
   State<_ModelTester> createState() => _ModelTesterState();
 }
 
 class _ModelTesterState extends State<_ModelTester> {
-  static const _models = [
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant',
-    'qwen/qwen3.6-27b',
-    'llama-3.2-11b-vision-preview',
-  ];
-
-  String _model = 'qwen/qwen3.6-27b';
+  String _provider = 'groq';
+  String _model = 'openai/gpt-oss-120b';
+  List<String> _models = [];
+  bool _loadingModels = false;
   final _prompt = TextEditingController();
   String? _imageBase64;
   String? _imageName;
@@ -521,7 +849,35 @@ class _ModelTesterState extends State<_ModelTester> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _refreshModels();
+  }
+
+  @override
   void dispose() { _prompt.dispose(); super.dispose(); }
+
+  Future<void> _refreshModels() async {
+    setState(() => _loadingModels = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+        'action': 'list_models',
+        'provider': _provider,
+      });
+      final raw = response.data;
+      final data = raw is String ? jsonDecode(raw) : raw;
+      final models = (data is Map && data['models'] is List)
+          ? (data['models'] as List).map((e) => e.toString()).toList()
+          : <String>[];
+      if (mounted) setState(() {
+        _models = models;
+        _loadingModels = false;
+        if (!models.contains(_model) && models.isNotEmpty) _model = models.first;
+      });
+    } catch (e) {
+      if (mounted) setState(() { _loadingModels = false; _models = []; });
+    }
+  }
 
   Future<void> _pickImage() async {
     final result = await FilePicker.pickFiles(type: FileType.image, withData: true, allowMultiple: false);
@@ -544,6 +900,7 @@ class _ModelTesterState extends State<_ModelTester> {
     try {
       final response = await Supabase.instance.client.functions.invoke('notesy', body: {
         'action': 'test_model',
+        'provider': _provider,
         'model': _model,
         'message': _prompt.text.trim(),
         if (_imageBase64 != null) 'imageBase64': _imageBase64,
@@ -563,24 +920,40 @@ class _ModelTesterState extends State<_ModelTester> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DropdownButtonFormField<String>(
-          initialValue: _model,
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.smart_toy_outlined),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        Row(children: [
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              initialValue: _provider,
+              decoration: InputDecoration(
+                labelText: 'Provider',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'groq', child: Text('Groq')),
+                DropdownMenuItem(value: 'gemini', child: Text('Gemini')),
+              ],
+              onChanged: (v) { if (v != null) { setState(() => _provider = v); _refreshModels(); } },
+            ),
           ),
-          items: const [
-            DropdownMenuItem(value: 'llama-3.3-70b-versatile', child: Text('Llama 3.3 70B (text)')),
-            DropdownMenuItem(value: 'llama-3.1-8b-instant', child: Text('Llama 3.1 8B (text)')),
-            DropdownMenuItem(value: 'qwen/qwen3.6-27b', child: Text('Qwen 3.6 27B (vision)')),
-            DropdownMenuItem(value: 'llama-3.2-11b-vision-preview', child: Text('Llama 3.2 11B Vision (legacy)')),
-          ],
-          onChanged: (v) { if (v != null) setState(() => _model = v); },
-        ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              initialValue: _models.contains(_model) ? _model : null,
+              decoration: InputDecoration(
+                labelText: 'Model',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                suffixIcon: _loadingModels
+                    ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)))
+                    : IconButton(icon: const Icon(Icons.refresh, size: 18), onPressed: _refreshModels),
+              ),
+              items: _models.map((m) => DropdownMenuItem(value: m, child: Text(m, overflow: TextOverflow.ellipsis))).toList(),
+              onChanged: (v) { if (v != null) setState(() => _model = v); },
+            ),
+          ),
+        ]),
         const SizedBox(height: 12),
         TextField(
           controller: _prompt,
@@ -617,47 +990,174 @@ class _ModelTesterState extends State<_ModelTester> {
             const SizedBox(width: 8),
             ElevatedButton.icon(
               onPressed: _testing ? null : _run,
-              icon: _testing
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.play_arrow, size: 18),
-              label: Text(_testing ? 'Testing…' : 'Run Test'),
+              icon: _testing ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.play_arrow_rounded, size: 18),
+              label: Text(_testing ? 'Testing…' : 'Test'),
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        if (_error != null)
+        if (_result != null) ...[
+          const SizedBox(height: 12),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.red.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+            decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green.withValues(alpha: 0.3))),
+            child: SelectableText(_result!, style: const TextStyle(fontSize: 13)),
           ),
-        if (_result != null)
+        ],
+        if (_error != null) ...[
+          const SizedBox(height: 12),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: SelectableText(_result!, style: const TextStyle(fontSize: 13, height: 1.4)),
+            decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.withValues(alpha: 0.3))),
+            child: SelectableText(_error!, style: TextStyle(fontSize: 13, color: Colors.red[700])),
           ),
+        ],
+      ],
+    );
+  }
+}
+
+/// One-time cleanup button: strips thinking blocks from existing summaries in the DB.
+class _CleanupSummariesButton extends StatefulWidget {
+  const _CleanupSummariesButton();
+  @override State<_CleanupSummariesButton> createState() => _CleanupSummariesButtonState();
+}
+
+class _CleanupSummariesButtonState extends State<_CleanupSummariesButton> {
+  bool _running = false;
+  String? _result;
+
+  Future<void> _run() async {
+    setState(() { _running = true; _result = null; });
+    try {
+      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+        'action': 'cleanup_summaries',
+      });
+      final data = response.data;
+      if (data is Map) {
+        final cleaned = data['cleaned'] ?? 0;
+        final cleared = data['cleared'] ?? 0;
+        final total = data['total'] ?? 0;
+        if (mounted) setState(() => _result = 'Done! $total summaries checked, $cleaned cleaned, $cleared cleared (all-thinking → will regenerate).');
+      } else {
+        if (mounted) setState(() => _result = 'Unexpected response: $data');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _result = 'Error: $e');
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ElevatedButton.icon(
+          onPressed: _running ? null : _run,
+          icon: _running
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.cleaning_services, size: 18),
+          label: Text(_running ? 'Cleaning…' : 'Clean Existing Summaries'),
+        ),
         if (_result != null) ...[
           const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: _result!));
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied!'), duration: Duration(seconds: 1)));
-              },
-              icon: const Icon(Icons.copy, size: 16),
-              label: const Text('Copy result'),
-            ),
-          ),
+          Text(_result!, style: TextStyle(fontSize: 12, color: _result!.startsWith('Error') ? Colors.red : Colors.green[700])),
+        ],
+      ],
+    );
+  }
+}
+
+/// Batch convert button: converts PPTX/DOCX/Publisher notes to PDF via Office COM.
+/// Requires Windows + Microsoft Office installed.
+class _BatchConvertButton extends StatefulWidget {
+  const _BatchConvertButton();
+  @override State<_BatchConvertButton> createState() => _BatchConvertButtonState();
+}
+
+class _BatchConvertButtonState extends State<_BatchConvertButton> {
+  bool _running = false;
+  String? _result;
+  int _current = 0;
+  int _total = 0;
+  String _currentFile = '';
+
+  Future<void> _run() async {
+    if (!Platform.isWindows) {
+      setState(() => _result = 'Office COM conversion only works on Windows desktop.');
+      return;
+    }
+
+    setState(() {
+      _running = true;
+      _result = null;
+      _current = 0;
+      _total = 0;
+      _currentFile = '';
+    });
+
+    try {
+      final converter = OfficeComConverter();
+      final result = await converter.convertBatch(
+        onProgress: (current, total, fileName) {
+          if (mounted) {
+            setState(() {
+              _current = current;
+              _total = total;
+              _currentFile = fileName;
+            });
+          }
+        },
+      );
+
+      if (mounted) {
+        final msg = StringBuffer();
+        msg.write('Done! ${result.converted}/${result.total} converted');
+        if (result.failed > 0) msg.write(', ${result.failed} failed');
+        msg.write('.');
+        if (result.errors.isNotEmpty) {
+          msg.write('\n${result.errors.join('\n')}');
+        }
+        setState(() => _result = msg.toString());
+      }
+    } catch (e) {
+      if (mounted) setState(() => _result = 'Error: $e');
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ElevatedButton.icon(
+          onPressed: _running ? null : _run,
+          icon: _running
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.picture_as_pdf, size: 18),
+          label: Text(_running ? 'Converting…' : 'Convert with Office'),
+        ),
+        if (_running && _total > 0) ...[
+          const SizedBox(height: 8),
+          LinearProgressIndicator(value: _current / _total),
+          const SizedBox(height: 4),
+          Text('$_current/$_total — $_currentFile',
+              style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
+        if (_result != null) ...[
+          const SizedBox(height: 8),
+          Text(_result!,
+              style: TextStyle(
+                fontSize: 12,
+                color: _result!.startsWith('Error') || _result!.startsWith('Office')
+                    ? Colors.orange
+                    : Colors.green[700],
+              )),
         ],
       ],
     );

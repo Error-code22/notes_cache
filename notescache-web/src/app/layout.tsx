@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { ThemeProvider } from '../lib/theme'
 
 export const metadata: Metadata = {
   title: 'NotesCache — Many notes. One place.',
@@ -31,8 +32,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="mobile-web-app-capable" content="yes" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
-      <body>
-        {children}
+      <body className="bg-[#FAFAF7] text-gray-900 dark:bg-[#121212] dark:text-gray-100 antialiased">
+        <ThemeProvider>{children}</ThemeProvider>
         <script
           dangerouslySetInnerHTML={{
             __html: `

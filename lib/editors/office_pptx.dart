@@ -4,6 +4,13 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
+/// Structured slide: text blocks + embedded image bytes.
+class PptxSlide {
+  final List<String> texts;
+  final List<Uint8List> images;
+  PptxSlide({required this.texts, required this.images});
+}
+
 /// Minimal .pptx viewer: extracts slide text from the zip's XML.
 /// No maintained Dart pptx package exists, so we parse it directly.
 class PptxService {
@@ -63,6 +70,82 @@ class PptxService {
         }
       }
       slides.add(blocks);
+    }
+    return slides;
+  }
+
+  /// Reads slides with embedded images for PDF conversion.
+  static Future<List<PptxSlide>> readSlidesWithImages(File file) async {
+    final bytes = await file.readAsBytes();
+    final archive = ZipDecoder().decodeBuffer(InputStream(bytes));
+
+    // Collect all media (images) from ppt/media/
+    final media = <String, Uint8List>{};
+    for (final entry in archive.files) {
+      if (!entry.isFile) continue;
+      final name = entry.name.toLowerCase();
+      if (!name.startsWith('ppt/media/')) continue;
+      if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') ||
+          name.endsWith('.gif') || name.endsWith('.webp') || name.endsWith('.emf') ||
+          name.endsWith('.wmf')) {
+        media[entry.name] = Uint8List.fromList(entry.content);
+      }
+    }
+
+    var slideEntries = archive.files
+        .where((e) => e.isFile && e.name.startsWith('ppt/slides/slide') && e.name.endsWith('.xml'))
+        .toList();
+    if (slideEntries.isEmpty) {
+      slideEntries = archive.files
+          .where((e) => e.isFile && RegExp(r'/slide\d+\.xml$').hasMatch(e.name) && e.name.endsWith('.xml'))
+          .toList();
+    }
+    slideEntries.sort((a, b) {
+      int num(String name) => int.tryParse(RegExp(r'\d+').firstMatch(name)?.group(0) ?? '') ?? 0;
+      return num(a.name).compareTo(num(b.name));
+    });
+
+    final slides = <PptxSlide>[];
+    for (final entry in slideEntries) {
+      final content = Uint8List.fromList(entry.content);
+      final doc = XmlDocument.parse(utf8.decode(content));
+      final texts = <String>[];
+      final images = <Uint8List>[];
+
+      // Extract text
+      for (final el in doc.descendants.whereType<XmlElement>()) {
+        if (el.name.local == 't') {
+          final text = el.innerText.trim();
+          if (text.isNotEmpty) texts.add(text);
+        }
+      }
+
+      // Extract images via .rels relationships
+      final relsPath = entry.name.replaceFirst(
+        RegExp(r'slides/slide(\d+)\.xml$'),
+        'slides/_rels/slide\$1.xml.rels',
+      );
+      final relsEntry = archive.files.where((e) => e.name == relsPath).firstOrNull;
+      if (relsEntry != null) {
+        final relsDoc = XmlDocument.parse(utf8.decode(Uint8List.fromList(relsEntry.content)));
+        for (final rel in relsDoc.descendants.whereType<XmlElement>()) {
+          final target = rel.getAttribute('Target');
+          if (target == null) continue;
+          final baseName = target.split('/').last;
+          // Find matching media entry
+          for (final me in media.entries) {
+            if (me.key.endsWith('/$baseName') || me.key == 'ppt/media/$baseName') {
+              // Skip EMF/WMF (vector formats jsPDF can't handle)
+              final lower = me.key.toLowerCase();
+              if (lower.endsWith('.emf') || lower.endsWith('.wmf')) continue;
+              images.add(me.value);
+              break;
+            }
+          }
+        }
+      }
+
+      slides.add(PptxSlide(texts: texts, images: images));
     }
     return slides;
   }
