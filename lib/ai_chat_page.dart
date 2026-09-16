@@ -698,6 +698,10 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
           ? Color.alphaBlend(Colors.deepOrange.withOpacity(0.05), theme.scaffoldBackgroundColor)
           : theme.scaffoldBackgroundColor,
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.maybePop(context),
+        ),
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -721,6 +725,14 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
         backgroundColor: theme.colorScheme.surface,
         elevation: 0,
         actions: [
+          if (!isGuest)
+            Tooltip(
+              message: 'Chat history',
+              child: IconButton(
+                icon: const Icon(Icons.history),
+                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+              ),
+            ),
           if (!isGuest)
             Tooltip(
               message: _privateStudyMode ? 'End private study session' : 'Start private study session',

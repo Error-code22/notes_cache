@@ -1956,14 +1956,16 @@ class AiChatService {
   }
 
   Future<String> getResponse(String msg, List<Map<String, String>> history, {String? imageBase64, List<String>? imageBase64s}) async {
-    final user = Supabase.instance.client.auth.currentUser;
+    final session = Supabase.instance.client.auth.currentSession;
     try {
       final response = await Supabase.instance.client.functions.invoke(
         'notesy',
+        headers: {
+          if (session != null) 'Authorization': 'Bearer ${session.accessToken}',
+        },
         body: {
           'message': msg,
           'history': history,
-          'userId': user?.id ?? 'guest_user',
           if (imageBase64 != null) 'imageBase64': imageBase64,
           if (imageBase64s != null && imageBase64s.isNotEmpty) 'imageBase64s': imageBase64s,
         },
@@ -1985,14 +1987,16 @@ class AiChatService {
   /// Returns '' on failure — summaries are best-effort.
   Future<String> summarizeNote(String title, String text) async {
     try {
-      final user = Supabase.instance.client.auth.currentUser;
+      final session = Supabase.instance.client.auth.currentSession;
       final response = await Supabase.instance.client.functions.invoke(
         'notesy',
+        headers: {
+          if (session != null) 'Authorization': 'Bearer ${session.accessToken}',
+        },
         body: {
           'action': 'summarize',
           'title': title,
           'content': text,
-          'userId': user?.id ?? 'guest_user',
         },
       );
 
