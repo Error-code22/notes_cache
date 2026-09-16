@@ -444,7 +444,10 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
   Future<void> _refreshTextModels() async {
     setState(() => _loadingTextModels = true);
     try {
-      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+      final response = await Supabase.instance.client.functions.invoke('notesy', headers: {
+        if (Supabase.instance.client.auth.currentSession != null)
+          'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession!.accessToken}',
+      }, body: {
         'action': 'list_models',
         'provider': _textProvider,
       });
@@ -472,7 +475,10 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
   Future<void> _refreshVisionModels() async {
     setState(() => _loadingVisionModels = true);
     try {
-      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+      final response = await Supabase.instance.client.functions.invoke('notesy', headers: {
+        if (Supabase.instance.client.auth.currentSession != null)
+          'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession!.accessToken}',
+      }, body: {
         'action': 'list_models',
         'provider': _visionProvider,
       });
@@ -498,7 +504,10 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
     final p = provider ?? _textFallbackProvider;
     if (p.isEmpty) { setState(() => _textFallbackModels = []); return; }
     try {
-      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+      final response = await Supabase.instance.client.functions.invoke('notesy', headers: {
+        if (Supabase.instance.client.auth.currentSession != null)
+          'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession!.accessToken}',
+      }, body: {
         'action': 'list_models',
         'provider': p,
       });
@@ -522,7 +531,10 @@ class _AIControlRoomPageState extends State<_AIControlRoomPage> {
     final p = provider ?? _visionFallbackProvider;
     if (p.isEmpty) { setState(() => _visionFallbackModels = []); return; }
     try {
-      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+      final response = await Supabase.instance.client.functions.invoke('notesy', headers: {
+        if (Supabase.instance.client.auth.currentSession != null)
+          'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession!.accessToken}',
+      }, body: {
         'action': 'list_models',
         'provider': p,
       });
@@ -860,7 +872,10 @@ class _ModelTesterState extends State<_ModelTester> {
   Future<void> _refreshModels() async {
     setState(() => _loadingModels = true);
     try {
-      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+      final response = await Supabase.instance.client.functions.invoke('notesy', headers: {
+        if (Supabase.instance.client.auth.currentSession != null)
+          'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession!.accessToken}',
+      }, body: {
         'action': 'list_models',
         'provider': _provider,
       });
@@ -898,7 +913,10 @@ class _ModelTesterState extends State<_ModelTester> {
     }
     setState(() { _testing = true; _result = null; _error = null; });
     try {
-      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+      final response = await Supabase.instance.client.functions.invoke('notesy', headers: {
+        if (Supabase.instance.client.auth.currentSession != null)
+          'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession!.accessToken}',
+      }, body: {
         'action': 'test_model',
         'provider': _provider,
         'model': _model,
@@ -1031,7 +1049,10 @@ class _CleanupSummariesButtonState extends State<_CleanupSummariesButton> {
   Future<void> _run() async {
     setState(() { _running = true; _result = null; });
     try {
-      final response = await Supabase.instance.client.functions.invoke('notesy', body: {
+      final response = await Supabase.instance.client.functions.invoke('notesy', headers: {
+        if (Supabase.instance.client.auth.currentSession != null)
+          'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession!.accessToken}',
+      }, body: {
         'action': 'cleanup_summaries',
       });
       final data = response.data;

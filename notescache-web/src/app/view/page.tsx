@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState, Suspense } from 'react'
+import { useEffect, useRef, useState, Suspense, lazy } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import JSZip from 'jszip'
 import { pdfViewerUrl } from '../../lib/pptx-to-pdf'
+
+const PdfJsViewer = lazy(() => import('../../components/PdfJsViewer'))
 
 /** Prefer Cloudinary inline delivery so browsers render instead of download. */
 function inlineUrl(u: string): string {
@@ -148,6 +150,7 @@ function ViewerContent() {
   const isAudio = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'].includes(ext)
   const isVideo = ['.mp4', '.mov', '.mkv', '.webm', '.m4v'].includes(ext)
   const isText = ['.txt', '.md', '.json', '.xml', '.html', '.log', '.py', '.js', '.ts', '.dart', '.sql', '.sh', '.yaml', '.yml', '.css'].includes(ext)
+  const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
   const needsBlob = isPdf || isDocx || isXlsx
 
@@ -273,11 +276,17 @@ function ViewerContent() {
           <div>
             {loadErr && <ErrBox msg={loadErr} url={url} onBack={goBack} />}
             {fileBlobUrl ? (
-              <iframe
-                src={isPdf ? pdfViewerUrl(fileBlobUrl) : fileBlobUrl}
-                title="PDF viewer"
-                className="w-full h-[88vh] rounded-xl border border-gray-200 dark:border-white/10 bg-white"
-              />
+              isMobile ? (
+                <Suspense fallback={<Placeholder label="Loading PDF viewer…" />}>
+                  <PdfJsViewer url={fileBlobUrl} />
+                </Suspense>
+              ) : (
+                <iframe
+                  src={pdfViewerUrl(fileBlobUrl)}
+                  title="PDF viewer"
+                  className="w-full h-[88vh] rounded-xl border border-gray-200 dark:border-white/10 bg-white"
+                />
+              )
             ) : !loadErr ? (
               <Placeholder label="Loading PDF…" />
             ) : null}

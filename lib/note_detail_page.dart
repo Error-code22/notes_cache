@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -90,6 +91,8 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     return file;
   }
 
+  static const _imageExts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'};
+
   /// Generates an AI summary for this note (if missing) and caches it in the DB.
   Future<String?> _generateSummary({bool silent = false}) async {
     if (_summary != null && _summary!.isNotEmpty) return _summary;
@@ -98,7 +101,36 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     if (mounted) setState(() => _isSummarizing = true);
     try {
       final noteService = context.read<NoteService>();
+      final ext = _resolveFileExt();
+      final isImage = _imageExts.contains(ext);
+
       String text = widget.note.content.trim();
+
+      if (isImage) {
+        // For images, send as vision input instead of text extraction
+        final file = await _downloadNoteFile();
+        if (file != null) {
+          final bytes = await file.readAsBytes();
+          final imageB64 = base64Encode(bytes);
+          final response = await AiChatService().getResponse(
+            'Summarize this image for study purposes. Describe what it shows and any educational content.',
+            [],
+            imageBase64: imageB64,
+          );
+          if (response.isNotEmpty) {
+            await noteService.updateNoteSummary(widget.note.id, response);
+            if (mounted) setState(() => _summary = response);
+            return response;
+          }
+        }
+        if (!silent && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('AI couldn\'t summarize this image right now. Try again in a moment.'), backgroundColor: Colors.orange),
+          );
+        }
+        return null;
+      }
+
       if (text.isEmpty) {
         final file = await _downloadNoteFile();
         if (file != null) text = await noteService.extractNoteText(file);
@@ -106,8 +138,8 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       if (text.length < 20) {
         if (!silent && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Could not read this file. Old .ppt documents aren\'t readable in-app — try a .pptx, PDF, Word or text version.'),
+            SnackBar(
+              content: Text('Could not read this file ($ext). Try a .pptx, PDF, Word or text version.'),
               backgroundColor: Colors.orange,
             ),
           );
