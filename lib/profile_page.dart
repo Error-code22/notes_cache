@@ -419,7 +419,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
       const Color(0xFF2E7D32), const Color(0xFF6A1B9A), const Color(0xFFC62828),
       const Color(0xFFE65100), const Color(0xFF4E342E),
     ];
-    final fonts = ['Inter', 'Roboto', 'Poppins', 'Open Sans'];
+    final fonts = ['Inter', 'Roboto', 'Open Sans', 'Lato', 'Caveat', 'Indie Flower'];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

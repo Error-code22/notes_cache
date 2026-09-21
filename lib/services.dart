@@ -13,7 +13,6 @@ import 'editors/office_docx.dart';
 import 'editors/office_pptx.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:local_notifier/local_notifier.dart';
 import 'google_drive_auth_service.dart';
@@ -99,15 +98,17 @@ class ThemeProvider extends ChangeNotifier {
 
   ThemeData getThemeData(Brightness b) {
     final isDark = b == Brightness.dark;
-    // Apply the user-selected font (google_fonts loads it on demand).
-    // 'Roboto' is Flutter's default — no loading needed.
     String? fontFamily;
     if (_fontFamily != 'Roboto') {
-      try {
-        fontFamily = GoogleFonts.getFont(_fontFamily).fontFamily;
-      } catch (_) {
-        fontFamily = null;
-      }
+      // Map display names to bundled asset family names
+      const fontMap = {
+        'Inter': 'Inter',
+        'Open Sans': 'OpenSans',
+        'Lato': 'Lato',
+        'Caveat': 'Caveat',
+        'Indie Flower': 'IndieFlower',
+      };
+      fontFamily = fontMap[_fontFamily];
     }
     return ThemeData(
       useMaterial3: true,

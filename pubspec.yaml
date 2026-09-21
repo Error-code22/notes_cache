@@ -34,7 +34,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  google_fonts: ^6.2.1
+  # google_fonts removed — fonts bundled as assets for instant loading
   provider: ^6.1.2
   supabase_flutter: ^2.8.3
   flutter_dotenv: ^5.2.1
@@ -109,7 +109,27 @@ flutter:
     - .env
     - assets/images/logo.png
     - assets/data/decoy_chats.json
-  #   - images/a_dot_ham.jpeg
+    - assets/fonts/
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter.ttf
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto.ttf
+    - family: OpenSans
+      fonts:
+        - asset: assets/fonts/OpenSans.ttf
+    - family: Lato
+      fonts:
+        - asset: assets/fonts/Lato.ttf
+    - family: Caveat
+      fonts:
+        - asset: assets/fonts/Caveat.ttf
+    - family: IndieFlower
+      fonts:
+        - asset: assets/fonts/IndieFlower.ttf
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
