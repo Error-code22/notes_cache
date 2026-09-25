@@ -116,11 +116,67 @@ class Note {
       targetYear: map['target_year'] ?? 1,
       createdAt: DateTime.parse(map['created_at']),
       semester: map['semester'] ?? 1,
-      gDriveId: map['gdrive_id'],
+      gDriveId: map['gdrive_id'] ?? map['file_url'],
       category: map['category'],
       summary: map['summary'],
       pdfUrl: map['pdf_url'],
       isFromCache: isFromCache,
+    );
+  }
+}
+
+/// A row from `donated_notes` — the review queue / "my submissions" view.
+/// Unlike [Note], this carries the review status.
+class DonationSubmission {
+  final int id;
+  final String title;
+  final String lecturerName;
+  final int targetYear;
+  final int semester;
+  final String? gdriveId;
+  final String content;
+  final String? category;
+  final int fileSize;
+  final String? userId;
+  final String status; // pending | approved | rejected
+  final String? reviewNote;
+  final DateTime createdAt;
+
+  const DonationSubmission({
+    required this.id,
+    required this.title,
+    required this.lecturerName,
+    required this.targetYear,
+    required this.semester,
+    this.gdriveId,
+    this.content = '',
+    this.category,
+    this.fileSize = 0,
+    this.userId,
+    this.status = 'pending',
+    this.reviewNote,
+    required this.createdAt,
+  });
+
+  bool get isPending => status == 'pending';
+  bool get isApproved => status == 'approved';
+  bool get isRejected => status == 'rejected';
+
+  factory DonationSubmission.fromMap(Map<String, dynamic> map) {
+    return DonationSubmission(
+      id: int.tryParse('${map['id']}') ?? 0,
+      title: map['title'] ?? '',
+      lecturerName: map['lecturer_name'] ?? '',
+      targetYear: (map['target_year'] as num?)?.toInt() ?? 1,
+      semester: (map['semester'] as num?)?.toInt() ?? 1,
+      gdriveId: map['gdrive_id'] ?? map['file_url'],
+      content: map['content'] ?? '',
+      category: map['category'],
+      fileSize: (map['file_size'] as num?)?.toInt() ?? 0,
+      userId: map['user_id'] as String?,
+      status: (map['status'] as String?) ?? 'pending',
+      reviewNote: map['review_note'] as String?,
+      createdAt: DateTime.tryParse('${map['created_at']}') ?? DateTime.now(),
     );
   }
 }

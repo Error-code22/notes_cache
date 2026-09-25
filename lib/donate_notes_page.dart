@@ -27,12 +27,13 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
   int _selectedSemester = 1;
   String _searchQuery = '';
   Future<List<Note>>? _donatedNotesFuture;
+  Future<List<DonationSubmission>>? _myDonationsFuture;
   Timer? _searchDebounce;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadDonatedNotes();
     });
@@ -49,11 +50,11 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
 
   void _loadDonatedNotes() {
     final noteService = context.read<NoteService>();
-    final user = context.read<AuthService>().currentUser!;
     setState(() {
       _donatedNotesFuture = noteService.getDonatedNotes(
         searchQuery: _searchQuery.isEmpty ? null : _searchQuery,
       );
+      _myDonationsFuture = noteService.getMyDonations();
     });
   }
 
@@ -177,8 +178,8 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(_failedCount == 0
-                ? '$_uploadedCount files donated successfully!'
-                : '$_uploadedCount uploaded, $_failedCount failed'),
+                ? '$_uploadedCount file(s) submitted for review — an admin will publish them to the library.'
+                : '$_uploadedCount submitted, $_failedCount failed'),
             backgroundColor: _failedCount == 0 ? Colors.green : Colors.orange,
           ),
         );
@@ -209,6 +210,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
           tabs: const [
             Tab(icon: Icon(Icons.upload_rounded), text: 'Donate'),
             Tab(icon: Icon(Icons.library_books_rounded), text: 'Browse'),
+            Tab(icon: Icon(Icons.mark_email_read_rounded), text: 'My Submissions'),
           ],
         ),
       ),
@@ -217,14 +219,13 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
         children: [
           _buildDonateTab(theme),
           _buildBrowseTab(theme),
+          _buildMySubmissionsTab(theme),
         ],
       ),
     );
   }
 
   Widget _buildDonateTab(ThemeData theme) {
-    final user = context.watch<AuthService>().currentUser;
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -242,7 +243,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Help fellow students by sharing your lecture notes, slides, and study materials.',
+                    'Help fellow students by sharing your lecture notes, slides, and study materials. An admin reviews each submission before it appears in the shared library.',
                     style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withOpacity(0.7)),
                   ),
                 ),
@@ -425,7 +426,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
                     children: [
                       Icon(Icons.volunteer_activism, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
                       const SizedBox(height: 16),
-                      Text('No donated notes yet.', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4))),
+                      Text('No approved donations yet.', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4))),
                     ],
                   ),
                 );
@@ -455,6 +456,119 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
                     ),
                   );
                 },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Tab 3: what I sent, and whether an admin has reviewed it yet.
+  Widget _buildMySubmissionsTab(ThemeData theme) {
+    return Column(
+      children: [
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer.withOpacity(0.3),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Submissions are reviewed by an admin before they appear in the shared library.',
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.7)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<List<DonationSubmission>>(
+            future: _myDonationsFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final items = snapshot.data ?? [];
+              if (items.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.mark_email_read_rounded, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
+                      const SizedBox(height: 16),
+                      Text('You haven\'t submitted anything yet.',
+                          style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4))),
+                    ],
+                  ),
+                );
+              }
+              return RefreshIndicator(
+                onRefresh: () async => _loadDonatedNotes(),
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) {
+                    final d = items[index];
+                    final color = d.isApproved
+                        ? Colors.green
+                        : d.isRejected
+                            ? Colors.red
+                            : Colors.orange;
+                    final label = d.isApproved
+                        ? 'APPROVED'
+                        : d.isRejected
+                            ? 'REJECTED'
+                            : 'PENDING REVIEW';
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: color.withOpacity(0.15),
+                          child: Icon(
+                            d.isApproved
+                                ? Icons.check_circle_rounded
+                                : d.isRejected
+                                    ? Icons.cancel_rounded
+                                    : Icons.hourglass_top_rounded,
+                            color: color,
+                            size: 20,
+                          ),
+                        ),
+                        title: Text(d.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Year ${d.targetYear} • Sem ${d.semester} • ${d.category ?? 'Donation'}',
+                              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.5)),
+                            ),
+                            if (d.reviewNote != null && d.reviewNote!.isNotEmpty)
+                              Text(
+                                'Reason: ${d.reviewNote}',
+                                style: const TextStyle(fontSize: 11, color: Colors.redAccent),
+                              ),
+                          ],
+                        ),
+                        trailing: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: color.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color)),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               );
             },
           ),

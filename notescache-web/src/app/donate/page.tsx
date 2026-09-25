@@ -18,6 +18,34 @@ type LibraryNote = {
   content?: string
   file_size?: number
   created_at?: string
+  user_id?: string
+}
+
+// A row in `donated_notes` (review queue). id is BIGSERIAL.
+type DonationNote = {
+  id: number
+  title: string
+  lecturer_name?: string
+  target_year?: number
+  semester?: number
+  gdrive_id?: string
+  file_url?: string
+  category?: string
+  content?: string
+  file_size?: number
+  created_at?: string
+  user_id?: string
+  status?: string
+  library_note_id?: string | null
+}
+
+// Merged browse item: either a donation or a library note.
+// linkId is what /note?id=... should open (approved donations link to their
+// library copy in `notes`, never to the donation row itself).
+type BrowseRow = Omit<LibraryNote, 'id'> & {
+  id: string | number
+  linkId: string
+  library_note_id?: string | null
 }
 
 export default function DonatePage() {
@@ -34,7 +62,7 @@ export default function DonatePage() {
   const [done, setDone] = useState(false)
   const [convert, setConvert] = useState<{ label: string; detail?: string; percent?: number } | null>(null)
   const [lastTitles, setLastTitles] = useState<string[]>([])
-  const [list, setList] = useState<LibraryNote[]>([])
+  const [list, setList] = useState<BrowseRow[]>([])
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
 
@@ -51,27 +79,54 @@ export default function DonatePage() {
 
   useEffect(() => {
     ;(async () => {
-      // Donations are written into the shared `notes` library (same table
-      // /notes reads). Browse shows student uploads.
-      let q = supabase
+      // Browse = approved donations (donated_notes) + student uploads already
+      // in the shared library (notes). Both are filtered by search first.
+      const term = debounced.trim() ? `%${debounced.trim()}%` : null
+
+      let dq = supabase
+        .from('donated_notes')
+        .select('id, title, lecturer_name, target_year, semester, gdrive_id, file_url, category, content, file_size, created_at, user_id, library_note_id')
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      if (term) dq = dq.ilike('title', term)
+
+      let lq = supabase
         .from('notes')
         .select('id, title, lecturer_name, target_year, semester, gdrive_id, category, content, file_size, created_at, user_id')
         .in('lecturer_name', ['Student Donation', 'Student Upload'])
         .order('created_at', { ascending: false })
         .limit(100)
-      if (debounced.trim()) q = q.ilike('title', `%${debounced.trim()}%`)
+      if (term) lq = lq.ilike('title', term)
+
+      const [dn, ln] = await Promise.all([dq, lq])
+      if (dn.error) console.error('donate browse (donations)', dn.error.message)
+      if (ln.error) console.error('donate browse (library)', ln.error.message)
+
+      const donations: BrowseRow[] = ((dn.data as DonationNote[]) || []).map((d) => ({
+        ...d,
+        linkId: d.library_note_id ?? String(d.id),
+      }))
+      const library: BrowseRow[] = ((ln.data as LibraryNote[]) || []).map((n) => ({
+        ...n,
+        linkId: n.id,
+      }))
+
+      let rows = [...donations, ...library]
+        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+        .slice(0, 100)
+
       // Prefer showing the signed-in user's own uploads first if list is empty after filter
-      const { data, error: listErr } = await q
-      if (listErr) console.error('donate browse', listErr.message)
-      let rows = (data as LibraryNote[]) || []
       if (rows.length === 0 && user) {
-        const { data: mine } = await supabase
+        let mq = supabase
           .from('notes')
           .select('id, title, lecturer_name, target_year, semester, gdrive_id, category, content, file_size, created_at, user_id')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(50)
-        rows = (mine as LibraryNote[]) || []
+        if (term) mq = mq.ilike('title', term)
+        const { data: mine } = await mq
+        rows = ((mine as LibraryNote[]) || []).map((n) => ({ ...n, linkId: n.id }))
       }
       setList(rows)
     })()
@@ -113,7 +168,7 @@ export default function DonatePage() {
       return
     }
     if (!user) {
-      setError('Sign in so your donation appears in the shared library.')
+      setError('Sign in so your donation can be submitted for review.')
       return
     }
     setBusy(true)
@@ -168,25 +223,27 @@ export default function DonatePage() {
           }
         }
 
-        // 3) Insert library row: gdrive_id = original, pdf_url = converted
+        // 3) Insert into the review queue: gdrive_id = original, pdf_url = converted
         const row: Record<string, unknown> = {
           title: noteTitle,
-          lecturer_name: 'Student Upload',
+          lecturer_name: 'Student Donation',
           target_year: targetYear,
           semester,
           gdrive_id: original.url,
+          file_url: original.url,
           content: description.trim(),
           category: categoryFromName(file.name),
           file_size: file.size,
           user_id: user.id,
+          status: 'pending',
           ...(original.telegramMsgId != null ? { telegram_msg_id: original.telegramMsgId } : {}),
           ...(original.telegramFileId != null ? { telegram_file_id: original.telegramFileId } : {}),
           ...(pdfUrl ? { pdf_url: pdfUrl } : {}),
         }
 
-        const { data: inserted, error: dbErr } = await supabase.from('notes').insert(row).select('id').single()
-        if (dbErr) throw new Error(`File stored but library insert failed: ${dbErr.message}`)
-        if (!inserted) throw new Error('Library insert returned no row.')
+        const { data: inserted, error: dbErr } = await supabase.from('donated_notes').insert(row).select('id').single()
+        if (dbErr) throw new Error(`File uploaded but submission failed: ${dbErr.message}`)
+        if (!inserted) throw new Error('Submission returned no row.')
 
         savedTitles.push(noteTitle)
         ok++
@@ -204,7 +261,6 @@ export default function DonatePage() {
       setFiles([])
       setTitle('')
       setDescription('')
-      setTab('browse')
     }
   }
 
@@ -234,7 +290,8 @@ export default function DonatePage() {
       {tab === 'donate' ? (
         <>
           <div className="bg-pink-50 dark:bg-pink-500/10 border border-pink-200 dark:border-pink-500/30 rounded-xl px-4 py-3 text-[13px] text-pink-800 dark:text-pink-200 mb-5">
-            Share notes with everyone in the shared library. Sign-in required.
+            Share notes with everyone in the shared library. Submissions are
+            reviewed by an admin before they are published. Sign-in required.
             {!user && (
               <> <a href="/login" className="font-bold underline">Sign in</a> to donate.</>
             )}
@@ -315,7 +372,8 @@ export default function DonatePage() {
           {progress && <p className="text-sm text-indigo-600 mt-3">{progress}</p>}
           {done && (
             <div className="mt-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
-              <p className="font-semibold mb-1">Saved to the shared library.</p>
+              <p className="font-semibold mb-1">Submitted for review.</p>
+              <p className="text-xs mb-2">An admin will publish them to the shared library.</p>
               {lastTitles.length > 0 && (
                 <ul className="text-xs mb-2 list-disc pl-4">
                   {lastTitles.map((t) => <li key={t}>{t}</li>)}
@@ -348,8 +406,8 @@ export default function DonatePage() {
           <div className="space-y-2">
             {list.map((n) => (
               <a
-                key={n.id}
-                href={`/note?id=${n.id}`}
+                key={`${n.linkId}-${n.id}`}
+                href={`/note?id=${n.linkId}`}
                 className="block bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-2xl p-4 hover:border-pink-300 transition"
               >
                 <div className="font-semibold text-gray-900 dark:text-white text-sm">{n.title}</div>
