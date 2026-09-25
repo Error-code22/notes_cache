@@ -47,6 +47,10 @@ supabase/.temp/
 supabase/functions/
 node_modules/
 
+# Firebase — contains a per-project API key; re-download with:
+#   npx firebase-tools apps:sdkconfig ANDROID <appId> --project notescache -o android/app/google-services.json
+android/app/google-services.json
+
 # Screenshots & Media (dev only)
 *.png
 *.jpg

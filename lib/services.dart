@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -242,6 +243,13 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    // Remove FCM token so this device stops receiving pushes for this user
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await _supabase.from('device_tokens').delete().eq('token', token);
+      }
+    } catch (_) { /* best effort */ }
     await _supabase.auth.signOut();
     _enterGuestMode();
   }
@@ -2255,6 +2263,7 @@ class SupabaseKeepAliveService {
 class NotificationService {
   final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   bool _windowsReady = false;
+  int _nextId = 0;
 
   // Channel constants — must match between init() and showNotification()
   static const String _channelId = 'notescache_main';
@@ -2278,7 +2287,10 @@ class NotificationService {
         requestBadgePermission: true,
         requestSoundPermission: true,
       );
-      await _notifications.initialize(const InitializationSettings(android: android, iOS: ios));
+      await _notifications.initialize(
+        const InitializationSettings(android: android, iOS: ios),
+        onDidReceiveNotificationResponse: _onNotificationTapped,
+      );
 
       if (Platform.isAndroid) {
         // Pre-register the notification channel so it exists before any notification is shown.
@@ -2299,9 +2311,34 @@ class NotificationService {
     }
   }
 
+  /// Handles taps on notifications — routed through the navigator key so
+  /// it works regardless of current widget tree.
+  void _onNotificationTapped(NotificationResponse response) {
+    final payload = response.payload;
+    debugPrint('Notification tapped: $payload');
+    if (payload == null || payload.isEmpty) return;
+    try {
+      // Payload format: "route:chat:<roomId>" | "route:notes" | "route:updates"
+      final parts = payload.split(':');
+      if (parts.length >= 2 && parts[0] == 'route') {
+        navigatorKey.currentState?.pushNamed(parts.sublist(1).join(':'));
+      }
+    } catch (e) {
+      debugPrint('Notification tap handler error: $e');
+    }
+  }
+
+  /// Global navigator key so notification taps can navigate from anywhere.
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
   /// Asks for notification permission. Called AFTER the first frame renders
   /// (e.g. dashboard post-frame) so the OS dialog never delays startup.
   Future<void> requestPermission() async {
+    if (Platform.isIOS) {
+      final settings = await _notifications.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(alert: true, badge: true, sound: true);
+      debugPrint('iOS notification permission: $settings');
+      return;
+    }
     if (!Platform.isAndroid) return;
     try {
       await _notifications
@@ -2312,7 +2349,7 @@ class NotificationService {
     }
   }
 
-  Future<void> showNotification({required String title, required String body}) async {
+  Future<void> showNotification({required String title, required String body, String? payload}) async {
     debugPrint('NOTIFICATION TRIGGERED: $title - $body');
     // Honor the Settings toggles
     final prefs = await SharedPreferences.getInstance();
@@ -2340,9 +2377,14 @@ class NotificationService {
         importance: Importance.max,
         priority: Priority.high,
         playSound: withSound,
+        // Group notifications so they stack rather than overwrite
+        groupKey: 'notescache',
+        setAsGroupSummary: false,
       );
       const ios = DarwinNotificationDetails();
-      await _notifications.show(0, title, body, NotificationDetails(android: android, iOS: ios));
+      // Incrementing ID so each notification stacks instead of replacing the last
+      final id = _nextId++;
+      await _notifications.show(id, title, body, NotificationDetails(android: android, iOS: ios), payload: payload);
     } catch (e) {
       debugPrint('Notification show failed: $e');
     }
