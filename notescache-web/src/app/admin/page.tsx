@@ -6,9 +6,31 @@ import AppShell from '../../components/AppShell'
 import {
   DashboardIcon, GroupIcon, ForumIcon, BookIcon, BrainIcon, CloudIcon,
   MonitorIcon, HeadsetIcon, MegaphoneIcon, CardIcon, ConstructionIcon, DocIcon,
+  HeartIcon,
 } from '../../components/icons'
 
 type ProfileRow = { id: string; full_name?: string; role?: string }
+
+// A row of `donated_notes` (the donation review queue).
+type DonationRow = {
+  id: number
+  title?: string
+  lecturer_name?: string
+  target_year?: number
+  semester?: number
+  gdrive_id?: string
+  file_url?: string
+  pdf_url?: string
+  category?: string
+  content?: string
+  file_size?: number
+  user_id?: string
+  created_at?: string
+  status?: string
+  review_note?: string | null
+  reviewed_at?: string | null
+  library_note_id?: string | null
+}
 
 export default function AdminDashboardPage() {
   const { user, profile, loading } = useAuth()
@@ -24,6 +46,9 @@ export default function AdminDashboardPage() {
   const [msg, setMsg] = useState('')
   const [testOut, setTestOut] = useState('')
   const [busy, setBusy] = useState(false)
+  const [donations, setDonations] = useState<DonationRow[]>([])
+  const [recentDecisions, setRecentDecisions] = useState<DonationRow[]>([])
+  const [donationLoading, setDonationLoading] = useState(false)
 
   useEffect(() => {
     if (!isAdmin) return
@@ -68,8 +93,52 @@ export default function AdminDashboardPage() {
         const { data } = await supabase.from('pricing_plans').select('*').order('sort_order')
         setPlans((data as typeof plans) || [])
       }
+      if (section === 'donations') {
+        setDonationLoading(true)
+        await loadDonations()
+        setDonationLoading(false)
+      }
     })()
   }, [section, isAdmin])
+
+  async function loadDonations() {
+    const [pend, appr, rej] = await Promise.all([
+      supabase.rpc('list_donation_queue', { p_status: 'pending' }),
+      supabase.rpc('list_donation_queue', { p_status: 'approved' }),
+      supabase.rpc('list_donation_queue', { p_status: 'rejected' }),
+    ])
+    const err = pend.error || appr.error || rej.error
+    setMsg(err ? err.message : '')
+    setDonations((pend.data as DonationRow[]) || [])
+    const recent = [
+      ...(((appr.data as DonationRow[]) || []).slice(0, 10)),
+      ...(((rej.data as DonationRow[]) || []).slice(0, 10)),
+    ]
+    recent.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+    setRecentDecisions(recent.slice(0, 20))
+  }
+
+  async function approveDonation(id: number) {
+    const { data, error } = await supabase.rpc('approve_donation', { p_id: id })
+    if (error) {
+      setMsg(error.message)
+      return
+    }
+    setMsg(data ? `Approved — published as library note ${data}` : 'Approved.')
+    await loadDonations()
+  }
+
+  async function rejectDonation(id: number) {
+    const note = window.prompt('Reject this donation.\n\nReason (optional) — press Cancel to keep it pending:', '')
+    if (note === null) return
+    const { error } = await supabase.rpc('reject_donation', { p_id: id, p_note: note.trim() || null })
+    if (error) {
+      setMsg(error.message)
+      return
+    }
+    setMsg('Donation rejected.')
+    await loadDonations()
+  }
 
   async function setConfig(key: string, value: string) {
     setCfg((c) => ({ ...c, [key]: value }))
@@ -177,7 +246,7 @@ export default function AdminDashboardPage() {
         <button onClick={() => setSection(null)} className="text-xs font-bold text-indigo-600 shrink-0">GRID</button>
       }>
         {msg && <div className="mb-4 text-sm text-indigo-700 bg-indigo-50 dark:bg-indigo-500/10 rounded-xl px-3 py-2">{msg}</div>}
-        {renderSection(section, { cfg, setConfig, feedback, users, setUserRole, updates, addUpdate, roadmap, plans, testModel, cleanupSummaries, batchConvertPdf, testOut, busy, stats })}
+        {renderSection(section, { cfg, setConfig, feedback, users, setUserRole, updates, addUpdate, roadmap, plans, testModel, cleanupSummaries, batchConvertPdf, testOut, busy, stats, donations, recentDecisions, donationLoading, approveDonation, rejectDonation })}
       </AppShell>
     )
   }
@@ -186,6 +255,7 @@ export default function AdminDashboardPage() {
     { id: 'command', name: 'Command Center', desc: 'KPIs, usage & health', color: '#5C6BC0', icon: DashboardIcon },
     { id: 'users', name: 'User Hub', desc: 'Roles & verification', color: '#26A69A', icon: GroupIcon },
     { id: 'feedback', name: 'Feedback Central', desc: 'Bug reports & ideas', color: '#42A5F5', icon: ForumIcon },
+    { id: 'donations', name: 'Donation Review', desc: 'Approve student notes', color: '#F06292', icon: HeartIcon },
     { id: 'vault', name: 'Content Vault', desc: 'Notes & backups', color: '#66BB6A', icon: BookIcon },
     { id: 'ai', name: 'AI Control Room', desc: 'Model & limits', color: '#AB47BC', icon: BrainIcon },
     { id: 'cloud', name: 'Cloud Status', desc: 'Storage & bandwidth', color: '#EF5350', icon: CloudIcon },
@@ -218,6 +288,7 @@ const SECTION_TITLES: Record<string, string> = {
   command: 'Command Center',
   users: 'User Hub',
   feedback: 'Feedback Central',
+  donations: 'Donation Review',
   vault: 'Content Vault',
   ai: 'AI Control Room',
   cloud: 'Cloud Status',
@@ -245,6 +316,11 @@ type SecProps = {
   testOut: string
   busy: boolean
   stats: { users: number; notes: number }
+  donations: DonationRow[]
+  recentDecisions: DonationRow[]
+  donationLoading: boolean
+  approveDonation: (id: number) => Promise<void>
+  rejectDonation: (id: number) => Promise<void>
 }
 
 function renderSection(section: string, p: SecProps) {
@@ -290,6 +366,77 @@ function renderSection(section: string, p: SecProps) {
           </div>
         ))}
         {!p.feedback.length && <div className="text-gray-400 text-sm py-8 text-center">No feedback yet.</div>}
+      </div>
+    )
+  }
+  if (section === 'donations') {
+    if (p.donationLoading) {
+      return <div className="text-gray-400 text-sm py-8 text-center">Loading donation queue…</div>
+    }
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <Kpi label="Pending review" value={p.donations.length} />
+          <Kpi label="Recently reviewed" value={p.recentDecisions.length} />
+        </div>
+
+        <div className="space-y-2">
+          {p.donations.map((d) => {
+            const preview = d.pdf_url || d.gdrive_id || d.file_url
+            return (
+              <div key={d.id} className="bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-2xl p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-semibold text-sm text-gray-900 dark:text-white">{d.title || 'Untitled donation'}</div>
+                  <StatusBadge status={d.status} />
+                </div>
+                <div className="text-[11px] text-gray-400 mt-1">
+                  from {d.user_id ? `${d.user_id.slice(0, 8)}…` : 'unknown'} ·{' '}
+                  {d.created_at ? new Date(d.created_at).toLocaleDateString() : '—'}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-0.5">
+                  Year {d.target_year ?? '—'} · Sem {d.semester ?? '—'} · {d.category || 'file'} · {d.lecturer_name || 'Student'}
+                </div>
+                {d.content && <div className="text-xs text-gray-600 dark:text-gray-300 mt-2 whitespace-pre-wrap">{d.content}</div>}
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {preview && (
+                    <a href={preview} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-gray-300 dark:border-white/15 text-gray-600 dark:text-gray-300">
+                      Preview
+                    </a>
+                  )}
+                  <button onClick={() => p.approveDonation(d.id)} className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-600 text-white">
+                    Approve
+                  </button>
+                  <button onClick={() => p.rejectDonation(d.id)} className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-red-600 text-white">
+                    Reject
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+          {!p.donations.length && (
+            <div className="text-gray-400 text-sm py-8 text-center">No donations waiting for review.</div>
+          )}
+        </div>
+
+        {p.recentDecisions.length > 0 && (
+          <div>
+            <div className="text-xs font-bold text-gray-500 mb-2">Recently reviewed</div>
+            <div className="space-y-2">
+              {p.recentDecisions.map((d) => (
+                <div key={d.id} className="bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-gray-800 dark:text-gray-200 truncate">{d.title || 'Untitled donation'}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">
+                      {d.created_at ? new Date(d.created_at).toLocaleDateString() : '—'}
+                      {d.library_note_id ? ' · published' : ''}
+                    </div>
+                  </div>
+                  <StatusBadge status={d.status} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -401,6 +548,19 @@ function Kpi({ label, value }: { label: string; value: number }) {
       <div className="text-2xl font-black text-gray-900 dark:text-white">{value}</div>
       <div className="text-xs text-gray-500 mt-1">{label}</div>
     </div>
+  )
+}
+
+function StatusBadge({ status }: { status?: string }) {
+  const s = status || 'pending'
+  const style =
+    s === 'approved'
+      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+      : s === 'rejected'
+        ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+        : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+  return (
+    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${style}`}>{s}</span>
   )
 }
 

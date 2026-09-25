@@ -1158,6 +1158,9 @@ class NoteService {
     }
   }
 
+  /// Submits a donation for admin review — it is NOT public until approved.
+  /// Writes both `gdrive_id` (what Note.fromMap reads) and `file_url`
+  /// (legacy column) so the file opens either way.
   Future<bool> saveDonatedNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, int? fileSize, String? userId}) async {
     try {
       await _supabase.from('donated_notes').insert({
@@ -1165,10 +1168,12 @@ class NoteService {
         'lecturer_name': lecturerName,
         'target_year': targetYear,
         'semester': semester,
+        'gdrive_id': gDriveId,
         'file_url': gDriveId,
         'content': content ?? '',
         'category': category ?? 'Donation',
         'file_size': fileSize ?? 0,
+        'status': 'pending',
         'created_at': DateTime.now().toIso8601String(),
         if (userId != null) 'user_id': userId,
       });
@@ -1176,9 +1181,10 @@ class NoteService {
     } catch (e) { debugPrint('saveDonatedNote error: $e'); return false; }
   }
 
+  /// Public browse list — only admin-approved donations are visible.
   Future<List<Note>> getDonatedNotes({String? searchQuery}) async {
     try {
-      var q = _supabase.from('donated_notes').select();
+      var q = _supabase.from('donated_notes').select().eq('status', 'approved');
       if (searchQuery != null && searchQuery.isNotEmpty) {
         q = q.ilike('title', '%$searchQuery%');
       }
@@ -1188,6 +1194,48 @@ class NoteService {
       debugPrint('getDonatedNotes error: $e');
       return [];
     }
+  }
+
+  /// The signed-in user's own submissions (pending / approved / rejected).
+  Future<List<DonationSubmission>> getMyDonations() async {
+    final uid = _supabase.auth.currentUser?.id;
+    if (uid == null) return [];
+    try {
+      final List<dynamic> data = await _supabase
+          .from('donated_notes')
+          .select()
+          .eq('user_id', uid)
+          .order('created_at', ascending: false);
+      return data.map((item) => DonationSubmission.fromMap(item)).toList();
+    } catch (e) {
+      debugPrint('getMyDonations error: $e'); return [];
+    }
+  }
+
+  /// Admin review queue — non-admins get [] (RPC returns an empty set).
+  Future<List<DonationSubmission>> getDonationQueue({String status = 'pending'}) async {
+    try {
+      final data = await _supabase.rpc('list_donation_queue', params: {'p_status': status});
+      return (data as List).map((item) => DonationSubmission.fromMap(Map<String, dynamic>.from(item))).toList();
+    } catch (e) {
+      debugPrint('getDonationQueue error: $e'); return [];
+    }
+  }
+
+  /// Admin: publish a donation into the shared `notes` library.
+  Future<bool> approveDonation(int id) async {
+    try {
+      await _supabase.rpc('approve_donation', params: {'p_id': id});
+      return true;
+    } catch (e) { debugPrint('approveDonation error: $e'); return false; }
+  }
+
+  /// Admin: decline a donation (never published).
+  Future<bool> rejectDonation(int id, {String? note}) async {
+    try {
+      await _supabase.rpc('reject_donation', params: {'p_id': id, 'p_note': note});
+      return true;
+    } catch (e) { debugPrint('rejectDonation error: $e'); return false; }
   }
 
   Future<List<AppFeedback>> getAllFeedback() async {

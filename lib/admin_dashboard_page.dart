@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'services.dart';
 import 'models.dart';
 import 'user_manager_page.dart';
@@ -32,6 +33,7 @@ class AdminDashboardPage extends StatelessWidget {
     {'name': 'Plans', 'desc': 'Manage subscription plans', 'icon': Icons.card_membership_rounded, 'color': Color(0xFF26C6DA), 'page': 9},
     {'name': 'Roadmap', 'desc': 'App feature plans', 'icon': Icons.construction_rounded, 'color': Color(0xFF26A69A), 'page': 11},
     {'name': 'Docs & Legal', 'desc': 'About, terms & privacy', 'icon': Icons.description_rounded, 'color': Color(0xFF8D6E63), 'page': 10},
+    {'name': 'Donations', 'desc': 'Approve student shares', 'icon': Icons.volunteer_activism_rounded, 'color': Color(0xFFEC407A), 'page': 12},
   ];
 
   static final _pages = <Widget>[
@@ -47,6 +49,7 @@ class AdminDashboardPage extends StatelessWidget {
     const _PlansManagerPage(),
     const _DocsAndLegalPage(),
     const _RoadmapManagerPage(),
+    const _DonationsReviewPage(),
   ];
 
   @override
@@ -2066,4 +2069,271 @@ Widget _multiline(String label, TextEditingController c, String hint) {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         alignLabelWithHint: true, contentPadding: const EdgeInsets.all(12)),
   );
+}
+
+// ── Donation review queue ────────────────────────────────────────────────
+// Students submit to donated_notes with status='pending'. Approving copies
+// the row into the shared `notes` library; rejecting never publishes it.
+class _DonationsReviewPage extends StatefulWidget {
+  const _DonationsReviewPage();
+
+  @override
+  State<_DonationsReviewPage> createState() => _DonationsReviewPageState();
+}
+
+class _DonationsReviewPageState extends State<_DonationsReviewPage> with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+  final _service = NoteService();
+  List<DonationSubmission> _pending = [];
+  List<DonationSubmission> _approved = [];
+  List<DonationSubmission> _rejected = [];
+  bool _loading = true;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 3, vsync: this)..addListener(() { if (!_tabs.indexIsChanging) _load(); });
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final results = await Future.wait([
+      _service.getDonationQueue(status: 'pending'),
+      _service.getDonationQueue(status: 'approved'),
+      _service.getDonationQueue(status: 'rejected'),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _pending = results[0];
+      _approved = results[1];
+      _rejected = results[2];
+      _loading = false;
+    });
+  }
+
+  Future<void> _approve(DonationSubmission d) async {
+    if (_busy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Publish to library?'),
+        content: Text('"${d.title}" will become visible to everyone in the shared library as a Student Donation.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Approve')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _busy = true);
+    final ok = await _service.approveDonation(d.id);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok ? '✅ Published "${d.title}"' : 'Approval failed'),
+      backgroundColor: ok ? Colors.green : Colors.red,
+    ));
+    if (ok) _load();
+  }
+
+  Future<void> _reject(DonationSubmission d) async {
+    if (_busy) return;
+    final noteCtrl = TextEditingController();
+    final note = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reject donation'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('"${d.title}" will not be published. An optional reason is shown to the donor.', style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteCtrl,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'Reason (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, noteCtrl.text.trim()),
+            child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+    if (note == null) return;
+    setState(() => _busy = true);
+    final ok = await _service.rejectDonation(d.id, note: note.isEmpty ? null : note);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok ? 'Rejected "${d.title}"' : 'Reject failed'),
+      backgroundColor: ok ? Colors.orange : Colors.red,
+    ));
+    if (ok) _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Donation Review'),
+        bottom: TabBar(
+          controller: _tabs,
+          tabs: [
+            Tab(text: 'Pending (${_pending.length})'),
+            Tab(text: 'Approved (${_approved.length})'),
+            Tab(text: 'Rejected (${_rejected.length})'),
+          ],
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tabs,
+              children: [
+                _list(theme, _pending, pending: true),
+                _list(theme, _approved, pending: false),
+                _list(theme, _rejected, pending: false, showRejected: true),
+              ],
+            ),
+    );
+  }
+
+  Widget _list(ThemeData theme, List<DonationSubmission> items,
+      {required bool pending, bool showRejected = false}) {
+    if (items.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(pending ? Icons.inbox_rounded : Icons.folder_open_rounded,
+                size: 64, color: theme.colorScheme.onSurface.withOpacity(0.15)),
+            const SizedBox(height: 12),
+            Text(pending ? 'No donations waiting for review.' : 'Nothing here yet.',
+                style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.5))),
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: items.length,
+        itemBuilder: (context, i) {
+          final d = items[i];
+          final statusColor = d.isPending
+              ? Colors.orange
+              : d.isApproved
+                  ? Colors.green
+                  : Colors.red;
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(d.title,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                            maxLines: 2, overflow: TextOverflow.ellipsis),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(d.status.toUpperCase(),
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: statusColor)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Year ${d.targetYear} • Sem ${d.semester} • ${d.category ?? 'Donation'} • ${d.lecturerName}',
+                    style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                  ),
+                  if (d.content.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(d.content, style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.75))),
+                  ],
+                  if (d.reviewNote != null && d.reviewNote!.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text('Reason: ${d.reviewNote}',
+                        style: const TextStyle(fontSize: 12, color: Colors.redAccent, fontStyle: FontStyle.italic)),
+                  ],
+                  const SizedBox(height: 6),
+                  Text(
+                    'Submitted ${d.createdAt.day}/${d.createdAt.month}/${d.createdAt.year} • ${d.userId == null ? 'guest' : 'account'}',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withOpacity(0.45)),
+                  ),
+                  if (pending || showRejected || d.isApproved) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        if (d.gdriveId != null && d.gdriveId!.isNotEmpty)
+                          OutlinedButton.icon(
+                            onPressed: () => _openFile(d.gdriveId!),
+                            icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                            label: const Text('Preview'),
+                          ),
+                        const Spacer(),
+                        if (pending) ...[
+                          OutlinedButton(
+                            onPressed: _busy ? null : () => _reject(d),
+                            style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                            child: const Text('Reject'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: _busy ? null : () => _approve(d),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                            child: _busy
+                                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                : const Text('Approve'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openFile(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open file'), backgroundColor: Colors.red));
+      }
+    }
+  }
 }

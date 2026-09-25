@@ -18,7 +18,9 @@ import 'ai_chat_page.dart';
 import 'updates_page.dart';
 import 'feedback_page.dart';
 import 'donate_notes_page.dart';
+import 'local_docs_page.dart';
 import 'push_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -95,7 +97,60 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           context.read<NotificationService>().requestPermission();
           unawaited(_checkForUpdate());
         }
+
+        // First-run setup: offer to import the user's notes folder.
+        unawaited(_maybeOfferNotesFolderSetup());
       });
+  }
+
+  /// One-time setup prompt (per install). "Select folder" hands off to
+  /// LocalDocsPage, which shows the Terms of Service disclosure and then
+  /// walks the chosen folder. "Later" never nags again.
+  Future<void> _maybeOfferNotesFolderSetup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('setup_notes_folder_seen') == true) return;
+      if (!mounted) return;
+
+      final choice = await showDialog<String>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Set up your notes'),
+          content: const SingleChildScrollView(
+            child: Text(
+              'Have a folder full of lecture notes?\n\n'
+              'Pick it once and every PDF, Word, PowerPoint, Excel and text file in it '
+              'becomes readable right here in NotesCache — offline, opened in place.\n\n'
+              'Nothing is uploaded by this step, and nothing is shared with anyone '
+              'unless you explicitly choose to. You will be asked to accept the '
+              'Terms of Service before the folder is read.',
+              style: TextStyle(fontSize: 13.5, height: 1.5),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'later'),
+              child: const Text('Later'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, 'pick'),
+              child: const Text('SELECT FOLDER'),
+            ),
+          ],
+        ),
+      );
+
+      await prefs.setBool('setup_notes_folder_seen', true);
+      if (choice == 'pick' && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const LocalDocsPage(autoImportFolder: true)),
+        );
+      }
+    } catch (e) {
+      debugPrint('Notes folder setup prompt failed: $e');
+    }
   }
 
   @override

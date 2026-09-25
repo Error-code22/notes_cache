@@ -17,7 +17,10 @@ import 'services.dart';
 ///  - "Imported": files the user explicitly picked to copy into the app's
 ///    private storage (guaranteed offline).
 class LocalDocsPage extends StatefulWidget {
-  const LocalDocsPage({super.key});
+  /// Setup flow: jump straight into folder ingestion when the page opens.
+  final bool autoImportFolder;
+
+  const LocalDocsPage({super.key, this.autoImportFolder = false});
 
   @override
   State<LocalDocsPage> createState() => _LocalDocsPageState();
@@ -44,6 +47,8 @@ class LocalDocEntry {
 class _LocalDocsPageState extends State<LocalDocsPage> {
   static const String _indexKey = 'local_docs_index';
   static const String _scannedKey = 'local_docs_scanned';
+  static const String _folderTosKey = 'folder_import_tos_accepted';
+  static const String _foldersKey = 'ingested_folders';
 
   // Document-only extensions (no images, no media)
   static const Set<String> _docExts = {
@@ -57,6 +62,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   bool _scanning = false;
   bool _hasPermission = false;
   bool _scannedBefore = false;
+  bool _tosAccepted = false;
 
   @override
   void initState() {
@@ -64,6 +70,16 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
     _loadIndex();
     _checkPermission();
     _loadScannedFlag();
+    _loadFolderTos();
+    if (widget.autoImportFolder) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pickFolderForIngest());
+    }
+  }
+
+  Future<void> _loadFolderTos() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _tosAccepted = prefs.getBool(_folderTosKey) ?? false);
   }
 
   Future<void> _loadIndex() async {
@@ -176,28 +192,121 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
     }
   }
 
-  /// Desktop (Windows/Linux/macOS): pick a folder and scan it instead of
-  /// the phone-style whole-device scan.
-  Future<void> _pickFolderOnDesktop() async {
-    final path = await FilePicker.getDirectoryPath();
-    if (path == null) return;
+  /// ── Folder ingestion ────────────────────────────────────────────────
+  /// "Select your notes folder": every supported document inside it
+  /// (recursively) is registered for in-place reading. Reading a folder is
+  /// gated by a one-time Terms of Service disclosure; files are never
+  /// uploaded or copied by this flow — sharing to the library stays a
+  /// separate, per-file, explicit action.
+  Future<void> _pickFolderForIngest() async {
+    if (!mounted) return;
+
+    // Phone: arbitrary paths are only readable with all-files access.
+    if ((Platform.isAndroid || Platform.isIOS) && !_hasPermission) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Device access needed'),
+          content: const Text(
+            'To read a folder of notes, Android needs the one-time "All files access" permission. '
+            'The app only reads documents (PDF, Word, PowerPoint, Excel, text) — never photos or media.',
+            style: TextStyle(fontSize: 13),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('GRANT ACCESS')),
+          ],
+        ),
+      );
+      if (proceed != true) return;
+      await _requestAccess();
+      if (!_hasPermission) return; // user backed out of the settings screen
+    }
+
+    // One-time ToS disclosure before we touch any folder.
+    if (!_tosAccepted) {
+      final agreed = await _showFolderTosDialog();
+      if (!agreed) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_folderTosKey, true);
+      if (mounted) setState(() => _tosAccepted = true);
+    }
+
+    final path = await FilePicker.getDirectoryPath(dialogTitle: 'Select your notes folder');
+    if (path == null || !mounted) return;
+
     setState(() => _scanning = true);
     final found = <File>[];
     await _walk(Directory(path), found, depth: 0, maxDepth: 8);
+
+    final existing = _scanned.map((f) => f.path).toSet();
+    final added = found.where((f) => !existing.contains(f.path)).toList()
+      ..sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
+
     if (!mounted) return;
     setState(() {
-      _scanned = found..sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
+      _scanned = [..._scanned, ...added]
+        ..sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
       _scanning = false;
+      _scannedBefore = true;
     });
     await _saveScannedFlag();
+
+    // Remember the folder so setup can offer a re-sync later.
+    final prefs = await SharedPreferences.getInstance();
+    final folders = prefs.getStringList(_foldersKey) ?? [];
+    if (!folders.contains(path)) {
+      folders.add(path);
+      await prefs.setStringList(_foldersKey, folders);
+    }
+
+    // Land the user on the list that now holds their notes.
+    if (mounted) DefaultTabController.of(context).animateTo(0);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('📄 Found ${found.length} document(s) in that folder'),
-          backgroundColor: Colors.blue,
+          content: Text(added.isEmpty
+              ? 'All documents in that folder are already listed'
+              : '📚 ${added.length} document(s) from "${path.split(RegExp(r'[/\\]')).last}" added'),
+          backgroundColor: added.isEmpty ? Colors.blue : Colors.green,
         ),
       );
     }
+  }
+
+  /// The disclosure itself — shown once per install (see _folderTosKey).
+  Future<bool> _showFolderTosDialog() async {
+    final agreed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Before importing a folder'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text(
+                'You are about to let NotesCache read every document in a folder you choose.',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              SizedBox(height: 10),
+              Text('• Only document types are read: PDF, Word, PowerPoint, Excel, text and Markdown.', style: TextStyle(fontSize: 12.5, height: 1.4)),
+              SizedBox(height: 6),
+              Text('• Files are opened in place on this device. Importing a folder does not copy or upload anything.', style: TextStyle(fontSize: 12.5, height: 1.4)),
+              SizedBox(height: 6),
+              Text('• Sharing a file to the shared library is always a separate, explicit action you trigger per file.', style: TextStyle(fontSize: 12.5, height: 1.4)),
+              SizedBox(height: 6),
+              Text('• By continuing you confirm these notes are yours to use, and that this is covered by the app\'s Terms of Service (User Content).', style: TextStyle(fontSize: 12.5, height: 1.4)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('I AGREE — CONTINUE')),
+        ],
+      ),
+    );
+    return agreed == true;
   }
 
   Future<void> _walk(Directory dir, List<File> out, {required int depth, required int maxDepth}) async {
@@ -301,7 +410,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('This uploads the document to the shared NotesCache library, visible to everyone. This action is covered by the app\'s Terms of Service.', style: TextStyle(fontSize: 12)),
+              const Text('This submits the document for admin review. Once approved it appears in the shared NotesCache library, visible to everyone. This action is covered by the app\'s Terms of Service.', style: TextStyle(fontSize: 12)),
               const SizedBox(height: 16),
               DropdownButtonFormField<int>(
                 initialValue: year,
@@ -362,7 +471,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
     );
     if (mounted) {
       messenger.showSnackBar(
-        SnackBar(content: Text(ok ? '✅ Shared to the library!' : 'Saved to library failed'), backgroundColor: ok ? Colors.green : Colors.red),
+        SnackBar(content: Text(ok ? '✅ Submitted for review — an admin will publish it to the library.' : 'Submit failed'), backgroundColor: ok ? Colors.green : Colors.red),
       );
     }
   }
@@ -465,12 +574,23 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
               ],
             ),
             const SizedBox(height: 12),
-            ElevatedButton.icon(
-              onPressed: _scanning ? null : _pickFolderOnDesktop,
-              icon: _scanning
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.folder_open_rounded),
-              label: Text(_scanning ? 'Scanning...' : 'CHOOSE FOLDER'),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _scanning ? null : _pickFolderForIngest,
+                    icon: _scanning
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.folder_open_rounded),
+                    label: Text(_scanning ? 'Scanning...' : 'CHOOSE FOLDER'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Importing a folder registers its documents for in-place reading — nothing is uploaded.',
+              style: TextStyle(fontSize: 11, height: 1.3),
             ),
           ],
         ),
@@ -518,6 +638,13 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
         const SizedBox(width: 8),
         const Text('Device access granted', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.green, fontSize: 13)),
         const Spacer(),
+        TextButton.icon(
+          onPressed: _scanning ? null : _pickFolderForIngest,
+          icon: _scanning
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.create_new_folder_outlined, size: 18),
+          label: const Text('Import folder'),
+        ),
         TextButton.icon(
           onPressed: _scanning ? null : _scanDevice,
           icon: _scanning
