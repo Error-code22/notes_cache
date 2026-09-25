@@ -18,6 +18,7 @@ import 'ai_chat_page.dart';
 import 'updates_page.dart';
 import 'feedback_page.dart';
 import 'donate_notes_page.dart';
+import 'push_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -56,7 +57,7 @@ class _FeaturePill extends StatelessWidget {
   }
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ConnectivityService _connectivity = ConnectivityService();
   final SupabaseKeepAliveService _keepAlive = SupabaseKeepAliveService();
   bool _showCommsButton = true;
@@ -65,6 +66,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _connectivity.start();
     _keepAlive.start();
     _loadHomeConfig();
@@ -97,7 +99,19 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Re-subscribe realtime channels — the socket may have dropped
+      // while backgrounded, silently killing notification triggers.
+      _setupBackgroundNotifications();
+      // Refresh FCM token in case it rotated while app was dead
+      PushService.instance.init();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectivity.dispose();
     _keepAlive.dispose();
     super.dispose();
@@ -130,6 +144,15 @@ class _DashboardPageState extends State<DashboardPage> {
     final user = authService.currentUser;
 
     if (user != null) {
+      // Register FCM token for this user (server pushes route through it)
+      PushService.instance.init();
+
+      // Remove previous subscriptions so re-subscribing (e.g. on app resume)
+      // doesn't create duplicate/conflicting channels.
+      for (final name in ['public:chat_messages', 'public:notes', 'public:app_updates', 'public:home_config', 'public:home_config_app_config']) {
+        supabase.removeChannel(supabase.channel(name));
+      }
+
       // 1. Chat Messages
       supabase.channel('public:chat_messages').onPostgresChanges(
         event: PostgresChangeEvent.insert,
@@ -138,7 +161,11 @@ class _DashboardPageState extends State<DashboardPage> {
         callback: (payload) {
           final msg = payload.newRecord;
           if (msg['sender_id'] != user.id) {
-            ns.showNotification(title: 'New Message from ${msg['sender_name']}', body: msg['content']);
+            ns.showNotification(
+              title: 'New Message from ${msg['sender_name']}',
+              body: msg['content'],
+              payload: 'route:/dashboard',
+            );
           }
         }
       ).subscribe();
@@ -151,7 +178,7 @@ class _DashboardPageState extends State<DashboardPage> {
         callback: (payload) {
           final note = payload.newRecord;
           if (note['target_year'] == user.yearLevel && note['lecturer_name'] != 'Student Upload' && note['lecturer_name'] != 'Guest Contributor') {
-            ns.showNotification(title: 'New Material: ${note['title']}', body: 'Uploaded by ${note['lecturer_name']}');
+            ns.showNotification(title: 'New Material: ${note['title']}', body: 'Uploaded by ${note['lecturer_name']}', payload: 'route:/dashboard');
           }
         }
       ).subscribe();
@@ -163,7 +190,7 @@ class _DashboardPageState extends State<DashboardPage> {
         table: 'app_updates',
         callback: (payload) {
           final update = payload.newRecord;
-          ns.showNotification(title: 'App Update: ${update['title']}', body: update['content']);
+          ns.showNotification(title: 'App Update: ${update['title']}', body: update['content'], payload: 'route:/dashboard');
         }
       ).subscribe();
 

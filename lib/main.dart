@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'services.dart';
+import 'push_service.dart';
 import 'login_page.dart';
 import 'dashboard_page.dart';
 
@@ -21,9 +23,22 @@ void main() async {
     ),
   );
 
+  // Initialize Firebase (for FCM push notifications).
+  // Requires android/app/google-services.json — skip gracefully if absent.
+  try {
+    await Firebase.initializeApp();
+    await PushService.instance.init();
+  } catch (e) {
+    debugPrint('Firebase not configured (google-services.json missing?) — push disabled: $e');
+  }
+
   // Initialize Notifications
   final notificationService = NotificationService();
   await notificationService.init();
+  // Route foreground FCM messages through the local notification pipeline
+  PushService.instance.setOnPushReceived(
+    (title, body) => notificationService.showNotification(title: title, body: body, payload: 'route:/dashboard'),
+  );
 
   runApp(
     MultiProvider(
@@ -51,6 +66,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'NotesCache',
       debugShowCheckedModeBanner: false,
+      navigatorKey: NotificationService.navigatorKey,
       themeMode: themeProvider.themeMode,
       theme: themeProvider.getThemeData(Brightness.light),
       darkTheme: themeProvider.getThemeData(Brightness.dark),

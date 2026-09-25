@@ -5,6 +5,13 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Google Services (FCM) — only apply when google-services.json exists,
+// so the app still builds before Firebase is configured.
+// Add android/app/google-services.json from the Firebase console to enable push.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.notescache.notes_cache"
     compileSdk = 37
