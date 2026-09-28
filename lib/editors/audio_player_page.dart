@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import '../services.dart';
 
 /// Audio player with play/pause/seek + progress (audioplayers).
 class AudioPlayerPage extends StatefulWidget {
@@ -22,6 +23,8 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   StreamSubscription<void>? _completeSub;
+  bool _transcribing = false;
+  Map<String, dynamic>? _transcript;
 
   @override
   void initState() {
@@ -65,6 +68,26 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
     final m = d.inMinutes.toString().padLeft(2, '0');
     final s = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+
+  Future<void> _transcribe() async {
+    if (_transcribing) return;
+    setState(() => _transcribing = true);
+    final result = await NoteService().transcribeAudio(widget.file);
+    if (!mounted) return;
+    setState(() {
+      _transcribing = false;
+      if (result['error'] == null && (result['text'] ?? '').toString().isNotEmpty) {
+        _transcript = result;
+      } else {
+        _transcript = {'error': (result['error'] ?? 'Empty transcript').toString()};
+      }
+    });
+    if (_transcript?.containsKey('error') == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${_transcript!['error']}')),
+      );
+    }
   }
 
   Future<void> _toggle() async {
@@ -134,6 +157,76 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
                           color: theme.colorScheme.primary,
                           onPressed: _toggle,
                         ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _transcribing ? null : _transcribe,
+                          icon: _transcribing
+                              ? const SizedBox(
+                                  width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.subtitles_rounded),
+                          label: Text(_transcribing ? 'Transcribing…' : 'Transcribe'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                        if (_transcript != null) ...[
+                          const SizedBox(height: 20),
+                          Container(
+                            width: double.maxFinite,
+                            constraints: const BoxConstraints(maxHeight: 260),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: theme.dividerColor),
+                            ),
+                            child: SingleChildScrollView(
+                              child: _transcript!['error'] != null
+                                  ? Text('${_transcript!['error']}',
+                                      style: const TextStyle(color: Colors.red, fontSize: 13))
+                                  : Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if (_transcript!['events'] is List &&
+                                            (_transcript!['events'] as List).isNotEmpty) ...[
+                                          Wrap(
+                                            spacing: 6,
+                                            runSpacing: 6,
+                                            children: (_transcript!['events'] as List)
+                                                .map((e) => Chip(
+                                                      visualDensity: VisualDensity.compact,
+                                                      label: Text(
+                                                        '${e['time'] ?? ''} ${e['type'] ?? ''}'
+                                                            .trim(),
+                                                        style: const TextStyle(fontSize: 11),
+                                                      ),
+                                                    ))
+                                                .toList(),
+                                          ),
+                                          const SizedBox(height: 10),
+                                        ],
+                                        Text(
+                                          _transcript!['text']?.toString() ?? '',
+                                          style: const TextStyle(fontSize: 14, height: 1.5),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          [
+                                            if (_transcript!['diarized'] == true) 'Speakers distinguished',
+                                            if (_transcript!['usedFallback'] == true)
+                                              'Fallback: ${_transcript!['model'] ?? 'whisper'}',
+                                            if ((_transcript!['note'] ?? '').toString().isNotEmpty)
+                                              '${_transcript!['note']}',
+                                          ].join('  ·  '),
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(color: theme.hintColor),
+                                        ),
+                                      ],
+                                    ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

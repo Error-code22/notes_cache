@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-enum UserRole { student, lecturer, admin, moderator }
+enum UserRole { student, lecturer, admin, moderator, classRep }
 
 class UserProfile {
   final String id;
@@ -53,6 +53,7 @@ class UserProfile {
       if (r == 'admin') roles.add(UserRole.admin);
       else if (r == 'lecturer') roles.add(UserRole.lecturer);
       else if (r == 'moderator') roles.add(UserRole.moderator);
+      else if (r == 'classrep' || r == 'class_rep') roles.add(UserRole.classRep);
       else roles.add(UserRole.student);
     }
     if (roles.isEmpty) roles.add(UserRole.student);

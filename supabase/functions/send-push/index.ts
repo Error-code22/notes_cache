@@ -73,11 +73,13 @@ function parseRequest(reqBody: any): PushRequest | null {
     };
   }
 
-  // Direct invocation shape
-  if (reqBody?.userId || reqBody?.userIds || reqBody?.all) {
+  // Direct invocation shape — userId / userIds / all / year (class alerts)
+  if (reqBody?.userId || reqBody?.userIds || reqBody?.all || reqBody?.year !== undefined) {
     const userIds: string[] = reqBody.all
       ? ["*"]
-      : reqBody.userIds ?? [reqBody.userId];
+      : reqBody.year !== undefined
+        ? [`year:${reqBody.year}`]
+        : reqBody.userIds ?? [reqBody.userId];
     return {
       userIds,
       title: String(reqBody.title ?? "NotesCache"),
@@ -108,6 +110,19 @@ async function resolveTokens(userIds: string[]): Promise<string[]> {
       .single();
     if (error || !room) return [];
     targets = (room.member_ids as string[]).filter((id) => id !== senderId);
+    if (targets.length === 0) return [];
+  }
+
+  // Class-schedule alert sentinel: expand year N (or year:null = everyone)
+  // to that year's profile ids. Auth is handled by the caller check above —
+  // only the service role or the DB webhook secret may use this shape.
+  if (targets.length === 1 && targets[0].startsWith("year:")) {
+    const raw = targets[0].slice(5);
+    let q = supabase.from("profiles").select("id, year_level");
+    if (raw !== "null") q = q.eq("year_level", Number(raw));
+    const { data: profiles, error } = await q;
+    if (error) throw new Error(`profiles query failed: ${error.message}`);
+    targets = (profiles ?? []).map((p: any) => p.id);
     if (targets.length === 0) return [];
   }
 

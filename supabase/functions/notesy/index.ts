@@ -258,6 +258,188 @@ async function groqCallWithRetry(
   return result
 }
 
+// ── AUDIO TRANSCRIPTION HELPERS ─────────────────────────────────
+
+const AUDIO_MAX_B64 = 24_000_000; // ~18MB raw audio after base64 inflation
+
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function audioExt(mime: string): string {
+  const m = mime.toLowerCase();
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  if (m.includes('mp4') || m.includes('m4a') || m.includes('x-m4a')) return 'm4a';
+  if (m.includes('wav') || m.includes('x-wav')) return 'wav';
+  if (m.includes('ogg') || m.includes('opus')) return 'ogg';
+  if (m.includes('webm')) return 'webm';
+  if (m.includes('flac')) return 'flac';
+  return 'bin';
+}
+
+function fmtSpeaker(label?: string): string | null {
+  if (!label) return null;
+  const m = label.match(/(\d+)/);
+  return m ? `Speaker ${Number(m[1]) + 1}` : 'Speaker';
+}
+
+async function geminiTranscribe(
+  apiKey: string,
+  model: string,
+  audioB64: string,
+  mime: string,
+): Promise<{ ok: boolean; text?: string; segments?: any[]; error?: string }> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(120_000),
+      body: JSON.stringify({
+        contents: [{ parts: [{ inline_data: { mime_type: mime, data: audioB64 } }] }],
+        generationConfig: {
+          audioTranscriptionConfig: { diarization: true },
+          thinkingConfig: { thinkingLevel: 'LOW' },
+        },
+      }),
+    },
+  );
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    return { ok: false, error: `Gemini ${res.status}: ${err.slice(0, 300)}` };
+  }
+  const data = await res.json();
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  const segments: any[] = [];
+  for (const part of parts) {
+    const at = part.audioTranscription;
+    const segText = (at?.text ?? part.text ?? '').trim();
+    if (!segText) continue;
+    segments.push({
+      speaker: fmtSpeaker(at?.speakerLabel),
+      start: typeof at?.startTime === 'string' ? at.startTime : undefined,
+      end: typeof at?.endTime === 'string' ? at.endTime : undefined,
+      text: segText,
+    });
+  }
+  if (!segments.length) {
+    return { ok: false, error: 'Gemini returned no transcription segments' };
+  }
+  return {
+    ok: true,
+    text: segments.map((s) => s.text).join(' '),
+    segments,
+  };
+}
+
+async function groqTranscribe(
+  keys: { key?: string }[],
+  model: string,
+  audioB64: string,
+  mime: string,
+): Promise<{ ok: boolean; text?: string; segments?: any[]; error?: string }> {
+  const bytes = b64ToBytes(audioB64);
+  let lastErr = 'no Groq keys configured';
+  for (const keyInfo of keys) {
+    if (!keyInfo.key) continue;
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: mime }), `audio.${audioExt(mime)}`);
+    form.append('model', model);
+    form.append('response_format', 'verbose_json');
+    form.append('timestamp_granularities[]', 'segment');
+    let res: Response;
+    try {
+      res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${keyInfo.key}` },
+        body: form,
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (e: any) {
+      lastErr = `Groq network error: ${e?.message ?? e}`;
+      continue;
+    }
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.text && !data.segments?.length) return { ok: false, error: 'Groq returned empty transcript' };
+      return {
+        ok: true,
+        text: data.text ?? '',
+        segments: (data.segments ?? []).map((s: any) => ({
+          speaker: null,
+          start: s.start,
+          end: s.end,
+          text: (s.text ?? '').trim(),
+        })),
+      };
+    }
+    const errText = await res.text().catch(() => '');
+    lastErr = `Groq ${res.status}: ${errText.slice(0, 300)}`;
+    if (res.status !== 429 && res.status !== 500) break; // fatal-ish: don't burn other keys
+  }
+  return { ok: false, error: lastErr };
+}
+
+// Best-effort non-speech events pass (laughter, applause, ...) — failure never
+// blocks the transcript.
+async function geminiAudioEvents(
+  apiKey: string,
+  audioB64: string,
+  mime: string,
+): Promise<any[]> {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(60_000),
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [
+              { inline_data: { mime_type: mime, data: audioB64 } },
+              { text: 'List only the non-speech audio events in this recording: laughter, applause, cheering, crying, coughing, music, shouting, long silent gaps. Ignore spoken words entirely. Return JSON {"events":[{"time":"mm:ss","type":"laughter","note":"short description"}]}. Empty array if none.' },
+            ],
+          }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'object',
+              properties: {
+                events: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      time: { type: 'string' },
+                      type: { type: 'string' },
+                      note: { type: 'string' },
+                    },
+                    required: ['time', 'type'],
+                  },
+                },
+              },
+              required: ['events'],
+            },
+          },
+        }),
+      },
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const json = data.candidates?.[0]?.content?.parts?.find((p: any) => p.text)?.text;
+    if (!json) return [];
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed?.events) ? parsed.events.slice(0, 60) : [];
+  } catch {
+    return [];
+  }
+}
+
 const ALLOWED_ORIGINS = [
   'https://wgxsumbvhzwljxyozdsd.supabase.co',
   'https://notescache.netlify.app',
@@ -490,6 +672,92 @@ serve(async (req) => {
     }
     // ──────────────────────────────────────────────────────────
 
+    // ── AUDIO TRANSCRIPTION (best model + fallback) ──
+    if (action === 'transcribe_audio') {
+      const audioB64 = String(body.audioBase64 || '').trim();
+      const mime = String(body.mimeType || 'audio/mpeg').split(';')[0];
+      if (!audioB64) return jsonResponse({ error: 'No audio provided.' }, 400, corsHeaders);
+      if (audioB64.length > AUDIO_MAX_B64) {
+        return jsonResponse({ error: 'Audio too large (max ~18 MB). Trim the recording.' }, 413, corsHeaders);
+      }
+
+      const { data: audioCfg } = await supabase.from('app_config').select('key, value');
+      const cfg = (k: string, d: string) => audioCfg?.find((c) => c.key === k)?.value || d;
+      const primaryProvider = cfg('ai_audio_provider', 'gemini');
+      const primaryModel = cfg('ai_audio_model', 'gemini-3.5-transcribe');
+      const fbProvider = cfg('ai_audio_fallback_provider', 'groq');
+      const fbModel = cfg('ai_audio_fallback_model', 'whisper-large-v3-turbo');
+      const eventsEnabled = cfg('ai_audio_events', 'true') !== 'false';
+      const audioLimit = parseInt(cfg('ai_daily_audio_limit', '10'), 10) || 10;
+
+      if (!isGuest) {
+        let { data: u } = await supabase.from('user_ai_usage')
+          .select('audio_count, last_reset').eq('user_id', userId).maybeSingle();
+        if (!u) {
+          const ins = await supabase.from('user_ai_usage')
+            .insert({ user_id: userId }).select('audio_count, last_reset').single();
+          u = ins.data;
+        }
+        if (u) {
+          const since = u.last_reset ? new Date(u.last_reset).getTime() : 0;
+          const stale = !since || Date.now() - since > 86_400_000;
+          if (stale) {
+            const { data: reset } = await supabase.from('user_ai_usage')
+              .update({ audio_count: 0, text_count: 0, image_count: 0, last_reset: new Date().toISOString() })
+              .eq('user_id', userId).select('audio_count').single();
+            u = reset ?? { ...u, audio_count: 0 } as typeof u;
+          }
+          if ((u?.audio_count ?? 0) >= audioLimit) {
+            return jsonResponse({ error: `Daily audio transcription limit reached (${audioLimit}/day). Try again tomorrow.` }, 429, corsHeaders);
+          }
+        }
+      }
+
+      let transcript: { ok: boolean; text?: string; segments?: any[]; error?: string } = { ok: false };
+      let usedFallback = false;
+      let provider = primaryProvider;
+      let model = primaryModel;
+
+      if (primaryProvider === 'gemini' && GEMINI_KEY) {
+        transcript = await geminiTranscribe(GEMINI_KEY, primaryModel, audioB64, mime);
+      }
+      if (!transcript.ok) {
+        usedFallback = true;
+        provider = fbProvider;
+        model = fbModel;
+        transcript = fbProvider === 'groq'
+          ? await groqTranscribe(GROQ_KEYS, fbModel, audioB64, mime)
+          : { ok: false, error: `Unsupported fallback provider '${fbProvider}'` };
+      }
+      if (!transcript.ok) {
+        console.error(`Notesy: transcribe_audio failed (${primaryModel} / ${fbModel}): ${transcript.error}`);
+        return jsonResponse({ error: `Transcription failed: ${transcript.error || 'unknown error'}` }, 502, corsHeaders);
+      }
+
+      const diarized = !!transcript.segments?.some((s) => s.speaker);
+      const events = eventsEnabled && GEMINI_KEY && primaryProvider === 'gemini'
+        ? await geminiAudioEvents(GEMINI_KEY, audioB64, mime)
+        : [];
+
+      if (!isGuest) {
+        await supabase.rpc('increment_ai_usage', { user_id_param: userId, field_name: 'audio_count' });
+      }
+
+      return jsonResponse({
+        text: transcript.text || '',
+        segments: transcript.segments || [],
+        events,
+        diarized,
+        usedFallback,
+        provider,
+        model,
+        note: usedFallback && !diarized
+          ? 'Fell back to Whisper — speakers could not be distinguished.'
+          : '',
+      }, 200, corsHeaders);
+    }
+    // ──────────────────────────────────────────────────────────
+
     // ── ADMIN CLEANUP: strip thinking blocks from existing summaries ──
     if (action === 'cleanup_summaries') {
       if (isGuest) return jsonResponse({ error: 'Admins only.' }, 403, corsHeaders)
@@ -667,7 +935,7 @@ serve(async (req) => {
       const now = new Date();
       if (now.getTime() - lastReset.getTime() > 24 * 60 * 60 * 1000) {
         const { data: resetUsage } = await supabase.from('user_ai_usage')
-          .update({ text_count: 0, image_count: 0, last_reset: now.toISOString() })
+          .update({ text_count: 0, image_count: 0, audio_count: 0, last_reset: now.toISOString() })
           .eq('user_id', userId).select().single();
         usage = resetUsage;
       }

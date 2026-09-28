@@ -340,15 +340,19 @@ function renderSection(section: string, p: SecProps) {
             <div className="font-semibold text-sm text-gray-900 dark:text-white">{u.full_name || u.id.slice(0, 8)}</div>
             <div className="text-[11px] text-gray-400 mb-2">{u.id.slice(0, 12)}… · {u.role || 'student'}</div>
             <div className="flex flex-wrap gap-1">
-              {['student', 'lecturer', 'moderator', 'admin'].map((r) => (
+              {['student', 'lecturer', 'moderator', 'admin', 'class_rep'].map((r) => {
+                const norm = (s: string) => s.toLowerCase().replace(/[_\s]/g, '')
+                const hasRole = norm(String(u.role || '')).includes(norm(r))
+                return (
                 <button key={r} onClick={() => {
-                  const roles = String(u.role || 'student').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)
-                  const next = roles.includes(r) ? roles.filter((x) => x !== r) : [...roles, r]
+                  const roles = String(u.role || 'student').split(',').map((x) => x.trim()).filter(Boolean)
+                  const next = hasRole ? roles.filter((x) => norm(x) !== norm(r)) : [...roles, r]
                   p.setUserRole(u.id, next.length ? next.join(', ') : 'student')
-                }} className={`px-2 py-1 rounded-lg text-[10px] font-bold ${String(u.role || '').toLowerCase().includes(r) ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-white/10 text-gray-500'}`}>
-                  {r}
+                }} className={`px-2 py-1 rounded-lg text-[10px] font-bold ${hasRole ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-white/10 text-gray-500'}`}>
+                  {r === 'class_rep' ? 'rep' : r}
                 </button>
-              ))}
+                )
+              })}
             </div>
           </div>
         ))}
