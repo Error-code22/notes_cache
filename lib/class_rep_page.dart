@@ -50,7 +50,7 @@ class _ClassRepPageState extends State<ClassRepPage> {
     if (date == null || !mounted) return;
     final time = await showTimePicker(
       context: context,
-      initialDate: TimeOfDay.fromDateTime(_classTime),
+      initialTime: TimeOfDay.fromDateTime(_classTime),
     );
     if (time == null || !mounted) return;
     setState(() {
