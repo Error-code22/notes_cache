@@ -139,6 +139,11 @@ class _UserManagerPageState extends State<UserManagerPage> {
                   isSelected: user.hasRole(UserRole.admin),
                   onTap: () => _toggleRole(user, UserRole.admin),
                 ),
+                _RoleButton(
+                  label: 'Rep',
+                  isSelected: user.hasRole(UserRole.classRep),
+                  onTap: () => _toggleRole(user, UserRole.classRep),
+                ),
               ],
             ),
           ],
@@ -153,6 +158,7 @@ class _UserManagerPageState extends State<UserManagerPage> {
       case UserRole.admin: color = Colors.red; break;
       case UserRole.moderator: color = Colors.purple; break;
       case UserRole.lecturer: color = Colors.orange; break;
+      case UserRole.classRep: color = Colors.teal; break;
       case UserRole.student: color = Colors.blue; break;
     }
 

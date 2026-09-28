@@ -7,6 +7,7 @@ import 'r2_service.dart';
 import 'services.dart';
 import 'models.dart';
 import 'note_detail_page.dart';
+import 'class_rep_page.dart';
 
 class DonateNotesPage extends StatefulWidget {
   const DonateNotesPage({super.key});
@@ -175,10 +176,14 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
       }
 
       if (mounted) {
+        final isRep = authService.currentUser?.hasRole(UserRole.classRep) == true ||
+            authService.currentUser?.hasRole(UserRole.admin) == true;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(_failedCount == 0
-                ? '$_uploadedCount file(s) submitted for review — an admin will publish them to the library.'
+                ? (isRep
+                    ? '$_uploadedCount file(s) published to the library.'
+                    : '$_uploadedCount file(s) submitted for review — an admin will publish them to the library.')
                 : '$_uploadedCount submitted, $_failedCount failed'),
             backgroundColor: _failedCount == 0 ? Colors.green : Colors.orange,
           ),
@@ -251,6 +256,43 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
             ),
           ),
           const SizedBox(height: 24),
+
+          if (context.watch<AuthService>().currentUser?.hasRole(UserRole.classRep) == true ||
+              context.watch<AuthService>().currentUser?.hasRole(UserRole.admin) == true) ...[
+            Material(
+              color: Colors.teal.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(16),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ClassRepPage())),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.campaign_rounded, color: Colors.teal),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Class Rep Tools',
+                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.teal)),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Set the next class time and alert your year. Your uploads publish instantly.',
+                              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.7)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded, color: theme.colorScheme.onSurface.withOpacity(0.4)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
 
           if (_selectedFiles.isEmpty) ...[
             Center(

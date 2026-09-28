@@ -1454,6 +1454,107 @@ class NoteService {
     _configCache = null;
     _configCacheAt = null;
   }
+
+  // ---------------- Audio transcription (Notesy) ----------------
+
+  /// Send an audio file to the notesy edge function for transcription.
+  /// Returns {text, segments, events, diarized, usedFallback, provider, model, note}
+  /// or {error: '...'} on failure.
+  Future<Map<String, dynamic>> transcribeAudio(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final b64 = base64Encode(bytes);
+      final mime = _audioMime(file.path);
+      final response = await _supabase.functions.invoke('notesy', body: {
+        'action': 'transcribe_audio',
+        'audioBase64': b64,
+        'mimeType': mime,
+      });
+      final raw = response.data;
+      final data = raw is String ? jsonDecode(raw) : raw;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return {'error': 'Unexpected response'};
+    } on FunctionException catch (e) {
+      final details = e.details;
+      if (details is Map && details['error'] != null) {
+        return {'error': details['error'].toString()};
+      }
+      if (details is Map && details['message'] != null) {
+        return {'error': details['message'].toString()};
+      }
+      return {'error': e.toString()};
+    } catch (e) {
+      debugPrint('transcribeAudio error: $e');
+      return {'error': e.toString()};
+    }
+  }
+
+  String _audioMime(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'm4a': return 'audio/mp4';
+      case 'mp4': return 'audio/mp4';
+      case 'wav': return 'audio/wav';
+      case 'ogg': return 'audio/ogg';
+      case 'opus': return 'audio/ogg';
+      case 'webm': return 'audio/webm';
+      case 'flac': return 'audio/flac';
+      default: return 'audio/mpeg';
+    }
+  }
+
+  // ---------------- Class schedules (class reps) ----------------
+
+  /// Everyone can read schedules; only class reps/admins may write (RLS).
+  Future<List<Map<String, dynamic>>> getSchedules() async {
+    try {
+      final data = await _supabase
+          .from('class_schedules')
+          .select()
+          .order('class_time', ascending: true);
+      return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (e) {
+      debugPrint('getSchedules error: $e');
+      return [];
+    }
+  }
+
+  Future<bool> addSchedule({
+    required String title,
+    required DateTime classTime,
+    String? location,
+    int notifyMinutesBefore = 15,
+    bool repeatWeekly = false,
+    int? targetYear,
+  }) async {
+    try {
+      final uid = _supabase.auth.currentUser?.id;
+      if (uid == null) return false;
+      await _supabase.from('class_schedules').insert({
+        'created_by': uid,
+        'title': title,
+        'location': location,
+        'class_time': classTime.toIso8601String(),
+        'notify_minutes_before': notifyMinutesBefore,
+        'repeat_weekly': repeatWeekly,
+        'target_year': targetYear,
+      });
+      return true;
+    } catch (e) {
+      debugPrint('addSchedule error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteSchedule(String id) async {
+    try {
+      await _supabase.from('class_schedules').delete().eq('id', id);
+      return true;
+    } catch (e) {
+      debugPrint('deleteSchedule error: $e');
+      return false;
+    }
+  }
 }
 
 class ChatService {
