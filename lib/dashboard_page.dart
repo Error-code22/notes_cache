@@ -19,6 +19,8 @@ import 'updates_page.dart';
 import 'feedback_page.dart';
 import 'donate_notes_page.dart';
 import 'local_docs_page.dart';
+import 'class_rep_page.dart';
+import 'upload_note_page.dart';
 import 'push_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -494,7 +496,28 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                             Colors.pink,
                             () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DonateNotesPage())),
                           ),
-                          const SizedBox(height: 16),
+                          if (user.hasRole(UserRole.classRep)) ...[
+                            const SizedBox(height: 16),
+                            _buildHubCard(
+                              context,
+                              'Class Rep Tools',
+                              'Set the next class and alert your year',
+                              Icons.campaign_rounded,
+                              Colors.teal,
+                              () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ClassRepPage())),
+                            ),
+                          ],
+                          if (user.hasRole(UserRole.lecturer)) ...[
+                            const SizedBox(height: 16),
+                            _buildHubCard(
+                              context,
+                              'Upload Note',
+                              'Publish a note straight to the library',
+                              Icons.upload_rounded,
+                              Colors.indigo,
+                              () => Navigator.push(context, MaterialPageRoute(builder: (context) => const UploadNotePage())),
+                            ),
+                          ],
                           if (_showCommsButton)
                             _buildHubCard(
                               context,
