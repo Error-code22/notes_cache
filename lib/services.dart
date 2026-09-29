@@ -210,6 +210,12 @@ class AuthService extends ChangeNotifier {
       final cachedEmail = prefs.getString('offline_email_${user.id}');
       if (cachedData != null && cachedEmail != null) {
         _currentUser = UserProfile.fromMap(jsonDecode(cachedData), cachedEmail);
+        // Offline path must still apply the saved theme — otherwise a flaky
+        // profile fetch silently reverts dark mode to the device default.
+        if (_themeProvider != null) {
+          _themeProvider!.setUserId(_currentUser!.id);
+          _themeProvider!.setUserTheme(_currentUser!);
+        }
         notifyListeners();
       } else {
         // No cache, no network — go guest so the dashboard loads quickly

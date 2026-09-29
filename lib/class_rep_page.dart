@@ -37,7 +37,10 @@ class _ClassRepPageState extends State<ClassRepPage> {
   }
 
   void _reload() {
-    setState(() => _schedulesFuture = context.read<NoteService>().getSchedules());
+    final future = context.read<NoteService>().getSchedules();
+    setState(() {
+      _schedulesFuture = future;
+    });
   }
 
   Future<void> _pickDateTime() async {
