@@ -13,7 +13,6 @@ import 'admin_dashboard_page.dart';
 import 'profile_page.dart';
 import 'settings_page.dart';
 import 'notes_page.dart';
-import 'chats_list_page.dart';
 import 'ai_chat_page.dart';
 import 'updates_page.dart';
 import 'feedback_page.dart';
@@ -64,7 +63,6 @@ class _FeaturePill extends StatelessWidget {
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ConnectivityService _connectivity = ConnectivityService();
   final SupabaseKeepAliveService _keepAlive = SupabaseKeepAliveService();
-  bool _showCommsButton = true;
   List<Map<String, dynamic>> _roadmapItems = [];
 
   @override
@@ -176,11 +174,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   Future<void> _loadHomeConfig() async {
     final ns = context.read<NoteService>();
-    final config = await ns.getAppConfig();
     final roadmap = await ns.getRoadmapItems();
     if (!mounted) return;
     setState(() {
-      _showCommsButton = config['show_comms_button'] != 'false';
       _roadmapItems = roadmap;
     });
   }
@@ -511,22 +507,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                             const SizedBox(height: 16),
                             _buildHubCard(
                               context,
-                              'Upload Note',
+                              'Lecturer Tools',
                               'Publish a note straight to the library',
                               Icons.upload_rounded,
                               Colors.indigo,
                               () => Navigator.push(context, MaterialPageRoute(builder: (context) => const UploadNotePage())),
                             ),
                           ],
-                          if (_showCommsButton)
-                            _buildHubCard(
-                              context,
-                              'Communication',
-                              'Chat with friends and study groups',
-                              Icons.chat_bubble_outline_rounded,
-                              Colors.orange,
-                              () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ChatsListPage())),
-                            ),
                           const SizedBox(height: 16),
                           _buildNotesyMemoryCard(context),
                           const SizedBox(height: 12),

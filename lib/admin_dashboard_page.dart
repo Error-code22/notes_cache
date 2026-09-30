@@ -1263,8 +1263,6 @@ class _SystemHealthPage extends StatefulWidget {
 }
 
 class _SystemHealthPageState extends State<_SystemHealthPage> {
-  bool _chatBetaLocked = true;
-  bool _showCommsButton = true;
   bool _loading = true;
   List<Map<String, dynamic>> _downloads = [];
   List<Map<String, dynamic>> _growth = [];
@@ -1274,14 +1272,8 @@ class _SystemHealthPageState extends State<_SystemHealthPage> {
   void initState() { super.initState(); _load(); _loadCharts(); }
 
   Future<void> _load() async {
-    final ns = context.read<NoteService>();
-    final c = await ns.getAppConfig();
     if (!mounted) return;
-    setState(() {
-      _chatBetaLocked = c['chat_beta_locked'] != 'false';
-      _showCommsButton = c['show_comms_button'] != 'false';
-      _loading = false;
-    });
+    setState(() { _loading = false; });
   }
 
   Future<void> _loadCharts() async {
@@ -1292,8 +1284,6 @@ class _SystemHealthPageState extends State<_SystemHealthPage> {
     setState(() { _downloads = d; _growth = g; _chartsLoading = false; });
   }
 
-  Future<void> _save(String k, String v) async => context.read<NoteService>().updateAppConfig(k, v);
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1303,40 +1293,6 @@ class _SystemHealthPageState extends State<_SystemHealthPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                SwitchListTile(
-                  title: const Text('Communications Page — Beta Lock'),
-                  subtitle: Text(_chatBetaLocked ? 'Locked: users see Under Construction' : 'Unlocked: all users can access',
-                      style: const TextStyle(fontSize: 12)),
-                  value: _chatBetaLocked,
-                  onChanged: (v) {
-                    setState(() => _chatBetaLocked = v);
-                    _save('chat_beta_locked', v.toString());
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(v ? 'Comms locked' : 'Comms unlocked'),
-                      backgroundColor: v ? Colors.orange : Colors.green,
-                    ));
-                  },
-                  secondary: Icon(_chatBetaLocked ? Icons.lock_outline_rounded : Icons.lock_open_rounded,
-                      color: _chatBetaLocked ? Colors.orange : Colors.green),
-                ),
-                SwitchListTile(
-                  title: const Text('Show Communication Button'),
-                  subtitle: Text(_showCommsButton
-                      ? 'Visible: the Communication card shows on the homepage'
-                      : 'Hidden: the Communication card is removed from the homepage',
-                      style: const TextStyle(fontSize: 12)),
-                  value: _showCommsButton,
-                  onChanged: (v) {
-                    setState(() => _showCommsButton = v);
-                    _save('show_comms_button', v.toString());
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(v ? 'Communication button shown' : 'Communication button hidden'),
-                      backgroundColor: v ? Colors.green : Colors.orange,
-                    ));
-                  },
-                  secondary: Icon(_showCommsButton ? Icons.visibility_rounded : Icons.visibility_off_rounded,
-                      color: _showCommsButton ? Colors.green : Colors.orange),
-                ),
                 const Divider(height: 32),
                 Text('Usage Charts (last 14 days)', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 12),
