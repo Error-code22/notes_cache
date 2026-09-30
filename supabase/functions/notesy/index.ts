@@ -8,16 +8,19 @@ const GROQ_KEYS = [
   { name: 'INVENTER', key: Deno.env.get("GROQ_KEY_INVENTER") },
 ].filter(k => k.key);
 
-// The fallback provider is dead without this key, so the lookup covers the
+// The fallback provider is dead without these keys, so the lookup covers the
 // secret names that have actually been set. Reading only the legacy mixed
 // case "Gemini_Key_1" left GEMINI_KEY undefined, and every Groq outage or
 // rate limit then failed over to nothing.
-const GEMINI_KEY =
-  Deno.env.get("GEMINI_KEY_1") ??
-  Deno.env.get("GEMINI_API_KEY_1") ??
-  Deno.env.get("Gemini_Key_1") ??
-  Deno.env.get("GEMINI_KEY_2") ??
-  Deno.env.get("GEMINI_API_KEY_2")
+const GEMINI_KEYS = [
+  Deno.env.get("GEMINI_KEY_1"),
+  Deno.env.get("GEMINI_API_KEY_1"),
+  Deno.env.get("Gemini_Key_1"),
+  Deno.env.get("GEMINI_KEY_2"),
+  Deno.env.get("GEMINI_API_KEY_2"),
+].filter((k, i, a): k is string => Boolean(k) && a.indexOf(k) === i)
+
+const GEMINI_KEY = GEMINI_KEYS[0]
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -444,25 +447,53 @@ async function callSingleProvider(
   body: Record<string, any>,
 ): Promise<{ ok: boolean; data?: any; error?: string }> {
   if (config.provider === 'gemini') {
-    if (!GEMINI_KEY) return { ok: false, error: 'Gemini API key not configured' }
-    return geminiChat(GEMINI_KEY, config.model, body)
+    if (GEMINI_KEYS.length === 0) return { ok: false, error: 'Gemini API key not configured' }
+    // Gemini's free tier meters per Google account, and these secrets come
+    // from more than one of them - so one account running out of quota does
+    // not have to end the fallback. Every key is tried: one of them is not a
+    // valid API key at all, and stopping there would hide the fact that the
+    // others were merely rate-limited. A quota-shaped rejection is reported
+    // in preference to any other, so the caller still recognises it as
+    // "busy" rather than as a hard failure.
+    let lastError = ''
+    let quotaError = ''
+    for (const key of GEMINI_KEYS) {
+      const result = await geminiChat(key, config.model, body)
+      if (result.ok) return result
+      const err = result.error || ''
+      lastError = err
+      if (!quotaError && /quota|rate limit|resource exhausted|\b429\b/i.test(err)) quotaError = err
+    }
+    return { ok: false, error: quotaError || lastError || 'All Gemini keys failed' }
   }
-  // Default: Groq (with key rotation)
-  for (const keyInfo of GROQ_KEYS) {
-    const result = await groqCallWithRetry(keyInfo.key!, config.model, body)
-    if (result.ok) return result
-    // If it's a model-not-found error, try next key; otherwise fail fast
-    if (!result.error?.includes('does not exist') && !result.error?.includes('not have access')) {
+  // Default: Groq (with key rotation). Groq meters per organization, so if
+  // these keys belong to different accounts each has its own ITPM/OTPM pool
+  // and a 429 on one is worth trying on the next - which is why rate limits
+  // rotate too, not just "model not found". Only the first key waits out its
+  // suggested backoff; the rest are tried as-is. Every key is attempted for
+  // the same reason as the Gemini list above: one dead key must not hide the
+  // fact that the others were only busy.
+  let lastError = ''
+  let quotaError = ''
+  for (let i = 0; i < GROQ_KEYS.length; i++) {
+    const keyInfo = GROQ_KEYS[i]
+    const result = await groqCallWithRetry(keyInfo.key!, config.model, body, i === 0)
+    if (result.ok) {
+      if (i > 0) console.log(`Notesy: ${GROQ_KEYS[0].name} refused, answered by ${keyInfo.name}`)
       return result
     }
+    const err = result.error || ''
+    lastError = err
+    if (!quotaError && RATE_LIMITED_RE.test(err)) quotaError = err
   }
-  return { ok: false, error: 'All Groq keys failed' }
+  return { ok: false, error: quotaError || lastError || 'All Groq keys failed' }
 }
 
 async function groqCallWithRetry(
   apiKey: string,
   model: string,
   body: Record<string, any>,
+  allowWait = true,
 ): Promise<{ ok: boolean; data?: any; error?: string }> {
   const result = await groqChat(apiKey, model, body)
   if (result.ok) return result
@@ -473,10 +504,12 @@ async function groqCallWithRetry(
   // message states the exact wait - often under two seconds. One bounded
   // retry turns most of those into an answer instead of a busy screen.
   // Anything longer is handed back to the caller, which has the configured
-  // fallback and, failing that, a plain-language reply.
+  // fallback and, failing that, a plain-language reply. `allowWait` is
+  // cleared on rotation: waiting is pointless once we are moving to a
+  // different key, and stacking the waits would hold the request open.
   const waitMs = rateLimitWaitMs(errMsg)
   if (waitMs !== null) {
-    if (waitMs > MAX_RATE_WAIT_MS) return { ok: false, error: errMsg }
+    if (!allowWait || waitMs > MAX_RATE_WAIT_MS) return { ok: false, error: errMsg }
     await new Promise((resolve) => setTimeout(resolve, waitMs + 300))
     return groqChat(apiKey, model, body)
   }
@@ -1566,28 +1599,41 @@ Tone:
     let aiMessage: any = null
 
     if (body.stream === true && primaryProvider === 'groq' && GROQ_KEYS.length > 0) {
-      const started = startGroqStream(
-        GROQ_KEYS[0].key!,
-        primaryModel,
-        { messages, tools, tool_choice: 'auto' },
-        // Evaluated only once the stream ends. Streaming is reserved for
-        // turns that answered directly, so no tool ran and toolsUsed is
-        // still empty here.
-        () => `data: ${JSON.stringify({
-          done: true,
-          sources: mergeSources(ragSources, toolSources),
-          toolsUsed,
-        })}\n\n`,
-      )
-      const turn = await started.decision
-      if (turn.mode === 'content') {
-        streamingStream = started.stream
-      } else if (turn.mode === 'tool') {
-        // Reassembled from the stream, so the tool round-trip still runs
-        // without paying for a second request just to discover the call.
-        aiMessage = turn.message
-      } else {
-        console.warn(`Notesy: streaming unavailable, falling back: ${turn.error}`)
+      // Rate limits are metered per Groq organization, so the rotation the
+      // buffered path already does applies here too: a 429 on one key is
+      // worth trying on the next rather than dropping the whole reply back
+      // to a single JSON body and losing the streaming benefit.
+      for (let i = 0; i < GROQ_KEYS.length; i++) {
+        const keyInfo = GROQ_KEYS[i]
+        const started = startGroqStream(
+          keyInfo.key!,
+          primaryModel,
+          { messages, tools, tool_choice: 'auto' },
+          // Evaluated only once the stream ends. Streaming is reserved for
+          // turns that answered directly, so no tool ran and toolsUsed is
+          // still empty here.
+          () => `data: ${JSON.stringify({
+            done: true,
+            sources: mergeSources(ragSources, toolSources),
+            toolsUsed,
+          })}\n\n`,
+        )
+        const turn = await started.decision
+        if (turn.mode === 'content') {
+          streamingStream = started.stream
+          break
+        }
+        if (turn.mode === 'tool') {
+          // Reassembled from the stream, so the tool round-trip still runs
+          // without paying for a second request just to discover the call.
+          aiMessage = turn.message
+          break
+        }
+        console.warn(`Notesy: streaming unavailable on ${keyInfo.name}: ${turn.error}`)
+        // Nothing was ever written to it, so let it go before moving on.
+        started.stream.cancel().catch(() => {})
+        const rotatable = RATE_LIMITED_RE.test(turn.error) || turn.error.includes('does not exist')
+        if (!rotatable) break
       }
     }
 
