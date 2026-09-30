@@ -1681,7 +1681,7 @@ class _PlansManagerPageState extends State<_PlansManagerPage> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 12. ROADMAP MANAGER — app feature plans (feeds homepage "What's Coming")
+// 12. ROADMAP MANAGER — app feature plans (admin reference; no longer shown on the homepage)
 // ═══════════════════════════════════════════════════════════════
 
 class _RoadmapManagerPage extends StatefulWidget {
