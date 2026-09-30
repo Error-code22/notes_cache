@@ -8,7 +8,16 @@ const GROQ_KEYS = [
   { name: 'INVENTER', key: Deno.env.get("GROQ_KEY_INVENTER") },
 ].filter(k => k.key);
 
-const GEMINI_KEY = Deno.env.get("Gemini_Key_1")
+// The fallback provider is dead without this key, so the lookup covers the
+// secret names that have actually been set. Reading only the legacy mixed
+// case "Gemini_Key_1" left GEMINI_KEY undefined, and every Groq outage or
+// rate limit then failed over to nothing.
+const GEMINI_KEY =
+  Deno.env.get("GEMINI_KEY_1") ??
+  Deno.env.get("GEMINI_API_KEY_1") ??
+  Deno.env.get("Gemini_Key_1") ??
+  Deno.env.get("GEMINI_KEY_2") ??
+  Deno.env.get("GEMINI_API_KEY_2")
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -209,14 +218,23 @@ async function callProvider(
   console.warn(`Notesy: Primary provider ${primary.provider}/${primary.model} failed: ${primaryResult.error}`)
 
   // Try fallback
+  let fallbackError: string | null = null
   if (fallback && fallback.model) {
     console.log(`Notesy: Falling back to ${fallback.provider}/${fallback.model}`)
     const fallbackResult = await callSingleProvider(fallback, body)
     if (fallbackResult.ok) return { ...fallbackResult, usedFallback: true }
+    fallbackError = `${fallback.provider}/${fallback.model}: ${fallbackResult.error}`
     console.error(`Notesy: Fallback also failed: ${fallbackResult.error}`)
   }
 
-  return { ok: false, error: primaryResult.error }
+  // The primary error alone used to hide a misconfigured fallback (empty
+  // model name, missing key) behind a generic provider failure.
+  return {
+    ok: false,
+    error: fallbackError
+      ? `${primaryResult.error} | fallback failed - ${fallbackError}`
+      : `${primaryResult.error} | no fallback configured`,
+  }
 }
 
 async function callSingleProvider(
@@ -552,37 +570,105 @@ function isLiveCheatingRequest(message: string) {
 // Returns the prompt context AND the list of distinct source documents so
 // the client can cite them - an answer the student can trace back to a note
 // is the difference between a study aid and a confident guess.
+
+// Fetch wide, then narrow: raw recall of 12 gives us room to drop weak
+// matches and to spread the surviving ones across documents instead of
+// handing the model six consecutive pages of a single PDF.
+const RAG_FETCH_LIMIT = 12
+const RAG_MAX_CHUNKS = 6
+const RAG_MAX_PER_SOURCE = 2
+// ts_rank floors are query-dependent, so this is deliberately loose - it
+// exists to reject near-misses, not to judge quality.
+const RAG_MIN_RANK = 0.02
+
+type ChunkHit = {
+  id: number
+  noteId: number
+  source: string
+  page: number
+  preview: string
+  rank: number
+}
+
+function normalizeHit(raw: any): ChunkHit {
+  return {
+    id: Number(raw.id) || 0,
+    noteId: Number(raw.note_id) || 0,
+    source: String(raw.source ?? '').trim(),
+    page: Number(raw.page) || 1,
+    preview: String(raw.preview ?? ''),
+    rank: Number(raw.rank) || 0,
+  }
+}
+
+// One doc can contribute at most `perSource` chunks. Without this the top
+// ranks are almost always consecutive pages of whichever document happens
+// to contain the query terms, and the model answers from a narrow slice.
+function diversifyChunks(hits: ChunkHit[], maxChunks: number, perSource: number): ChunkHit[] {
+  const bySource = new Map<string, ChunkHit[]>()
+  for (const h of hits) {
+    const key = h.source || `note:${h.noteId}`
+    const list = bySource.get(key)
+    if (list) list.push(h)
+    else bySource.set(key, [h])
+  }
+
+  const out: ChunkHit[] = []
+  const sources = [...bySource.values()] // already best-first within each doc
+  for (let round = 0; round < perSource && out.length < maxChunks; round++) {
+    for (const list of sources) {
+      if (out.length >= maxChunks) break
+      if (list[round]) out.push(list[round])
+    }
+  }
+  if (out.length < maxChunks) {
+    const chosen = new Set(out.map((c) => c.id))
+    for (const h of hits) {
+      if (out.length >= maxChunks) break
+      if (!chosen.has(h.id)) out.push(h)
+    }
+  }
+  // Selection is diverse; presentation goes back to relevance order.
+  return out.sort((a, b) => b.rank - a.rank)
+}
+
+// One chip per document (not per page), carrying the note id so the client
+// can open the note the citation came from.
+function buildSources(hits: ChunkHit[], max = 6): Array<{ title: string; page: number; noteId: number }> {
+  const seen = new Set<number>()
+  const out: Array<{ title: string; page: number; noteId: number }> = []
+  for (const h of hits) {
+    if (!h.noteId || seen.has(h.noteId)) continue
+    seen.add(h.noteId)
+    out.push({ title: h.source, page: h.page, noteId: h.noteId })
+    if (out.length >= max) break
+  }
+  return out
+}
+
 async function searchDocumentChunks(
   query: string,
   userId: string,
-): Promise<{ context: string; sources: Array<{ title: string; page: number }> }> {
+): Promise<{ context: string; sources: Array<{ title: string; page: number; noteId: number }> }> {
   try {
     const supabase = getSupabase()
     const { data, error } = await supabase.rpc('search_chunks_fts', {
       query_text: query,
-      match_limit: 3,
+      match_limit: RAG_FETCH_LIMIT,
       p_user_id: toUuid(userId)
     })
 
     if (error || !data || data.length === 0) return { context: '', sources: [] }
 
-    const context = data.map((chunk: any) =>
-      `--- Source: ${chunk.source} (p.${chunk.page}) ---\n${chunk.preview}`
-    ).join('\n\n')
+    const hits = (data as any[]).map(normalizeHit).filter((h) => h.rank >= RAG_MIN_RANK)
+    const chosen = diversifyChunks(hits, RAG_MAX_CHUNKS, RAG_MAX_PER_SOURCE)
+    if (chosen.length === 0) return { context: '', sources: [] }
 
-    const seen = new Set<string>()
-    const sources: Array<{ title: string; page: number }> = []
-    for (const chunk of data as any[]) {
-      const title = String(chunk.source ?? '').trim()
-      if (!title) continue
-      const key = `${title}#${chunk.page}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      sources.push({ title, page: Number(chunk.page) || 1 })
-      if (sources.length >= 6) break
-    }
+    const context = chosen
+      .map((c) => `--- Source: ${c.source} (p.${c.page}) ---\n${c.preview}`)
+      .join('\n\n')
 
-    return { context, sources }
+    return { context, sources: buildSources(chosen) }
   } catch (e) {
     console.error('RAG search error:', e)
     return { context: '', sources: [] }
@@ -903,6 +989,12 @@ serve(async (req) => {
     // bypassed, falsely blocked normal phrasing, and returned early,
     // skipping usage accounting.
 
+    // A body without `message` used to reach isLiveCheatingRequest() and
+    // throw on undefined.toLowerCase(), which surfaced as an opaque 500.
+    if (typeof message !== 'string' || message.trim().length === 0) {
+      return jsonResponse({ error: 'A message is required.' }, 400, corsHeaders)
+    }
+
     if (isLiveCheatingRequest(message)) {
       return new Response(JSON.stringify({
         content: "I can help you study the topic, explain the steps, or make a quick revision drill, but I can't provide live test or exam answers."
@@ -916,6 +1008,10 @@ serve(async (req) => {
     const { data: config } = await supabase.from('app_config').select('key, value');
     const textLimit = parseInt(config?.find(c => c.key === 'ai_daily_text_limit')?.value || '50');
     const imageLimit = parseInt(config?.find(c => c.key === 'ai_daily_image_limit')?.value || '10');
+    // Tighter caps for unauthenticated traffic, which was previously
+    // unlimited because 'guest_user' is not a row in user_ai_usage.
+    const guestTextLimit = parseInt(config?.find(c => c.key === 'ai_guest_daily_text_limit')?.value || '15');
+    const guestImageLimit = parseInt(config?.find(c => c.key === 'ai_guest_daily_image_limit')?.value || '5');
     const webSearchEnabled = config?.find(c => c.key === 'ai_web_search')?.value !== 'false';
 
     // Provider + model config (new multi-provider system)
@@ -929,9 +1025,13 @@ serve(async (req) => {
     const visionFallbackProvider = config?.find(c => c.key === 'ai_vision_fallback_provider')?.value || '';
     const visionFallbackModel = config?.find(c => c.key === 'ai_vision_fallback_model')?.value || '';
 
-    // 2. Get/Update User Usage. Guests have no server-side rate limiting.
+    // 2. Usage. Signed-in users count against user_ai_usage; guests are
+    //    keyed by a salted IP hash in guest_ai_usage, so hammering the anon
+    //    key without a session is capped too.
     const isTrackedUser = !isGuest;
     let usage = null;
+    let guestUsage: { text_count?: number; image_count?: number } | null = null;
+    let guestKey: string | null = null;
 
     if (isTrackedUser) {
       const { data: existingUsage } = await supabase.from('user_ai_usage').select().eq('user_id', userId).single();
@@ -951,6 +1051,25 @@ serve(async (req) => {
           .eq('user_id', userId).select().single();
         usage = resetUsage;
       }
+    } else {
+      guestKey = await hashIp(req);
+      if (guestKey) {
+        const { data: g } = await supabase.from('guest_ai_usage')
+          .select('text_count, image_count, last_reset')
+          .eq('ip_hash', guestKey).maybeSingle();
+
+        if (g) {
+          const last = new Date(g.last_reset);
+          if (Date.now() - last.getTime() > 24 * 60 * 60 * 1000) {
+            const { data: reset } = await supabase.from('guest_ai_usage')
+              .update({ text_count: 0, image_count: 0, last_reset: new Date().toISOString() })
+              .eq('ip_hash', guestKey).select('text_count, image_count').maybeSingle();
+            guestUsage = reset ?? { text_count: 0, image_count: 0 };
+          } else {
+            guestUsage = g;
+          }
+        }
+      }
     }
 
     // 4. Enforce Limits
@@ -965,6 +1084,16 @@ serve(async (req) => {
     }
     if (isTrackedUser && !isVision && usage.text_count >= textLimit) {
       return new Response(JSON.stringify({ content: "Phew. You've sent a lot of messages today. I'm taking a short study nap. See you tomorrow." }), {
+        headers: corsHeaders,
+      });
+    }
+    if (!isTrackedUser && isVision && (guestUsage?.image_count ?? 0) >= guestImageLimit) {
+      return new Response(JSON.stringify({ content: "You've used up your free image analyses for today. Sign in to keep going, or come back tomorrow." }), {
+        headers: corsHeaders,
+      });
+    }
+    if (!isTrackedUser && !isVision && (guestUsage?.text_count ?? 0) >= guestTextLimit) {
+      return new Response(JSON.stringify({ content: "You've used up your free questions for today. Sign in to keep chatting, or come back tomorrow." }), {
         headers: corsHeaders,
       });
     }
@@ -1050,7 +1179,16 @@ Tone:
     // for reintroduction - restoring the tool means re-adding its entry
     // below. Keeping the definition out also means a prompt-injection
     // attempt cannot get the model to send messages on the user's behalf.
-    const tools = [
+    // Citations pulled in by tool calls as well as the up-front RAG
+    // snapshot, plus a record of what actually ran so the chat UI can say
+    // "searched your notes" rather than leaving the student guessing.
+    const toolSources: Array<{ title: string; page: number; noteId: number }> = []
+    const toolsUsed: string[] = []
+
+    // Guests have no profile, so search_notes / get_note_content /
+    // get_user_stats always come back with "Sign in to ...". Offering them
+    // anyway costs a wasted round-trip and a confusing reply.
+    const signedInTools = isGuest ? [] : [
       {
         type: 'function',
         function: {
@@ -1090,6 +1228,10 @@ Tone:
           }
         }
       },
+    ];
+
+    const tools = [
+      ...signedInTools,
       {
         type: 'function',
         function: {
@@ -1165,16 +1307,17 @@ Tone:
           } else if (name === 'search_notes') {
             toolResult = await handleSearchNotes(userId, args.query || '')
           } else if (name === 'get_note_content') {
-            toolResult = await handleGetNoteContent(userId, args.noteId)
+            toolResult = await handleGetNoteContent(userId, args.noteId, toolSources)
           } else if (name === 'get_user_stats') {
             toolResult = await handleUserStats(userId)
           } else if (name === 'search_lecture_docs') {
-            toolResult = await handleSearchLectureDocs(userId, args.query || '')
+            toolResult = await handleSearchLectureDocs(userId, args.query || '', toolSources)
           } else if (name === 'search_web') {
             toolResult = await handleSearchWeb(args.query || '')
           } else {
             toolResult = `Unknown tool: ${name}`
           }
+          toolsUsed.push(name)
         } catch (toolErr) {
           // Never echo the raw error: Postgres/PostgREST messages carry
           // table names, policy names and constraint details straight
@@ -1219,13 +1362,31 @@ Tone:
     const updateField = isVision ? 'image_count' : 'text_count';
     if (isTrackedUser) {
       await supabase.rpc('increment_ai_usage', { user_id_param: userId, field_name: updateField });
+    } else if (guestKey) {
+      // Atomic reset-if-stale + increment, done in Postgres because
+      // PostgREST cannot express `count = count + 1` in a PATCH body.
+      await supabase.rpc('increment_guest_ai_usage', { p_hash: guestKey, p_field: updateField });
+    }
+
+    // Merge the up-front RAG snapshot with anything the tools surfaced.
+    // Deduped by note so one document produces exactly one chip.
+    const mergedSources: Array<{ title: string; page: number; noteId: number }> = []
+    for (const s of [...ragSources, ...toolSources]) {
+      if (!s || !s.noteId) continue
+      if (mergedSources.some((x) => x.noteId === s.noteId)) continue
+      mergedSources.push(s)
+      if (mergedSources.length >= 8) break
     }
 
     return new Response(JSON.stringify({
       content: sanitizeContent(aiMessage.content),
       // Documents the answer was grounded in, so the client can show
       // "from: [note]" instead of leaving the student to trust it blind.
-      sources: ragSources,
+      sources: mergedSources,
+      // Tools that actually executed this turn (empty array when the model
+      // answered directly). Lets the UI surface provenance without the
+      // client having to guess from the text.
+      toolsUsed,
     }), {
       headers: corsHeaders,
     })
@@ -1236,7 +1397,13 @@ Tone:
     const safeMessage = error.message?.includes('providers failed')
       ? 'AI is temporarily unavailable. Please try again in a moment.'
       : 'Something went wrong. Please try again.';
-    return new Response(JSON.stringify({ error: safeMessage }), {
+    // Stack traces and provider errors carry org ids, model names and
+    // internal paths. Off unless the function secret NOTESCACHE_DEBUG is
+    // explicitly set, so diagnostics stay available without shipping them.
+    const debug = Deno.env.get('NOTESCACHE_DEBUG') === 'true'
+    return new Response(JSON.stringify(debug
+      ? { error: safeMessage, detail: String((error as any)?.message || error), stack: String((error as any)?.stack || '').split('\n').slice(0, 6) }
+      : { error: safeMessage }), {
       status: 500,
       headers: corsHeaders,
     })
@@ -1259,6 +1426,22 @@ function toUuid(userId: string): string | null {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)
     ? userId
     : null
+}
+
+// Stable per-client key for guest rate limiting.
+//
+// A raw IP is personal data and would land in guest_ai_usage verbatim, so
+// it is hashed with a salt that never leaves the edge runtime. The salt is
+// per-deployment (GUEST_RATE_SALT), falling back to the service role key
+// which is already a runtime-only secret - rotating either one discards
+// every existing counter, which is the correct failure mode.
+async function hashIp(req: Request): Promise<string | null> {
+  const forwarded = req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip') || ''
+  const ip = forwarded.split(',')[0].trim()
+  if (!ip) return null
+  const salt = Deno.env.get('GUEST_RATE_SALT') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${ip}|${salt}`))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 async function getUserProfile(userId) {
@@ -1354,56 +1537,147 @@ async function handleSendMessage(userId, friendName, message) {
   return `Successfully sent message to ${friend.full_name}: "${message}"`
 }
 
+// ---------------------------------------------------------------------------
+// Note reading tools.
+//
+// These used to ILIKE-match on notes.content, which is empty for 70 of 71
+// notes - files are indexed into `chunks` instead. Every search therefore
+// fell back to matching titles only, and get_note_content returned
+// "Content: " with nothing after it. Retrieval now goes through chunks,
+// using the same scoped search_chunks_fts RPC the RAG path uses, so the
+// year/staff rules are enforced in one place.
+// ---------------------------------------------------------------------------
+
+// Bound on one note's worth of text handed to the model. A typical note is
+// ~49 chunks x ~1470 chars (~72KB); passing that through would blow the
+// context window for a single tool result.
+const NOTE_CONTENT_MAX_CHARS = 9000
+
 async function handleSearchNotes(userId, query) {
   const supabase = getSupabase()
   const profile = await getUserProfile(userId)
   if (!profile) return 'Sign in to let me search your notes securely.'
 
   const yearLevel = profile?.year_level
+  const staff = hasStaffVisibility(profile)
   const safeQuery = cleanSearchTerm(query)
   if (!safeQuery) return 'Please give me a keyword to search for.'
 
-  let notesQuery = supabase
-    .from('notes')
-    .select('id, title, lecturer_name, target_year')
-    .or(`title.ilike.%${safeQuery}%,content.ilike.%${safeQuery}%`)
-    .limit(5)
+  const found = new Map<number, { id, title, lecturer_name, target_year, snippet }>()
 
-  if (!hasStaffVisibility(profile)) {
-    notesQuery = notesQuery.eq('target_year', yearLevel)
+  // 1. Full-text over the extracted document text - the search that actually
+  //    works now that content lives in chunks. The RPC applies year/staff
+  //    scoping itself and rejects unlinked (pending) chunks.
+  try {
+    const { data: hits, error } = await supabase.rpc('search_chunks_fts', {
+      query_text: safeQuery,
+      match_limit: 12,
+      p_user_id: toUuid(userId),
+    })
+    if (error) throw error
+    if (hits && hits.length > 0) {
+      const noteIds = [...new Set(hits.map((h) => Number(h.note_id)).filter(Boolean))]
+      const { data: notes } = await supabase
+        .from('notes')
+        .select('id, title, lecturer_name, target_year')
+        .in('id', noteIds)
+        .limit(20)
+      for (const n of notes || []) {
+        const hit = hits.find((h) => Number(h.note_id) === n.id)
+        found.set(n.id, { ...n, snippet: (hit?.preview || '').slice(0, 160) })
+      }
+    }
+  } catch (e) {
+    // Degrade to title search rather than failing the whole tool call.
+    console.error('search_notes fts error:', e)
   }
 
-  const { data: notes } = await notesQuery
+  // 2. Title match, so looking a document up by filename still works even
+  //    when its text has nothing relevant to the query.
+  try {
+    let q = supabase
+      .from('notes')
+      .select('id, title, lecturer_name, target_year')
+      .ilike('title', `%${safeQuery}%`)
+      .limit(5)
+    if (!staff) q = q.eq('target_year', yearLevel)
+    const { data: byTitle } = await q
+    for (const n of byTitle || []) {
+      if (!found.has(n.id)) found.set(n.id, { ...n, snippet: '' })
+    }
+  } catch (e) {
+    console.error('search_notes title error:', e)
+  }
 
-  if (!notes || notes.length === 0) {
-    return hasStaffVisibility(profile)
+  const results = [...found.values()].slice(0, 5)
+  if (results.length === 0) {
+    return staff
       ? `No notes found matching "${safeQuery}".`
       : `No notes found for Year ${yearLevel} matching "${safeQuery}".`
   }
 
-  return notes.map(n => `- [ID: ${n.id}] ${n.title} (Year ${n.target_year}, by ${n.lecturer_name})`).join('\n')
+  return results
+    .map((n) => {
+      const head = `- [ID: ${n.id}] ${n.title} (Year ${n.target_year}, by ${n.lecturer_name})`
+      return n.snippet ? `${head}\n  matching text: "${n.snippet}..."` : head
+    })
+    .join('\n')
 }
 
-async function handleGetNoteContent(userId, noteId) {
+async function handleGetNoteContent(
+  userId,
+  noteId,
+  sink?: Array<{ title: string; page: number; noteId: number }>,
+) {
   const supabase = getSupabase()
   const profile = await getUserProfile(userId)
   if (!profile) return 'Sign in to let me open your notes securely.'
 
   const yearLevel = profile?.year_level
+  const numericId = Number(noteId)
+  if (!Number.isFinite(numericId)) return 'That note id does not look valid.'
 
   let noteQuery = supabase
     .from('notes')
-    .select()
-    .eq('id', noteId)
+    .select('id, title, lecturer_name, target_year')
+    .eq('id', numericId)
 
   if (!hasStaffVisibility(profile)) {
     noteQuery = noteQuery.eq('target_year', yearLevel)
   }
 
-  const { data: note } = await noteQuery.single()
+  const { data: note } = await noteQuery.maybeSingle()
+  if (!note) return 'You do not have permission to view this note or it does not exist for your visibility level.'
 
-  if (!note) return "Error: You do not have permission to view this note or it does not exist for your visibility level."
-  return `Title: ${note.title}\nContent: ${note.content}`
+  // The document's text lives in chunks, not notes.content.
+  const { data: chunks, error } = await supabase
+    .from('chunks')
+    .select('page, preview')
+    .eq('note_id', numericId)
+    .order('page', { ascending: true })
+    .order('id', { ascending: true })
+
+  if (error) {
+    console.error('get_note_content chunks error:', error.message)
+    return `Could not read the text of "${note.title}". Try search_notes instead.`
+  }
+
+  const fullText = (chunks || []).map((c) => c.preview || '').join('\n\n').trim()
+
+  if (!fullText) {
+    // Honest: don't dress up an empty string as note content.
+    return `Title: ${note.title}\nYear: ${note.target_year}\n\nNo extractable text is available for this note. It is likely an attached file whose text has not been indexed yet.`
+  }
+
+  const truncated = fullText.length > NOTE_CONTENT_MAX_CHARS
+  const body = truncated ? fullText.slice(0, NOTE_CONTENT_MAX_CHARS) : fullText
+
+  // The model is about to answer from this text, so it counts as a source.
+  if (sink && !sink.some((s) => s.noteId === note.id)) {
+    sink.push({ title: note.title, page: 1, noteId: Number(note.id) })
+  }
+
+  return `Title: ${note.title}\nYear: ${note.target_year}\nLecturer: ${note.lecturer_name || 'Unknown'}\n\n${body}${truncated ? `\n\n[Note text truncated at ${NOTE_CONTENT_MAX_CHARS} characters - summarise or search rather than quoting further.]` : ''}`
 }
 
 async function handleUserStats(userId) {
@@ -1439,12 +1713,23 @@ async function handleUserStats(userId) {
   }
 }
 
-async function handleSearchLectureDocs(userId: string, query: string) {
+// On-demand, deeper retrieval than the RAG snapshot injected up front.
+// Shares the diversification rules so a tool call doesn't just re-surface
+// the same six consecutive pages, and reports the documents it touched
+// back to the caller so they can be cited.
+async function handleSearchLectureDocs(
+  userId: string,
+  query: string,
+  sink?: Array<{ title: string; page: number; noteId: number }>,
+) {
   try {
     const supabase = getSupabase()
+    const safeQuery = cleanSearchTerm(query)
+    if (!safeQuery) return 'Please give me a topic or keyword to search for.'
+
     const { data, error } = await supabase.rpc('search_chunks_fts', {
-      query_text: query,
-      match_limit: 5,
+      query_text: safeQuery,
+      match_limit: RAG_FETCH_LIMIT,
       p_user_id: toUuid(userId)
     })
 
@@ -1452,13 +1737,24 @@ async function handleSearchLectureDocs(userId: string, query: string) {
       console.error('search_chunks_fts error:', error.message)
       return 'Lecture material search is unavailable right now. Please try again.'
     }
-    if (!data || data.length === 0) return `No lecture materials found matching "${query}".`
+    if (!data || data.length === 0) return `No lecture materials found matching "${safeQuery}".`
 
-    const results = data.map((chunk: any, i: number) =>
-      `${i + 1}. [${chunk.source}, p.${chunk.page}]\n${chunk.preview}`
-    ).join('\n\n')
+    const hits = (data as any[]).map(normalizeHit).filter((h) => h.rank >= RAG_MIN_RANK)
+    const chosen = diversifyChunks(hits, 8, 2)
+    if (chosen.length === 0) return `No lecture materials found matching "${safeQuery}".`
 
-    return `Found ${data.length} relevant lecture materials:\n\n${results}`
+    if (sink) {
+      for (const s of buildSources(chosen)) {
+        if (!sink.some((x) => x.noteId === s.noteId)) sink.push(s)
+      }
+    }
+
+    const docs = new Set(chosen.map((c) => c.noteId)).size
+    const results = chosen
+      .map((c, i) => `${i + 1}. [${c.source}, p.${c.page}]\n${c.preview}`)
+      .join('\n\n')
+
+    return `Found ${chosen.length} passages from ${docs} document(s):\n\n${results}`
   } catch (e) {
     console.error('handleSearchLectureDocs error:', e)
     return 'Lecture material search is unavailable right now. Please try again.'
