@@ -467,8 +467,21 @@ async function groqCallWithRetry(
   const result = await groqChat(apiKey, model, body)
   if (result.ok) return result
 
-  // Groq sometimes rejects tool-calling — retry without tools
   const errMsg = result.error || ''
+
+  // Rate limits (ITPM on input, OTPM on output) are transient and Groq's
+  // message states the exact wait - often under two seconds. One bounded
+  // retry turns most of those into an answer instead of a busy screen.
+  // Anything longer is handed back to the caller, which has the configured
+  // fallback and, failing that, a plain-language reply.
+  const waitMs = rateLimitWaitMs(errMsg)
+  if (waitMs !== null) {
+    if (waitMs > MAX_RATE_WAIT_MS) return { ok: false, error: errMsg }
+    await new Promise((resolve) => setTimeout(resolve, waitMs + 300))
+    return groqChat(apiKey, model, body)
+  }
+
+  // Groq sometimes rejects tool-calling — retry without tools
   if (errMsg.includes('Failed to call a function') || errMsg.includes('failed_generation')) {
     const retry = await groqChat(apiKey, model, { ...body, tools: [], tool_choice: 'none' })
     if (retry.ok) return retry
@@ -476,6 +489,19 @@ async function groqCallWithRetry(
   }
 
   return result
+}
+
+// Seconds Groq asks us to wait before retrying, when the rejection was a
+// rate limit. Returns null for any other error so unrelated failures never
+// get parked behind a timer.
+const MAX_RATE_WAIT_MS = 8_000
+
+function rateLimitWaitMs(error: string): number | null {
+  if (!/rate limit|too many requests|\b429\b|quota/i.test(error)) return null
+  const match = error.match(/try again in ([\d.]+)s/i)
+  if (!match) return null
+  const seconds = Number.parseFloat(match[1])
+  return Number.isFinite(seconds) ? Math.round(seconds * 1000) : null
 }
 
 // ── AUDIO TRANSCRIPTION HELPERS ─────────────────────────────────
@@ -726,6 +752,11 @@ async function validateJwt(req: Request): Promise<{ userId: string; isGuest: boo
 // "bypass the deadlock" or "act as if the cache is cold".
 const HISTORY_MAX_TURNS = 20
 const HISTORY_MAX_CHARS = 4000
+// A per-turn cap alone still lets a long chat run away: 20 turns of 4000
+// chars is ~20k input tokens, several times the provider's 7000/minute
+// ceiling, so the request fails before the model sees a single word. The
+// budget has to hold for the whole conversation.
+const HISTORY_TOTAL_CHARS = 6000
 
 function sanitizeHistory(history: unknown): Array<{ role: string; content: string }> {
   if (!Array.isArray(history)) return []
@@ -745,6 +776,15 @@ function sanitizeHistory(history: unknown): Array<{ role: string; content: strin
     if (!content) continue
 
     out.push({ role, content: content.slice(0, HISTORY_MAX_CHARS) })
+  }
+
+  // Trim from the oldest end: the most recent turns are what the reply is
+  // reacting to, and they are the ones worth paying for.
+  let total = 0
+  for (const m of out) total += m.content.length
+  while (total > HISTORY_TOTAL_CHARS && out.length > 1) {
+    total -= out[0].content.length
+    out.shift()
   }
   return out
 }
@@ -782,6 +822,23 @@ const RAG_MAX_PER_SOURCE = 2
 // ts_rank floors are query-dependent, so this is deliberately loose - it
 // exists to reject near-misses, not to judge quality.
 const RAG_MIN_RANK = 0.02
+
+// Retrieved context is charged to the same input budget as everything else,
+// and the primary provider only allows 7000 input tokens per minute. Six
+// full chunks at ~1500 chars each is ~2200 tokens of that, leaving room for
+// barely one turn. Both ceilings are sized against that: a chunk is trimmed
+// to RAG_CHUNK_CHARS, and chunks are taken best-first until RAG_CONTEXT_CHARS
+// is spent, so an ordinary turn stays near 3500 input tokens - two of those
+// fit in a minute instead of one and a half.
+const RAG_CHUNK_CHARS = 900
+const RAG_CONTEXT_CHARS = 4000
+
+// Provider wording for "you are going too fast". Used to tell a rate-limit
+// exhaustion apart from a genuine fault, so the former degrades to a plain
+// message rather than a 500.
+const RATE_LIMITED_RE = /rate limit|quota exceeded|too many requests|tpm|itpm|\b429\b/i
+const RATE_LIMIT_REPLY =
+  'Notesy is getting a lot of use right now. Give it about 30 seconds and ask again.'
 
 // Ceiling on what any single tool may hand back. Measured cost of an
 // ordinary turn on the primary provider is ~5150 input tokens against a
@@ -890,11 +947,24 @@ async function searchDocumentChunks(
     const chosen = diversifyChunks(hits, RAG_MAX_CHUNKS, RAG_MAX_PER_SOURCE)
     if (chosen.length === 0) return { context: '', sources: [] }
 
-    const context = chosen
+    // Spend the context budget best-first. Sources are built from the chunks
+    // that actually made it in, so a citation never points at text the model
+    // was never shown.
+    const included: ChunkHit[] = []
+    let budget = RAG_CONTEXT_CHARS
+    for (const c of chosen) {
+      const len = Math.min(c.preview.length, RAG_CHUNK_CHARS, budget - 80)
+      if (len <= 0) break
+      included.push({ ...c, preview: c.preview.slice(0, len) })
+      budget -= len + 80
+    }
+    if (included.length === 0) return { context: '', sources: [] }
+
+    const context = included
       .map((c) => `--- Source: ${c.source} (p.${c.page}) ---\n${c.preview}`)
       .join('\n\n')
 
-    return { context, sources: buildSources(chosen) }
+    return { context, sources: buildSources(included) }
   } catch (e) {
     console.error('RAG search error:', e)
     return { context: '', sources: [] }
@@ -1670,6 +1740,20 @@ Tone:
 
   } catch (error) {
     console.error('Notesy error:', error.message)
+    // Burning through both providers' rate limits is not a fault - it is the
+    // free tier being busy. Answering in plain language keeps the chat usable,
+    // and a 200 lets both the buffered and the streaming client show it as a
+    // normal message instead of an error screen. Matched on the provider's own
+    // wording so an unrelated crash still takes the 500 path below.
+    if (RATE_LIMITED_RE.test(String((error as any)?.message || error))) {
+      const rateDebug = Deno.env.get('NOTESCACHE_DEBUG') === 'true'
+      return jsonResponse(rateDebug
+        ? {
+            content: RATE_LIMIT_REPLY,
+            detail: String((error as any)?.message || error),
+          }
+        : { content: RATE_LIMIT_REPLY }, 200, corsHeaders)
+    }
     // Never leak internal error details to the client
     const safeMessage = error.message?.includes('providers failed')
       ? 'AI is temporarily unavailable. Please try again in a moment.'
