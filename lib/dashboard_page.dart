@@ -63,7 +63,6 @@ class _FeaturePill extends StatelessWidget {
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ConnectivityService _connectivity = ConnectivityService();
   final SupabaseKeepAliveService _keepAlive = SupabaseKeepAliveService();
-  List<Map<String, dynamic>> _roadmapItems = [];
 
   @override
   void initState() {
@@ -71,7 +70,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     _connectivity.start();
     _keepAlive.start();
-    _loadHomeConfig();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final authService = context.read<AuthService>();
         final themeProvider = context.read<ThemeProvider>();
@@ -172,15 +170,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     super.dispose();
   }
 
-  Future<void> _loadHomeConfig() async {
-    final ns = context.read<NoteService>();
-    final roadmap = await ns.getRoadmapItems();
-    if (!mounted) return;
-    setState(() {
-      _roadmapItems = roadmap;
-    });
-  }
-
   void _onAuthChanged() {    final authService = context.read<AuthService>();    if (authService.currentUser != null) {
       authService.removeListener(_onAuthChanged);
       final themeProvider = context.read<ThemeProvider>();
@@ -202,7 +191,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
       // Remove previous subscriptions so re-subscribing (e.g. on app resume)
       // doesn't create duplicate/conflicting channels.
-      for (final name in ['public:chat_messages', 'public:notes', 'public:app_updates', 'public:home_config', 'public:home_config_app_config']) {
+      for (final name in ['public:chat_messages', 'public:notes', 'public:app_updates']) {
         supabase.removeChannel(supabase.channel(name));
       }
 
@@ -245,21 +234,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           final update = payload.newRecord;
           ns.showNotification(title: 'App Update: ${update['title']}', body: update['content'], payload: 'route:/dashboard');
         }
-      ).subscribe();
-
-      // 4. Homepage live updates: roadmap + config changes made in the
-      //    admin dashboard reflect on the homepage immediately.
-      supabase.channel('public:home_config').onPostgresChanges(
-        event: PostgresChangeEvent.all,
-        schema: 'public',
-        table: 'roadmap_items',
-        callback: (_) => _loadHomeConfig(),
-      ).subscribe();
-      supabase.channel('public:home_config_app_config').onPostgresChanges(
-        event: PostgresChangeEvent.all,
-        schema: 'public',
-        table: 'app_config',
-        callback: (_) => _loadHomeConfig(),
       ).subscribe();
     }
   }
@@ -516,8 +490,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                           ],
                           const SizedBox(height: 16),
                           _buildNotesyMemoryCard(context),
-                          const SizedBox(height: 12),
-                          _buildHomeBottomCard(context),
                         ],
                       ),
                     ),
@@ -637,47 +609,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ),
             ),
           ),
-    );
-  }
-
-  /// Homepage bottom card: a "What's Coming" button that opens the full
-  /// roadmap page.
-  Widget _buildHomeBottomCard(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      elevation: 0,
-      color: theme.cardColor,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: theme.dividerColor.withOpacity(0.12)),
-      ),
-      child: Column(
-        children: [
-          ListTile(
-            leading: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(Icons.construction_rounded, size: 20, color: theme.colorScheme.primary),
-            ),
-            title: const Text("What's Coming", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-            subtitle: Text(
-              _roadmapItems.isEmpty
-                  ? 'See upcoming features'
-                  : '${_roadmapItems.length} feature${_roadmapItems.length > 1 ? 's' : ''} in the pipeline',
-              style: const TextStyle(fontSize: 12),
-            ),
-            trailing: const Icon(Icons.chevron_right, size: 20),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const WhatsComingPage()),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -913,121 +844,5 @@ IconData roadmapIconFor(String? name) {
     case 'translate': return Icons.translate_rounded;
     case 'quiz': return Icons.quiz_rounded;
     default: return Icons.construction_rounded;
-  }
-}
-
-/// Full "What's Coming" page: lists all planned features (roadmap) with
-/// a "Request a feature" action at the bottom.
-class WhatsComingPage extends StatefulWidget {
-  const WhatsComingPage({super.key});
-
-  @override
-  State<WhatsComingPage> createState() => _WhatsComingPageState();
-}
-
-class _WhatsComingPageState extends State<WhatsComingPage> {
-  List<Map<String, dynamic>> _items = [];
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final items = await context.read<NoteService>().getRoadmapItems();
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _loading = false;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text("What's Coming")),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.rocket_launch_outlined, color: Colors.indigo),
-                        SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'NotesCache is in active development. Here\'s what we\'re building — and you can suggest what\'s next!',
-                            style: TextStyle(fontSize: 13, height: 1.4),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  if (_items.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Center(
-                        child: Text('Nothing planned yet — request a feature below!', style: TextStyle(color: Colors.grey[500])),
-                      ),
-                    )
-                  else
-                    for (final item in _items)
-                      Card(
-                        elevation: 0,
-                        margin: const EdgeInsets.only(bottom: 10),
-                        color: theme.cardColor,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          side: BorderSide(color: theme.dividerColor.withOpacity(0.08)),
-                        ),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
-                            child: Icon(roadmapIconFor(item['icon']?.toString()), color: theme.colorScheme.primary, size: 20),
-                          ),
-                          title: Text(item['title']?.toString() ?? 'Coming soon', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                          subtitle: (item['description']?.toString() ?? '').isNotEmpty
-                              ? Text(item['description'].toString(), style: const TextStyle(fontSize: 12))
-                              : null,
-                        ),
-                      ),
-                  const SizedBox(height: 20),
-                  const Divider(),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    leading: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.error.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(Icons.lightbulb_outline, size: 20, color: theme.colorScheme.error),
-                    ),
-                    title: const Text('Request a feature', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                    subtitle: const Text('Suggest an idea or report a bug', style: TextStyle(fontSize: 12)),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const FeedbackPage()),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-    );
   }
 }
