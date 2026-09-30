@@ -581,6 +581,13 @@ const RAG_MAX_PER_SOURCE = 2
 // exists to reject near-misses, not to judge quality.
 const RAG_MIN_RANK = 0.02
 
+// Ceiling on what any single tool may hand back. Measured cost of an
+// ordinary turn on the primary provider is ~5150 input tokens against a
+// 7000/minute ceiling, and the tool result is re-sent on the follow-up
+// call, so an unguarded search list is what tips a request into a rate
+// limit. ~6000 chars is roughly 1500 tokens of headroom.
+const TOOL_RESULT_MAX_CHARS = 6000
+
 type ChunkHit = {
   id: number
   noteId: number
@@ -1326,6 +1333,18 @@ Tone:
           toolResult = 'That tool could not complete. Try rephrasing or ask something else.'
         }
 
+        // Tool output is re-sent verbatim on the follow-up call, so an
+        // unbounded search result is paid for twice and can push a request
+        // past the primary provider's input-token ceiling. One budget for
+        // every tool keeps the cost predictable; the marker tells the model
+        // the list is partial rather than letting it reason about a cutoff
+        // as if it were the end of the data.
+        if (toolResult.length > TOOL_RESULT_MAX_CHARS) {
+          toolResult = `${toolResult.slice(0, TOOL_RESULT_MAX_CHARS)}\n\n` +
+            `[Result truncated at ${TOOL_RESULT_MAX_CHARS} characters - the list is partial. ` +
+            `Narrow the query, or ask about a specific document, for the rest.]`
+        }
+
         // Final response with tool result
         const secondResult = await callProvider(
           { provider: primaryProvider, model: primaryModel },
@@ -1551,7 +1570,11 @@ async function handleSendMessage(userId, friendName, message) {
 // Bound on one note's worth of text handed to the model. A typical note is
 // ~49 chunks x ~1470 chars (~72KB); passing that through would blow the
 // context window for a single tool result.
-const NOTE_CONTENT_MAX_CHARS = 9000
+//
+// Sits alongside TOOL_RESULT_MAX_CHARS: both are sized against the primary
+// provider's 7000 tokens-per-minute input ceiling, where an ordinary turn
+// already costs ~5150 tokens before any tool output is appended.
+const NOTE_CONTENT_MAX_CHARS = 6000
 
 async function handleSearchNotes(userId, query) {
   const supabase = getSupabase()

@@ -15,6 +15,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 import 'models.dart';
+import 'note_detail_page.dart';
 import 'services.dart';
 
 class AiChatPage extends StatefulWidget {
@@ -656,6 +657,11 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
         // Stored pipe-joined so it survives the List<Map<String,String>>
         // message list and the JSON history the DB persists.
         if (reply.sources.isNotEmpty) 'sources': reply.sources.join('|'),
+        // Parallel to `sources`; absent on older messages, which simply
+        // render as chips that do not navigate.
+        if (reply.sourceIds.isNotEmpty)
+          'sourceIds': reply.sourceIds.map((id) => id.toString()).join('|'),
+        if (reply.toolsUsed.isNotEmpty) 'tools': reply.toolsUsed.join('|'),
       };
       setState(() {
         _messages.add(assistantMsg);
@@ -1096,10 +1102,15 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
                         strong: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w700),
                       ),
                     ),
+            if (!isUser && (msg['tools'] ?? '').isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: _buildToolsRow(msg['tools']!, theme),
+              ),
             if (!isUser && (msg['sources'] ?? '').isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: _buildCitationChips(msg['sources']!, theme),
+                child: _buildCitationChips(msg, theme),
               ),
           ],
         ),
@@ -1108,11 +1119,25 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
   }
 
   /// "from: [note title]" chips so an answer is traceable to a document
-  /// instead of asking the student to take Notesy's word for it.
-  Widget _buildCitationChips(String raw, ThemeData theme) {
-    final labels = raw.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  /// instead of asking the student to take Notesy's word for it. Chips with
+  /// a resolvable note id open the note; older messages carry no id and stay
+  /// inert rather than pretending to navigate.
+  Widget _buildCitationChips(Map<String, String> msg, ThemeData theme) {
+    final labels = (msg['sources'] ?? '')
+        .split('|')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
     if (labels.isEmpty) return const SizedBox.shrink();
+
+    // Parallel to `sources`; messages saved before ids existed simply have
+    // none, and every chip falls back to its non-navigating form.
+    final ids = (msg['sourceIds'] ?? '')
+        .split('|')
+        .map((s) => int.tryParse(s.trim()) ?? 0)
+        .toList();
     final border = theme.colorScheme.outlineVariant;
+
     return Wrap(
       spacing: 6,
       runSpacing: 6,
@@ -1128,39 +1153,120 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
             ),
           ),
         ),
-        for (final label in labels)
-          Tooltip(
-            message: 'Retrieved from your notes',
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: border),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.description_outlined,
-                      size: 12, color: theme.colorScheme.primary),
-                  const SizedBox(width: 4),
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                        maxWidth: MediaQuery.sizeOf(context).width * 0.38),
-                    child: Text(
-                      label,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
+        for (var i = 0; i < labels.length; i++)
+          _buildCitationChip(
+            labels[i],
+            i < ids.length ? ids[i] : 0,
+            theme,
+            border,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildCitationChip(
+      String label, int noteId, ThemeData theme, Color border) {
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.description_outlined,
+              size: 12, color: theme.colorScheme.primary),
+          const SizedBox(width: 4),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+                maxWidth: MediaQuery.sizeOf(context).width * 0.38),
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           ),
+          if (noteId > 0) ...[
+            const SizedBox(width: 3),
+            Icon(Icons.open_in_new,
+                size: 10, color: theme.colorScheme.onSurfaceVariant),
+          ],
+        ],
+      ),
+    );
+
+    if (noteId <= 0) {
+      return Tooltip(message: 'Retrieved from your notes', child: chip);
+    }
+    return Tooltip(
+      message: 'Open this note',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => _openCitationSource(noteId),
+        child: chip,
+      ),
+    );
+  }
+
+  /// Deep-links a citation into the note it was attributed to. Failures stay
+  /// silent: an unopenable citation should not interrupt reading the answer.
+  Future<void> _openCitationSource(int noteId) async {
+    try {
+      final note = await NoteService().getNoteById(noteId.toString());
+      if (note == null || !mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => NoteDetailPage(note: note)),
+      );
+    } catch (e) {
+      debugPrint('openCitationSource error: $e');
+    }
+  }
+
+  /// Plain-language provenance for the tools that ran, so the student can
+  /// tell a grounded answer from one the model produced on its own.
+  static const Map<String, String> _toolPhrases = {
+    'search_notes': 'searched your notes',
+    'get_note_content': 'opened a note',
+    'get_user_stats': 'checked your stats',
+    'search_lecture_docs': 'searched course materials',
+    'search_web': 'searched the web',
+  };
+
+  Widget _buildToolsRow(String raw, ThemeData theme) {
+    final tools = raw
+        .split('|')
+        .map((s) => s.trim())
+        .where(_toolPhrases.containsKey)
+        .toList();
+    if (tools.isEmpty) return const SizedBox.shrink();
+
+    final phrase = tools.map((t) => _toolPhrases[t]!).toList();
+    final text = phrase.length == 1
+        ? 'Notesy ${phrase.first}'
+        : 'Notesy ${phrase.sublist(0, phrase.length - 1).join(', ')} and ${phrase.last}';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.travel_explore, size: 13, color: theme.colorScheme.primary),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
       ],
     );
   }
