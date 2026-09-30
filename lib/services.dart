@@ -2204,23 +2204,156 @@ class AiChatService {
       );
 
       final rawData = response.data;
-      final data = rawData is String ? jsonDecode(rawData) : rawData;
-
-      if (data is Map && data['content'] is String) {
-        final parsed = _parseSources(data['sources']);
-        return AiReply(
-          content: data['content'],
-          sources: parsed.labels,
-          sourceIds: parsed.ids,
-          toolsUsed: _parseToolsUsed(data['toolsUsed']),
-        );
-      }
-      if (data is Map && data['error'] is String) throw Exception(data['error']);
-      throw Exception('Unexpected response: $rawData');
+      return _replyFromJson(rawData);
     } catch (e) {
       debugPrint('Notesy error: $e');
       rethrow;
     }
+  }
+
+  /// Same as [getResponseDetailed], but asks the edge function to stream.
+  ///
+  /// Deltas go to [onDelta] as they arrive so the caller can paint the
+  /// answer while it is still being written. The returned [AiReply] is
+  /// complete either way: turns that reach for a tool - and any deployment
+  /// where streaming is unavailable - answer with a single JSON body that
+  /// is parsed here and never passed through [onDelta]. Callers therefore
+  /// never branch on transport; they watch [onDelta] fill in, then take
+  /// [AiReply.content] when the future completes.
+  Future<AiReply> streamResponseDetailed(
+    String msg,
+    List<Map<String, String>> history, {
+    String? imageBase64,
+    List<String>? imageBase64s,
+    void Function(String delta)? onDelta,
+  }) async {
+    // Called directly rather than through functions.invoke because the
+    // client has no streaming equivalent; the URL and key come from the
+    // same dotenv entries Supabase.initialize was given.
+    final supabaseUrl = dotenv.env['SUPABASE_URL'];
+    final anonKey = dotenv.env['SUPABASE_ANON_KEY'];
+    if (supabaseUrl == null || anonKey == null) {
+      throw Exception('Supabase is not configured.');
+    }
+    final session = Supabase.instance.client.auth.currentSession;
+    final client = http.Client();
+    try {
+      final request = http.Request(
+        'POST',
+        Uri.parse('$supabaseUrl/functions/v1/notesy'),
+      );
+      request.headers['Content-Type'] = 'application/json';
+      request.headers['apikey'] = anonKey;
+      request.headers['Authorization'] =
+          'Bearer ${session?.accessToken ?? anonKey}';
+      request.body = jsonEncode({
+        'message': msg,
+        'history': history,
+        'stream': true,
+        if (imageBase64 != null) 'imageBase64': imageBase64,
+        if (imageBase64s != null && imageBase64s.isNotEmpty)
+          'imageBase64s': imageBase64s,
+      });
+
+      final response = await client.send(request);
+      final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+
+      if (!contentType.contains('text/event-stream')) {
+        final raw = await response.stream.transform(utf8.decoder).join();
+        return _replyFromJson(raw);
+      }
+
+      final buffer = StringBuffer();
+      var sources = const <String>[];
+      var sourceIds = const <int>[];
+      var toolsUsed = const <String>[];
+
+      final lines =
+          response.stream.transform(utf8.decoder).transform(const LineSplitter());
+      await for (final line in lines) {
+        final trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        final payload = trimmed.substring(5).trim();
+        if (payload == '[DONE]') break;
+
+        Map<String, dynamic>? event;
+        try {
+          final decoded = jsonDecode(payload);
+          if (decoded is Map<String, dynamic>) event = decoded;
+        } catch (_) {
+          continue; // unreadable frame: skip it rather than kill the turn
+        }
+        if (event == null) continue;
+
+        final delta = event['delta'];
+        if (delta is String && delta.isNotEmpty) {
+          buffer.write(delta);
+          onDelta?.call(delta);
+        }
+        if (event['done'] == true) {
+          final parsed = _parseSources(event['sources']);
+          sources = parsed.labels;
+          sourceIds = parsed.ids;
+          toolsUsed = _parseToolsUsed(event['toolsUsed']);
+        }
+      }
+
+      // The edge function only commits to an event stream once it has text
+      // to send, so an empty buffer means the connection died mid-reply.
+      // Reporting it keeps a truncated answer from looking like a real one.
+      if (buffer.isEmpty) {
+        throw Exception('The reply was cut off before any text arrived.');
+      }
+
+      return AiReply(
+        content: _cleanAssistantText(buffer.toString()),
+        sources: sources,
+        sourceIds: sourceIds,
+        toolsUsed: toolsUsed,
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Streamed text cannot be rewritten once it has been sent, so the edge
+  /// function's sanitizeContent() does not apply to it. This mirrors that
+  /// cleanup on the finished message so a reasoning block, or tool-call
+  /// syntax that leaked into prose, never reaches the stored history.
+  /// Returns the input unchanged if stripping would leave nothing.
+  String _cleanAssistantText(String text) {
+    if (text.isEmpty) return text;
+    var clean = text;
+    for (final pattern in [
+      RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false),
+      RegExp(r'<think>[\s\S]*$', caseSensitive: false),
+      RegExp(r'<reasoning>[\s\S]*?</reasoning>', caseSensitive: false),
+      RegExp(r'<reasoning>[\s\S]*$', caseSensitive: false),
+      RegExp(r'<function=[\s\S]*?</function>'),
+      RegExp(r'```json\s*\{[\s\S]*?"function"[\s\S]*?```'),
+    ]) {
+      clean = clean.replaceAll(pattern, '').trim();
+    }
+    return clean.isEmpty ? text : clean;
+  }
+
+  /// Normalises the edge function's two response shapes - a single JSON
+  /// body and (already consumed) JSON text - into one [AiReply].
+  AiReply _replyFromJson(dynamic rawData) {
+    final data = rawData is String ? jsonDecode(rawData) : rawData;
+    if (data is Map && data['content'] is String) {
+      final parsed = _parseSources(data['sources']);
+      return AiReply(
+        content: data['content'],
+        sources: parsed.labels,
+        sourceIds: parsed.ids,
+        toolsUsed: _parseToolsUsed(data['toolsUsed']),
+      );
+    }
+    if (data is Map && data['error'] is String) {
+      throw Exception(data['error']);
+    }
+    throw Exception('Unexpected response: $rawData');
   }
 
   /// Inverse of [_parseSources]: turns the pipe-joined in-memory string back

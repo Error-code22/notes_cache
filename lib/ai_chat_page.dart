@@ -648,25 +648,38 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       final allHistory = _messages.take(_messages.length - 1).toList();
       final contextHistory = aiService.getContextMessages(allHistory);
       final prompt = trimmed.isEmpty ? 'Analyze the image${images.length > 1 ? 's' : ''}.' : trimmed;
-      final reply = await aiService.getResponseDetailed(prompt, contextHistory,
-          imageBase64s: images.isEmpty ? null : images);
 
-      final assistantMsg = <String, String>{
-        'role': 'assistant',
-        'content': reply.content,
-        // Stored pipe-joined so it survives the List<Map<String,String>>
-        // message list and the JSON history the DB persists.
-        if (reply.sources.isNotEmpty) 'sources': reply.sources.join('|'),
-        // Parallel to `sources`; absent on older messages, which simply
-        // render as chips that do not navigate.
-        if (reply.sourceIds.isNotEmpty)
-          'sourceIds': reply.sourceIds.map((id) => id.toString()).join('|'),
-        if (reply.toolsUsed.isNotEmpty) 'tools': reply.toolsUsed.join('|'),
-      };
-      setState(() {
-        _messages.add(assistantMsg);
-        _isLoading = false;
-      });
+      // Placeholder added before the request so streamed text has somewhere
+      // to land. It stays invisible (see the empty-content guard in the
+      // list builder) until the first delta, which also retires the
+      // "Thinking..." row - the answer appearing is the better signal.
+      final assistantMsg = <String, String>{'role': 'assistant', 'content': ''};
+      setState(() => _messages.add(assistantMsg));
+
+      final reply = await aiService.streamResponseDetailed(
+        prompt,
+        contextHistory,
+        imageBase64s: images.isEmpty ? null : images,
+        onDelta: (delta) {
+          assistantMsg['content'] = (assistantMsg['content'] ?? '') + delta;
+          setState(() => _isLoading = false);
+          _scrollToBottom();
+        },
+      );
+
+      assistantMsg['content'] = reply.content;
+      // Stored pipe-joined so it survives the List<Map<String,String>>
+      // message list and the JSON history the DB persists.
+      if (reply.sources.isNotEmpty) assistantMsg['sources'] = reply.sources.join('|');
+      // Parallel to `sources`; absent on older messages, which simply
+      // render as chips that do not navigate.
+      if (reply.sourceIds.isNotEmpty) {
+        assistantMsg['sourceIds'] =
+            reply.sourceIds.map((id) => id.toString()).join('|');
+      }
+      if (reply.toolsUsed.isNotEmpty) assistantMsg['tools'] = reply.toolsUsed.join('|');
+      setState(() => _isLoading = false);
+
       // Persist per-conversation for signed-in users.
       // Private study mode writes nothing: the banner on screen promises the
       // chat "stays on this screen and is cleared when you leave".
@@ -691,7 +704,18 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       }
       _scrollToBottom();
     } catch (e) {
-      setState(() { _isLoading = false; _messages.add({'role': 'assistant', 'content': 'Error: $e'}); });
+      setState(() {
+        _isLoading = false;
+        // A placeholder that never received text is replaced in place so a
+        // failed turn leaves one message, not an empty bubble plus an error.
+        if (_messages.isNotEmpty &&
+            _messages.last['role'] == 'assistant' &&
+            (_messages.last['content'] ?? '').isEmpty) {
+          _messages.last['content'] = 'Error: $e';
+        } else {
+          _messages.add({'role': 'assistant', 'content': 'Error: $e'});
+        }
+      });
       _saveChatHistory();
       _scrollToBottom();
     }
@@ -844,6 +868,13 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
                     itemCount: _messages.length,
                     itemBuilder: (context, index) {
                       final msg = _messages[index];
+                      // The assistant placeholder sits in the list while the
+                      // first tokens are still in flight; drawing it would
+                      // flash an empty bubble next to the spinner.
+                      if (msg['role'] != 'user' &&
+                          (msg['content'] ?? '').isEmpty) {
+                        return const SizedBox.shrink();
+                      }
                       return _buildMessageBubble(msg, theme, primaryColor);
                     },
                   ),

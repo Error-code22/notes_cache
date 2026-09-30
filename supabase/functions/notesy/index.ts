@@ -59,6 +59,208 @@ async function groqChat(
   return { ok: false, error: err.error?.message || 'Unknown Groq error' }
 }
 
+// ---------------------------------------------------------------------------
+// Streaming
+//
+// The client asks for streaming with `stream: true`. The awkward part is
+// tool calls: we cannot know whether a turn will answer directly or reach
+// for a tool until tokens start arriving, and the HTTP response must be
+// committed exactly once. So the provider stream is opened first and read
+// just far enough to classify the turn, and only then is the response
+// chosen. Nothing is pushed to the client before that decision, so a tool
+// call can still take the normal JSON path without leaving the caller
+// holding a half-open event stream.
+//
+// Only Groq streams. Any other provider - or any failure here - reports
+// `unavailable` and the caller falls back to the ordinary request, which
+// already handles the configured fallback provider. The client accepts
+// either shape, so streaming is an optimisation, never a requirement.
+// ---------------------------------------------------------------------------
+
+type StreamingTurn =
+  | { mode: 'content' }
+  | { mode: 'tool'; message: any }
+  | { mode: 'unavailable'; error: string }
+
+const SSE_HEADERS: Record<string, string> = {
+  'Content-Type': 'text/event-stream; charset=utf-8',
+  'Cache-Control': 'no-cache, no-transform',
+  Connection: 'keep-alive',
+  // Shared buffers in front of the function would defeat the whole point.
+  'X-Accel-Buffering': 'no',
+}
+
+/// Reads newline-delimited SSE frames off a response body, holding any
+/// partial line back until the next chunk completes it. One instance spans
+/// the whole turn so a phase change (decide -> forward) never drops bytes
+/// already pulled off the socket.
+class SseLineReader {
+  private buf = ''
+  constructor(
+    private reader: ReadableStreamDefaultReader<Uint8Array>,
+    private decoder: TextDecoder,
+  ) {}
+
+  private async takeLine(): Promise<string | null> {
+    for (;;) {
+      const nl = this.buf.indexOf('\n')
+      if (nl >= 0) {
+        const raw = this.buf.slice(0, nl)
+        this.buf = this.buf.slice(nl + 1)
+        return raw
+      }
+      const { done, value } = await this.reader.read()
+      if (done) return null
+      this.buf += this.decoder.decode(value, { stream: true })
+    }
+  }
+
+  async *deltas(): AsyncGenerator<any> {
+    for (;;) {
+      const line = await this.takeLine()
+      if (line === null) return
+      const t = line.trim()
+      if (!t.startsWith('data:')) continue
+      const payload = t.slice(5).trim()
+      if (payload === '[DONE]') return
+      let json: any
+      try {
+        json = JSON.parse(payload)
+      } catch {
+        continue
+      }
+      const delta = json?.choices?.[0]?.delta
+      if (delta) yield delta
+    }
+  }
+}
+
+function startGroqStream(
+  apiKey: string,
+  model: string,
+  body: Record<string, any>,
+  finalEvent: () => string,
+): { decision: Promise<StreamingTurn>; stream: ReadableStream<Uint8Array> } {
+  const encoder = new TextEncoder()
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c
+    },
+  })
+
+  // enqueue can throw once the caller has gone away; a dropped connection
+  // must not take down the rest of the turn.
+  const send = (line: string) => {
+    try {
+      controller?.enqueue(encoder.encode(line))
+    } catch {
+      /* client disconnected */
+    }
+  }
+  const closeQuietly = () => {
+    try {
+      controller?.close()
+    } catch {
+      /* already closed */
+    }
+  }
+
+  const decision = new Promise<StreamingTurn>((resolve) => {
+    ;(async () => {
+      try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, model, stream: true }),
+          signal: AbortSignal.timeout(180_000),
+        })
+        if (!res.ok || !res.body) {
+          const err = await res.json().catch(() => ({}))
+          resolve({ mode: 'unavailable', error: err.error?.message || `Groq ${res.status}` })
+          return
+        }
+
+        const lines = new SseLineReader(res.body.getReader(), new TextDecoder())
+        // Tool-call fragments arrive spread across chunks with an index, so
+        // they are reassembled here rather than trusting any single frame.
+        const frags = new Map<number, { name: string; args: string }>()
+        let sawTool = false
+        let content = ''
+
+        for await (const delta of lines.deltas()) {
+          if (delta.tool_calls) {
+            sawTool = true
+            for (const frag of delta.tool_calls) {
+              const i = frag.index ?? 0
+              const cur = frags.get(i) ?? { name: '', args: '' }
+              if (frag.function?.name) cur.name += frag.function.name
+              if (frag.function?.arguments) cur.args += frag.function.arguments
+              frags.set(i, cur)
+            }
+            continue
+          }
+          if (typeof delta.content !== 'string' || delta.content === '') continue
+
+          if (sawTool) {
+            // Rare, but a model can preface a call with prose: keep it as
+            // the message content rather than committing to a stream that
+            // would then be followed by a call we cannot send as SSE.
+            content += delta.content
+            continue
+          }
+
+          // Direct answer - commit, and forward the remainder verbatim.
+          resolve({ mode: 'content' })
+          send(`data: ${JSON.stringify({ delta: delta.content })}\n\n`)
+          for await (const rest of lines.deltas()) {
+            if (typeof rest.content === 'string' && rest.content) {
+              send(`data: ${JSON.stringify({ delta: rest.content })}\n\n`)
+            }
+          }
+          send(finalEvent())
+          send('data: [DONE]\n\n')
+          closeQuietly()
+          return
+        }
+
+        if (sawTool && frags.size > 0) {
+          resolve({
+            mode: 'tool',
+            message: {
+              role: 'assistant',
+              content: content || null,
+              tool_calls: [...frags.entries()].map(([index, f]) => ({
+                id: `call_${index}`,
+                type: 'function',
+                function: { name: f.name, arguments: f.args },
+              })),
+            },
+          })
+          try {
+            controller?.error(new Error('superseded by tool call'))
+          } catch {
+            /* nothing listening */
+          }
+          return
+        }
+
+        resolve({ mode: 'unavailable', error: 'stream ended without content' })
+        closeQuietly()
+      } catch (e) {
+        resolve({ mode: 'unavailable', error: String((e as any)?.message || e) })
+        try {
+          controller?.error(e)
+        } catch {
+          /* nothing listening */
+        }
+      }
+    })()
+  })
+
+  return { decision, stream }
+}
+
 async function groqListModels(apiKey: string): Promise<{ ok: boolean; models?: string[]; error?: string }> {
   const response = await fetch('https://api.groq.com/openai/v1/models', {
     headers: { 'Authorization': `Bearer ${apiKey}` },
@@ -649,6 +851,23 @@ function buildSources(hits: ChunkHit[], max = 6): Array<{ title: string; page: n
     seen.add(h.noteId)
     out.push({ title: h.source, page: h.page, noteId: h.noteId })
     if (out.length >= max) break
+  }
+  return out
+}
+
+/// The up-front RAG snapshot plus whatever the tools surfaced, deduped by
+/// note so one document produces exactly one citation chip. Shared by the
+/// JSON and streaming responses so both report identically.
+function mergeSources(
+  rag: Array<{ title: string; page: number; noteId: number }>,
+  fromTools: Array<{ title: string; page: number; noteId: number }>,
+): Array<{ title: string; page: number; noteId: number }> {
+  const out: Array<{ title: string; page: number; noteId: number }> = []
+  for (const s of [...rag, ...fromTools]) {
+    if (!s || !s.noteId) continue
+    if (out.some((x) => x.noteId === s.noteId)) continue
+    out.push(s)
+    if (out.length >= 8) break
   }
   return out
 }
@@ -1269,17 +1488,52 @@ Tone:
       }] : [])
     ];
 
-    // Call primary provider, fallback to secondary if configured
-    const callResult = await callProvider(
-      { provider: primaryProvider, model: primaryModel },
-      fallbackModel ? { provider: fallbackProvider, model: fallbackModel } : null,
-      { messages, tools, tool_choice: 'auto' }
-    );
+    // Streaming attempt. Only worth trying on a provider that can do it;
+    // `unavailable` falls straight through to callProvider below, which
+    // keeps handling the configured fallback, so opting in can never make
+    // a request worse than it was.
+    let streamingStream: ReadableStream<Uint8Array> | null = null
+    let aiMessage: any = null
 
-    if (!callResult.ok) throw new Error(`All providers failed. Last error: ${callResult.error}`);
-    if (callResult.usedFallback) console.log(`Notesy: Used fallback provider for ${isVision ? 'vision' : 'text'}`);
+    if (body.stream === true && primaryProvider === 'groq' && GROQ_KEYS.length > 0) {
+      const started = startGroqStream(
+        GROQ_KEYS[0].key!,
+        primaryModel,
+        { messages, tools, tool_choice: 'auto' },
+        // Evaluated only once the stream ends. Streaming is reserved for
+        // turns that answered directly, so no tool ran and toolsUsed is
+        // still empty here.
+        () => `data: ${JSON.stringify({
+          done: true,
+          sources: mergeSources(ragSources, toolSources),
+          toolsUsed,
+        })}\n\n`,
+      )
+      const turn = await started.decision
+      if (turn.mode === 'content') {
+        streamingStream = started.stream
+      } else if (turn.mode === 'tool') {
+        // Reassembled from the stream, so the tool round-trip still runs
+        // without paying for a second request just to discover the call.
+        aiMessage = turn.message
+      } else {
+        console.warn(`Notesy: streaming unavailable, falling back: ${turn.error}`)
+      }
+    }
 
-    let aiMessage = callResult.data.choices[0].message;
+    if (streamingStream === null && aiMessage === null) {
+      // Call primary provider, fallback to secondary if configured
+      const callResult = await callProvider(
+        { provider: primaryProvider, model: primaryModel },
+        fallbackModel ? { provider: fallbackProvider, model: fallbackModel } : null,
+        { messages, tools, tool_choice: 'auto' }
+      );
+
+      if (!callResult.ok) throw new Error(`All providers failed. Last error: ${callResult.error}`);
+      if (callResult.usedFallback) console.log(`Notesy: Used fallback provider for ${isVision ? 'vision' : 'text'}`);
+
+      aiMessage = callResult.data.choices[0].message;
+    }
 
     // Sanitize: strip any raw tool-call syntax that leaked into content
     // This happens when the model returns function calls as plain text instead of structured tool_calls
@@ -1294,7 +1548,7 @@ Tone:
       return clean || "I'm working on finding that information. Could you rephrase your question?";
     }
 
-    if (aiMessage.tool_calls) {
+    if (aiMessage?.tool_calls) {
       try {
         const toolCall = aiMessage.tool_calls[0]
         const name = toolCall.function.name
@@ -1389,12 +1643,16 @@ Tone:
 
     // Merge the up-front RAG snapshot with anything the tools surfaced.
     // Deduped by note so one document produces exactly one chip.
-    const mergedSources: Array<{ title: string; page: number; noteId: number }> = []
-    for (const s of [...ragSources, ...toolSources]) {
-      if (!s || !s.noteId) continue
-      if (mergedSources.some((x) => x.noteId === s.noteId)) continue
-      mergedSources.push(s)
-      if (mergedSources.length >= 8) break
+    const mergedSources = mergeSources(ragSources, toolSources)
+
+    // Streaming turns return before the JSON body is built: the content is
+    // already flowing through `streamingStream`, with sources appended by
+    // the final event the stream emits when it closes. Usage is counted
+    // above so a streamed answer is charged like any other.
+    if (streamingStream !== null) {
+      return new Response(streamingStream, {
+        headers: { ...corsHeaders, ...SSE_HEADERS },
+      })
     }
 
     return new Response(JSON.stringify({
