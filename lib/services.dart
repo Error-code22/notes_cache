@@ -872,6 +872,25 @@ class NoteService {
     }
   }
 
+  /// Loads a single note by id. Used by the chat's citation chips, which
+  /// know only the id the edge function attributed an answer to. Returns
+  /// null when the note is gone or the viewer may not read it, so the chip
+  /// can fall back to being inert instead of opening an empty screen.
+  Future<Note?> getNoteById(String id) async {
+    try {
+      final data = await _supabase
+          .from('notes')
+          .select()
+          .eq('id', id)
+          .maybeSingle();
+      if (data == null) return null;
+      return Note.fromMap(Map<String, dynamic>.from(data));
+    } catch (e) {
+      debugPrint('getNoteById error: $e');
+      return null;
+    }
+  }
+
   /// Fetches all notes with their file + backup refs (admin tools).
   Future<List<Map<String, dynamic>>> fetchAllNotes() async {
     try {
@@ -1886,9 +1905,25 @@ class ChatService {
 /// then shows no citation chips rather than inventing a source.
 class AiReply {
   final String content;
+
+  /// Human-readable chip labels, e.g. `javanotes5.pdf (p.525)`.
   final List<String> sources;
 
-  const AiReply({required this.content, this.sources = const []});
+  /// Note ids aligned with [sources]; `0` where the edge function could not
+  /// supply one. Kept parallel so the chat screen can deep-link a chip
+  /// straight into the note instead of only naming it.
+  final List<int> sourceIds;
+
+  /// Tools that actually executed for this turn, e.g. `search_lecture_docs`.
+  /// Empty when the model answered directly.
+  final List<String> toolsUsed;
+
+  const AiReply({
+    required this.content,
+    this.sources = const [],
+    this.sourceIds = const [],
+    this.toolsUsed = const [],
+  });
 }
 
 class AiChatService {
@@ -2172,9 +2207,12 @@ class AiChatService {
       final data = rawData is String ? jsonDecode(rawData) : rawData;
 
       if (data is Map && data['content'] is String) {
+        final parsed = _parseSources(data['sources']);
         return AiReply(
           content: data['content'],
-          sources: _parseSources(data['sources']),
+          sources: parsed.labels,
+          sourceIds: parsed.ids,
+          toolsUsed: _parseToolsUsed(data['toolsUsed']),
         );
       }
       if (data is Map && data['error'] is String) throw Exception(data['error']);
@@ -2195,26 +2233,53 @@ class AiChatService {
     return items.isEmpty ? null : items;
   }
 
-  /// The edge function sends `[{title, page}]`; the chat screen only needs a
-  /// flat, deduplicated list of note titles for its citation chips.
-  List<String> _parseSources(dynamic raw) {
-    if (raw is! List) return const [];
+  /// The edge function sends `[{title, page, noteId}]`. Returns the chip
+  /// labels alongside the matching note ids so the chat screen can both
+  /// show and open the source. Deduplicated by label, capped at six.
+  ({List<String> labels, List<int> ids}) _parseSources(dynamic raw) {
+    final labels = <String>[];
+    final ids = <int>[];
+    if (raw is! List) return (labels: labels, ids: ids);
     final seen = <String>{};
-    final out = <String>[];
     for (final item in raw) {
       String? title;
       var page = 0;
+      var noteId = 0;
       if (item is Map) {
         title = item['title']?.toString().trim();
         final p = item['page'];
         page = p is int ? p : int.tryParse(p?.toString() ?? '') ?? 0;
+        final n = item['noteId'];
+        noteId = n is int ? n : int.tryParse(n?.toString() ?? '') ?? 0;
       } else {
         title = item?.toString().trim();
       }
       if (title == null || title.isEmpty) continue;
       final label = page > 0 ? '$title (p.$page)' : title;
-      if (seen.add(label)) out.add(label);
-      if (out.length >= 6) break;
+      if (!seen.add(label)) continue;
+      labels.add(label);
+      ids.add(noteId);
+      if (labels.length >= 6) break;
+    }
+    return (labels: labels, ids: ids);
+  }
+
+  /// Tool names the edge function reports for this turn. Free text, so the
+  /// list is whitelisted before it reaches the UI.
+  List<String> _parseToolsUsed(dynamic raw) {
+    if (raw is! List) return const [];
+    const known = {
+      'search_notes',
+      'get_note_content',
+      'get_user_stats',
+      'search_lecture_docs',
+      'search_web',
+    };
+    final out = <String>[];
+    for (final item in raw) {
+      final name = item?.toString().trim();
+      if (name == null || !known.contains(name)) continue;
+      if (!out.contains(name)) out.add(name);
     }
     return out;
   }
