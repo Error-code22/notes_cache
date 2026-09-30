@@ -343,7 +343,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
     if (user?.isGuest == true) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Upload Notes', style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text('Lecturer Tools', style: TextStyle(fontWeight: FontWeight.bold)),
           centerTitle: true,
           elevation: 0,
         ),
@@ -355,10 +355,10 @@ class _UploadNotePageState extends State<UploadNotePage> {
               children: [
                 Icon(Icons.lock_outline_rounded, size: 64, color: theme.colorScheme.primary.withOpacity(0.3)),
                 const SizedBox(height: 20),
-                const Text('Sign in to upload notes', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const Text('Sign in to set notes', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
                 Text(
-                  'As a guest you can browse the library. Sign in to share notes — or use the Donate section to contribute anonymously.',
+                  'Sign in with a lecturer account to publish notes to your students.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6), fontSize: 14, height: 1.5),
                 ),
@@ -380,7 +380,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Upload Notes', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Lecturer Tools', style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         elevation: 0,
       ),
@@ -580,12 +580,12 @@ class _UploadNotePageState extends State<UploadNotePage> {
       children: [
         const SizedBox(height: 40),
         Text(
-          'Share your notes with the world',
+          'Set notes for your students',
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
         ),
         const SizedBox(height: 8),
         Text(
-          'Upload your files to help other students',
+          'Upload your files and pick the class year they should appear in',
           style: TextStyle(fontSize: 16, color: theme.colorScheme.onSurface.withOpacity(0.6)),
         ),
         const SizedBox(height: 32),

@@ -266,6 +266,9 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
 
   Future<void> _saveChatHistory() async {
     try {
+      // Private study promises "stays on this screen" - so it must never be
+      // written anywhere, not the conversation table and not local prefs.
+      if (_privateStudyMode) return;
       if (_currentUserId == null) return;
       final aiService = AiChatService();
       final user = context.read<AuthService>().currentUser;
@@ -279,7 +282,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     }
   }
 
-  // ==================== VAULT MODE ====================
+  // ==================== HIDE CHAT (decoy screen) ====================
 
   Future<bool> _authenticate() async {
     try {
@@ -288,7 +291,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       final hasDeviceSupport = await localAuth.isDeviceSupported();
       if (canBiometrics && hasDeviceSupport) {
         final ok = await localAuth.authenticate(
-          localizedReason: 'Unlock your private chat',
+          localizedReason: 'Unlock your hidden chat',
           biometricOnly: true,
           persistAcrossBackgrounding: true,
         );
@@ -312,7 +315,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     final ok = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Set a vault PIN'),
+        title: const Text('Set a PIN for hidden chats'),
         content: TextField(
           controller: pinController,
           keyboardType: TextInputType.number,
@@ -341,7 +344,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       final entered = await showDialog<String>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Enter vault PIN'),
+          title: const Text('Enter your PIN'),
           content: TextField(
             controller: pinController,
             keyboardType: TextInputType.number,
@@ -427,13 +430,13 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     final user = context.read<AuthService>().currentUser;
     if (user == null || user.isGuest) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sign in to use the vault.'), backgroundColor: Colors.orange),
+        const SnackBar(content: Text('Sign in to use Hide chat.'), backgroundColor: Colors.orange),
       );
       return;
     }
-    final id = await AiChatService().createConversation(user.id, title: 'Private chat');
+    final id = await AiChatService().createConversation(user.id, title: 'Hidden chat');
     if (id == null) return;
-    await AiChatService().renameConversation(id.toString(), 'Private chat');
+    await AiChatService().renameConversation(id.toString(), 'Hidden chat');
     // Mark locked
     try {
       await Supabase.instance.client.from('ai_conversations').update({'locked': true}).eq('id', id);
@@ -445,7 +448,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     if (mounted) {
       setState(() => _vaultConversation = true);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vault chat started — it will hide as a decoy when locked.'), backgroundColor: Colors.deepPurple),
+        const SnackBar(content: Text('Hide chat on. It shows a stand-in chat until you unlock it.'), backgroundColor: Colors.deepPurple),
       );
     }
   }
@@ -466,11 +469,11 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     final user = context.read<AuthService>().currentUser;
     if (user == null || user.isGuest) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sign in to use the vault.'), backgroundColor: Colors.orange),
+        const SnackBar(content: Text('Sign in to use Hide chat.'), backgroundColor: Colors.orange),
       );
       return;
     }
-    final id = await AiChatService().createConversation(user.id, title: 'Private chat');
+    final id = await AiChatService().createConversation(user.id, title: 'Hidden chat');
     if (id == null || !mounted) return;
     try {
       await Supabase.instance.client.from('ai_conversations').update({'locked': true}).eq('id', id);
@@ -644,17 +647,25 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       final allHistory = _messages.take(_messages.length - 1).toList();
       final contextHistory = aiService.getContextMessages(allHistory);
       final prompt = trimmed.isEmpty ? 'Analyze the image${images.length > 1 ? 's' : ''}.' : trimmed;
-      final response = await aiService.getResponse(prompt, contextHistory,
+      final reply = await aiService.getResponseDetailed(prompt, contextHistory,
           imageBase64s: images.isEmpty ? null : images);
 
-      final assistantMsg = {'role': 'assistant', 'content': response};
+      final assistantMsg = <String, String>{
+        'role': 'assistant',
+        'content': reply.content,
+        // Stored pipe-joined so it survives the List<Map<String,String>>
+        // message list and the JSON history the DB persists.
+        if (reply.sources.isNotEmpty) 'sources': reply.sources.join('|'),
+      };
       setState(() {
         _messages.add(assistantMsg);
         _isLoading = false;
       });
-      // Persist per-conversation for signed-in users
-      final signedIn = !user.isGuest;
-      if (signedIn && _currentConversationId != null) {
+      // Persist per-conversation for signed-in users.
+      // Private study mode writes nothing: the banner on screen promises the
+      // chat "stays on this screen and is cleared when you leave".
+      final persist = !user.isGuest && _currentConversationId != null && !_privateStudyMode;
+      if (persist) {
         await aiService.appendConversationMessages(
           user.id,
           _currentConversationId!.toString(),
@@ -744,7 +755,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
             ),
           if (!isGuest)
             Tooltip(
-              message: 'Shield: tap for quick view · hold to unlock vault',
+              message: 'Shield: tap to hide this chat · hold to reveal a hidden one',
               child: _VaultButton(
                 locked: _vaultLocked,
                 inVault: _vaultConversation,
@@ -786,7 +797,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Private chat — hold the shield to unlock.',
+                      'Hidden chat — hold the shield to reveal it.',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
                     ),
                   ),
@@ -1085,9 +1096,72 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
                         strong: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w700),
                       ),
                     ),
+            if (!isUser && (msg['sources'] ?? '').isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: _buildCitationChips(msg['sources']!, theme),
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  /// "from: [note title]" chips so an answer is traceable to a document
+  /// instead of asking the student to take Notesy's word for it.
+  Widget _buildCitationChips(String raw, ThemeData theme) {
+    final labels = raw.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    if (labels.isEmpty) return const SizedBox.shrink();
+    final border = theme.colorScheme.outlineVariant;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(right: 2),
+          child: Text(
+            'from',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        for (final label in labels)
+          Tooltip(
+            message: 'Retrieved from your notes',
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: border),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.description_outlined,
+                      size: 12, color: theme.colorScheme.primary),
+                  const SizedBox(width: 4),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxWidth: MediaQuery.sizeOf(context).width * 0.38),
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1282,8 +1356,8 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
   }
 }
 
-/// Shield action button: short press fires [onTap] (quick decoy view),
-/// holding for [holdDuration] fires [onLongPress] (unlock vault).
+/// Shield action button: short press fires [onTap] (swap in the decoy),
+/// holding for [holdDuration] fires [onLongPress] (reveal the real chat).
 /// Shows a progress ring while held so the user knows the hold is registering.
 class _VaultButton extends StatefulWidget {
   final bool locked;

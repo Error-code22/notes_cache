@@ -1881,6 +1881,16 @@ class ChatService {
   }
 }
 
+/// One AI answer plus the note documents it was grounded in.
+/// [sources] is empty when nothing relevant was retrieved - the chat screen
+/// then shows no citation chips rather than inventing a source.
+class AiReply {
+  final String content;
+  final List<String> sources;
+
+  const AiReply({required this.content, this.sources = const []});
+}
+
 class AiChatService {
   Future<int> getGuestMessageCount() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2072,10 +2082,25 @@ class AiChatService {
       final supabase = Supabase.instance.client;
       final data = await supabase
           .from('ai_messages')
-          .select('role, content')
+          .select('role, content, sources')
           .eq('conversation_id', conversationId)
           .order('created_at', ascending: true);
-      return data.map((m) => Map<String, String>.from(m as Map)).toList();
+      return data.map((m) {
+        final raw = m as Map;
+        // Build row by hand: `sources` arrives as a List, which
+        // Map<String,String>.from would reject outright.
+        final row = <String, String>{
+          'role': raw['role']?.toString() ?? 'assistant',
+          'content': raw['content']?.toString() ?? '',
+        };
+        // Re-join the stored text[] so the bubble rebuilds its chips exactly
+        // as it did the first time the answer was shown.
+        final src = raw['sources'];
+        if (src is List && src.isNotEmpty) {
+          row['sources'] = src.map((e) => e.toString()).join('|');
+        }
+        return row;
+      }).toList();
     } catch (e) {
       debugPrint('loadConversationMessages error: $e');
       return [];
@@ -2100,6 +2125,7 @@ class AiChatService {
           'user_id': userId,
           'role': 'assistant',
           'content': cleanAssistant['content'] ?? '',
+          'sources': _sourcesForStorage(cleanAssistant['sources']),
         },
       ]);
       await supabase
@@ -2120,6 +2146,13 @@ class AiChatService {
   }
 
   Future<String> getResponse(String msg, List<Map<String, String>> history, {String? imageBase64, List<String>? imageBase64s}) async {
+    final reply = await getResponseDetailed(msg, history, imageBase64: imageBase64, imageBase64s: imageBase64s);
+    return reply.content;
+  }
+
+  /// Same as [getResponse] but also returns the documents the answer was
+  /// grounded in, so the UI can cite them. Only the chat screen needs this.
+  Future<AiReply> getResponseDetailed(String msg, List<Map<String, String>> history, {String? imageBase64, List<String>? imageBase64s}) async {
     final session = Supabase.instance.client.auth.currentSession;
     try {
       final response = await Supabase.instance.client.functions.invoke(
@@ -2138,13 +2171,52 @@ class AiChatService {
       final rawData = response.data;
       final data = rawData is String ? jsonDecode(rawData) : rawData;
 
-      if (data is Map && data['content'] is String) return data['content'];
+      if (data is Map && data['content'] is String) {
+        return AiReply(
+          content: data['content'],
+          sources: _parseSources(data['sources']),
+        );
+      }
       if (data is Map && data['error'] is String) throw Exception(data['error']);
       throw Exception('Unexpected response: $rawData');
     } catch (e) {
       debugPrint('Notesy error: $e');
       rethrow;
     }
+  }
+
+  /// Inverse of [_parseSources]: turns the pipe-joined in-memory string back
+  /// into the `text[]` the `ai_messages.sources` column expects.
+  /// Returns null (not an empty list) when there is nothing to store, so rows
+  /// stay NULL instead of carrying useless empty arrays.
+  List<String>? _sourcesForStorage(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final items = raw.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    return items.isEmpty ? null : items;
+  }
+
+  /// The edge function sends `[{title, page}]`; the chat screen only needs a
+  /// flat, deduplicated list of note titles for its citation chips.
+  List<String> _parseSources(dynamic raw) {
+    if (raw is! List) return const [];
+    final seen = <String>{};
+    final out = <String>[];
+    for (final item in raw) {
+      String? title;
+      var page = 0;
+      if (item is Map) {
+        title = item['title']?.toString().trim();
+        final p = item['page'];
+        page = p is int ? p : int.tryParse(p?.toString() ?? '') ?? 0;
+      } else {
+        title = item?.toString().trim();
+      }
+      if (title == null || title.isEmpty) continue;
+      final label = page > 0 ? '$title (p.$page)' : title;
+      if (seen.add(label)) out.add(label);
+      if (out.length >= 6) break;
+    }
+    return out;
   }
 
   /// Requests an AI summary of a document's text from the Notesy function.
