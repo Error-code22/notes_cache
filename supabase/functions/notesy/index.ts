@@ -1472,7 +1472,15 @@ Tone:
     const fallbackModel = isVision ? visionFallbackModel : textFallbackModel;
 
     // --- RAG: Search lecture document chunks ---
-    const rag = await searchDocumentChunks(message, userId);
+    // An image turn is about the picture. Matching its short question text
+    // against the corpus anyway returned whatever happened to clear the
+    // rank floor - lecture documents with nothing to do with the photo -
+    // and those were then cited under the answer as if they supported it.
+    // Skip retrieval when the student sent a photo; a reply grounded in the
+    // notes still happens when they explicitly ask for the tool.
+    const rag = isVision
+      ? { context: '', sources: [] as Awaited<ReturnType<typeof searchDocumentChunks>>['sources'] }
+      : await searchDocumentChunks(message, userId);
     const ragContext = rag.context;
     const ragSources = rag.sources;
     let enrichedPrompt = systemPrompt;
@@ -1559,36 +1567,44 @@ Tone:
       },
     ];
 
+    const lectureDocsTool = {
+      type: 'function',
+      function: {
+        name: 'search_lecture_docs',
+        description: 'Search through lecture notes, textbooks, and course materials. Use this when the student asks about a topic that might be covered in their course documents.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'The topic or keyword to search for in lecture materials' }
+          },
+          required: ['query']
+        }
+      }
+    };
+    const webSearchTool = {
+      type: 'function',
+      function: {
+        name: 'search_web',
+        description: 'Search the internet for current information. Use this when lecture materials don\'t have the answer, or when the student asks about something not in their course materials. Also useful for getting up-to-date information.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'The search query' }
+          },
+          required: ['query']
+        }
+      }
+    };
+
+    // Notes-search tools assume the question is about the notes. On an image
+    // turn it is about the photo, and leaving them available still cited
+    // lecture documents with nothing to do with what was sent - retrieved
+    // automatically, or by the model asking for the tool itself. Web search
+    // stays, since identifying something in a photo is a legitimate use, and a
+    // written follow-up gets the full set back.
     const tools = [
-      ...signedInTools,
-      {
-        type: 'function',
-        function: {
-          name: 'search_lecture_docs',
-          description: 'Search through lecture notes, textbooks, and course materials. Use this when the student asks about a topic that might be covered in their course documents.',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'The topic or keyword to search for in lecture materials' }
-            },
-            required: ['query']
-          }
-        }
-      },
-      ...(webSearchEnabled ? [{
-        type: 'function',
-        function: {
-          name: 'search_web',
-          description: 'Search the internet for current information. Use this when lecture materials don\'t have the answer, or when the student asks about something not in their course materials. Also useful for getting up-to-date information.',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'The search query' }
-            },
-            required: ['query']
-          }
-        }
-      }] : [])
+      ...(!isVision ? [...signedInTools, lectureDocsTool] : []),
+      ...(webSearchEnabled ? [webSearchTool] : []),
     ];
 
     // Streaming attempt. Only worth trying on a provider that can do it;

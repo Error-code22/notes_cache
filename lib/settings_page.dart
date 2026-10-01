@@ -152,12 +152,32 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  void _testNotification() {
+  Future<void> _testNotification() async {
+    final messenger = ScaffoldMessenger.of(context);
     final notificationService = context.read<NotificationService>();
-    notificationService.showNotification(
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool('settings_notifications') ?? true)) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Notifications are turned off above.'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
+    // Android 13+ drops the notification outright when POST_NOTIFICATIONS is
+    // not granted, and nothing throws - so without asking first this button
+    // looked broken. Ask, then report what actually happened.
+    await notificationService.requestPermission();
+    final shown = await notificationService.showNotification(
       title: 'NotesCache Test',
       body: 'Notifications are working perfectly!',
     );
+    if (!mounted) return;
+    messenger.showSnackBar(SnackBar(
+      content: Text(shown
+          ? 'Test notification sent - check your status bar or notification shade.'
+          : 'Nothing was shown. Make sure NotesCache is allowed to notify you in your system settings.'),
+      backgroundColor: shown ? Colors.green : Colors.red,
+    ));
   }
 
   /// Requests the system notification permission (Android 13+ shows a prompt;

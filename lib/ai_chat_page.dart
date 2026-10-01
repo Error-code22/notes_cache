@@ -38,6 +38,12 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
   final int _userDailyLimit = 20;
   static const int _maxImages = 3;
   static const String _vaultPinKey = 'vault_pin';
+  static const String _guestHistoryAtKey = 'guest_ai_history_at';
+
+  /// How long the previous conversation stays worth resuming. Opening Notesy
+  /// after a longer gap starts a fresh chat instead of dragging the old one
+  /// back up with yesterday's context still in it.
+  static const Duration _resumeMaxAge = Duration(hours: 4);
 
   // --- conversations (signed-in users) ---
   List<Map<String, dynamic>> _conversations = [];
@@ -77,7 +83,7 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _currentUserId = context.read<AuthService>().currentUser?.id;
     _loadDailyCount();
-    _loadConversations();
+    _loadConversations(autoOpen: true);
     _maybeShowBetaNotice();
   }
 
@@ -141,11 +147,18 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
 
   // ==================== CONVERSATIONS ====================
 
-  Future<void> _loadConversations() async {
+  /// Refreshes the conversation list.
+  ///
+  /// Only the initial open asks to resume a conversation ([autoOpen]); every
+  /// other caller is refreshing the drawer while a chat is already on screen.
+  /// Re-opening from those would silently replace the in-memory messages with
+  /// what is stored - which has no images in it - so a photo sent a moment ago
+  /// vanished the instant the first reply came back.
+  Future<void> _loadConversations({bool autoOpen = false}) async {
     final user = context.read<AuthService>().currentUser;
     if (user == null || user.isGuest) {
       if (mounted) setState(() => _loadingConversations = false);
-      _loadLegacyGuestHistory();
+      if (autoOpen) await _loadLegacyGuestHistory();
       return;
     }
     final aiService = AiChatService();
@@ -159,9 +172,38 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
       _conversations = convs;
       _loadingConversations = false;
     });
-    if (convs.isNotEmpty) {
-      await _openConversation(convs.first['id'].toString());
+    if (autoOpen && convs.isNotEmpty) {
+      await _maybeResumeConversation(convs);
     }
+  }
+
+  /// Resumes the previous chat only if it is recent enough, and never a vault
+  /// entry: this path opens the conversation directly, so a locked one would
+  /// skip the PIN screen entirely.
+  Future<void> _maybeResumeConversation(List<Map<String, dynamic>> convs) async {
+    final candidate = convs.firstWhere(
+      (c) => c['locked'] != true,
+      orElse: () => const <String, dynamic>{},
+    );
+    if (candidate.isEmpty) return;
+
+    final updated = DateTime.tryParse('${candidate['updated_at']}')?.toLocal();
+    final isFresh = updated != null &&
+        DateTime.now().difference(updated) < _resumeMaxAge;
+    if (isFresh) {
+      await _openConversation(candidate['id'].toString());
+      return;
+    }
+
+    // Stale: show an empty chat but leave the old conversation in the list so
+    // it can still be picked from the drawer. No row is created here - the
+    // lazy create on the first send makes one only if it is needed.
+    setState(() {
+      _messages.clear();
+      _currentConversationId = null;
+      _vaultConversation = false;
+      _vaultLocked = false;
+    });
   }
 
   Future<void> _openConversation(String convId) async {
@@ -259,6 +301,14 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
   Future<void> _loadLegacyGuestHistory() async {
     final aiService = AiChatService();
     if (_currentUserId == null) return;
+    // Guests have no conversation row to date, so the companion timestamp
+    // written on save is what decides whether this history is still current.
+    final prefs = await SharedPreferences.getInstance();
+    final savedAt = DateTime.tryParse(prefs.getString(_guestHistoryAtKey) ?? '');
+    if (savedAt == null ||
+        DateTime.now().difference(savedAt) >= _resumeMaxAge) {
+      return;
+    }
     final history = await aiService.loadChatHistory(_currentUserId!);
     if (mounted && history.isNotEmpty) {
       setState(() => _messages.addAll(history));
@@ -278,6 +328,9 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
         return; // handled in _sendText via appendConversationMessages
       }
       await aiService.saveChatHistory(_currentUserId!, _messages);
+      // Dated so the next open can tell a live chat from one left behind.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_guestHistoryAtKey, DateTime.now().toIso8601String());
     } catch (e) {
       debugPrint('Save chat history error: $e');
     }
