@@ -8,6 +8,18 @@
 //   FIREBASE_SERVICE_ACCOUNT_JSON  — the whole service-account JSON file
 //                                    downloaded from Firebase console
 //                                    (Project settings → Service accounts).
+//                                    Must be the JSON for the SAME Firebase
+//                                    project the app's google-services.json
+//                                    points at (project_id "notescache"),
+//                                    and it must parse as JSON - see getMessaging().
+//
+// Deployment: must be deployed with `--no-verify-jwt`.
+//   The callers in this function are a database webhook secret and pg_cron,
+//   neither of which can present a JWT. Re-enabling platform verification
+//   makes those callers fail with UNAUTHORIZED_INVALID_JWT_FORMAT before a
+//   single line of this file runs - silently killing chat pushes and class
+//   alerts. Authorization is done here instead: service key, webhook secret,
+//   or a user JWT that may only notify about its own messages.
 //
 // Payload (POST JSON):
 //   { "userId": "...", "title": "...", "body": "...", "data": { ... } }

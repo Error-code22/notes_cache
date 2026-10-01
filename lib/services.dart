@@ -2774,25 +2774,32 @@ class NotificationService {
     }
   }
 
-  Future<void> showNotification({required String title, required String body, String? payload}) async {
+  /// Shows a local notification. Returns whether one was actually handed to
+  /// the OS - every early exit below used to be a silent `void`, which is why
+  /// a test button could appear to do nothing with no way to tell why.
+  Future<bool> showNotification({required String title, required String body, String? payload}) async {
     debugPrint('NOTIFICATION TRIGGERED: $title - $body');
     // Honor the Settings toggles
     final prefs = await SharedPreferences.getInstance();
-    if (!(prefs.getBool('settings_notifications') ?? true)) return;
+    if (!(prefs.getBool('settings_notifications') ?? true)) {
+      debugPrint('Notification skipped: disabled in settings');
+      return false;
+    }
     final withSound = prefs.getBool('settings_notification_sound') ?? true;
 
     if (Platform.isWindows) {
       if (!_windowsReady) {
         debugPrint('Skipping notification; Windows notifier not ready (need full restart).');
-        return;
+        return false;
       }
       try {
         LocalNotification notification = LocalNotification(title: title, body: body);
         notification.show();
+        return true;
       } catch (e) {
         debugPrint('Windows notification failed: $e');
+        return false;
       }
-      return;
     }
     try {
       // Reference the pre-registered channel by its constant ID
@@ -2810,8 +2817,10 @@ class NotificationService {
       // Incrementing ID so each notification stacks instead of replacing the last
       final id = _nextId++;
       await _notifications.show(id, title, body, NotificationDetails(android: android, iOS: ios), payload: payload);
+      return true;
     } catch (e) {
       debugPrint('Notification show failed: $e');
+      return false;
     }
   }
 }
