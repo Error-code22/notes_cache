@@ -167,16 +167,34 @@ class _SettingsPageState extends State<SettingsPage> {
     // not granted, and nothing throws - so without asking first this button
     // looked broken. Ask, then report what actually happened.
     await notificationService.requestPermission();
+    final granted = notificationService.granted;
     final shown = await notificationService.showNotification(
       title: 'NotesCache Test',
       body: 'Notifications are working perfectly!',
     );
     if (!mounted) return;
+    if (shown) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Test notification sent - check your status bar or notification shade.'),
+        backgroundColor: Colors.green,
+      ));
+      return;
+    }
+    // Denial and delivery are separate failures. Android drops the
+    // notification outright when permission is missing and nothing throws,
+    // so saying only "not allowed in system settings" was wrong in both
+    // directions - report the one we actually know, otherwise the reason.
+    if (granted == false) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Permission denied. Allow NotesCache to send notifications in your phone\'s app settings, then try again.'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
     messenger.showSnackBar(SnackBar(
-      content: Text(shown
-          ? 'Test notification sent - check your status bar or notification shade.'
-          : 'Nothing was shown. Make sure NotesCache is allowed to notify you in your system settings.'),
-      backgroundColor: shown ? Colors.green : Colors.red,
+      content: Text('Nothing was shown. ${notificationService.lastShowError ?? 'Unknown reason - check the app logs.'}'),
+      backgroundColor: Colors.red,
+      duration: const Duration(seconds: 8),
     ));
   }
 

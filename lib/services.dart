@@ -1548,6 +1548,7 @@ class NoteService {
     required String title,
     required DateTime classTime,
     String? location,
+    String? comment,
     int notifyMinutesBefore = 15,
     bool repeatWeekly = false,
     int? targetYear,
@@ -1559,6 +1560,7 @@ class NoteService {
         'created_by': uid,
         'title': title,
         'location': location,
+        'comment': comment,
         'class_time': classTime.toIso8601String(),
         'notify_minutes_before': notifyMinutesBefore,
         'repeat_weekly': repeatWeekly,
@@ -2758,31 +2760,49 @@ class NotificationService {
 
   /// Asks for notification permission. Called AFTER the first frame renders
   /// (e.g. dashboard post-frame) so the OS dialog never delays startup.
-  Future<void> requestPermission() async {
+  /// Returns whether permission is granted, or null where the platform has no
+  /// runtime permission (or the request itself failed - the catch below keeps
+  /// the old fire-and-forget behaviour so a caller can never be broken by it).
+  Future<bool?> requestPermission() async {
     if (Platform.isIOS) {
       final settings = await _notifications.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(alert: true, badge: true, sound: true);
       debugPrint('iOS notification permission: $settings');
-      return;
+      granted = settings;
+      return granted;
     }
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid) return null;
     try {
-      await _notifications
+      granted = await _notifications
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
     } catch (e) {
       debugPrint('requestNotificationsPermission failed: $e');
+      granted = null;
     }
+    return granted;
   }
+
+  /// Outcome of the most recent [requestPermission], so the test button can
+  /// tell "denied" apart from "nothing to ask".
+  bool? granted;
+
+  /// Why the most recent [showNotification] returned false. Android drops
+  /// notifications without throwing and every failure below used to be a
+  /// silent `void`, so a test button could look broken with no clue why -
+  /// this is the clue.
+  String? lastShowError;
 
   /// Shows a local notification. Returns whether one was actually handed to
   /// the OS - every early exit below used to be a silent `void`, which is why
   /// a test button could appear to do nothing with no way to tell why.
   Future<bool> showNotification({required String title, required String body, String? payload}) async {
     debugPrint('NOTIFICATION TRIGGERED: $title - $body');
+    lastShowError = null;
     // Honor the Settings toggles
     final prefs = await SharedPreferences.getInstance();
     if (!(prefs.getBool('settings_notifications') ?? true)) {
       debugPrint('Notification skipped: disabled in settings');
+      lastShowError = 'Notifications are switched off in the app settings.';
       return false;
     }
     final withSound = prefs.getBool('settings_notification_sound') ?? true;
@@ -2790,6 +2810,7 @@ class NotificationService {
     if (Platform.isWindows) {
       if (!_windowsReady) {
         debugPrint('Skipping notification; Windows notifier not ready (need full restart).');
+        lastShowError = 'Windows notifications are not initialised yet - fully quit and reopen the app, then try again.';
         return false;
       }
       try {
@@ -2798,6 +2819,7 @@ class NotificationService {
         return true;
       } catch (e) {
         debugPrint('Windows notification failed: $e');
+        lastShowError = 'Windows error: $e';
         return false;
       }
     }
@@ -2820,6 +2842,7 @@ class NotificationService {
       return true;
     } catch (e) {
       debugPrint('Notification show failed: $e');
+      lastShowError = '$e';
       return false;
     }
   }

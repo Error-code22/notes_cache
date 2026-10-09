@@ -18,6 +18,7 @@ class _ClassRepPageState extends State<ClassRepPage> {
 
   final _titleController = TextEditingController();
   final _locationController = TextEditingController();
+  final _commentController = TextEditingController();
   DateTime _classTime = DateTime.now().add(const Duration(hours: 1));
   int _notifyMinutes = 15;
   bool _repeatWeekly = false;
@@ -33,6 +34,7 @@ class _ClassRepPageState extends State<ClassRepPage> {
   void dispose() {
     _titleController.dispose();
     _locationController.dispose();
+    _commentController.dispose();
     super.dispose();
   }
 
@@ -67,11 +69,14 @@ class _ClassRepPageState extends State<ClassRepPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Give the class a name.')));
       return;
     }
+    final location = _locationController.text.trim();
+    final comment = _commentController.text.trim();
     setState(() => _saving = true);
     final ok = await context.read<NoteService>().addSchedule(
           title: title,
           classTime: _classTime,
-          location: _locationController.text.trim().isEmpty ? null : _locationController.text.trim(),
+          location: location.isEmpty ? null : location,
+          comment: comment.isEmpty ? null : comment,
           notifyMinutesBefore: _notifyMinutes,
           repeatWeekly: _repeatWeekly,
           targetYear: _targetYear,
@@ -81,6 +86,7 @@ class _ClassRepPageState extends State<ClassRepPage> {
     if (ok) {
       _titleController.clear();
       _locationController.clear();
+      _commentController.clear();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Class set - $_targetYearYearLabel will be alerted.')),
       );
@@ -149,6 +155,20 @@ class _ClassRepPageState extends State<ClassRepPage> {
               hintText: 'e.g. Lecture Hall 3',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.place_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _commentController,
+            minLines: 1,
+            maxLines: 3,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Comment (optional)',
+              hintText: 'e.g. Bring your assignment, we start with a quiz',
+              alignLabelWithHint: true,
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.chat_bubble_outline_rounded),
             ),
           ),
           const SizedBox(height: 12),
@@ -262,13 +282,26 @@ class _ClassRepPageState extends State<ClassRepPage> {
                     child: ListTile(
                       leading: Icon(Icons.event_rounded, color: theme.colorScheme.primary),
                       title: Text('${s['title']}'),
-                      subtitle: Text([
-                        if (when != null) when.toString().substring(0, 16),
-                        if ((s['location'] ?? '').toString().isNotEmpty) s['location'],
-                        'Alert ${s['notify_minutes_before']} min before',
-                        if (s['target_year'] != null) 'Year ${s['target_year']}',
-                        if (s['repeat_weekly'] == true) 'Weekly',
-                      ].join('  ·  ')),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text([
+                            if (when != null) when.toString().substring(0, 16),
+                            if ((s['location'] ?? '').toString().isNotEmpty) s['location'],
+                            'Alert ${s['notify_minutes_before']} min before',
+                            if (s['target_year'] != null) 'Year ${s['target_year']}',
+                            if (s['repeat_weekly'] == true) 'Weekly',
+                          ].join('  ·  ')),
+                          if ((s['comment'] ?? '').toString().isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                '${s['comment']}',
+                                style: const TextStyle(fontStyle: FontStyle.italic),
+                              ),
+                            ),
+                        ],
+                      ),
                       trailing: mine || context.read<AuthService>().currentUser?.hasRole(UserRole.admin) == true
                           ? IconButton(
                               icon: const Icon(Icons.delete_outline),
