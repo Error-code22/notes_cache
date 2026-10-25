@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'policy_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -550,17 +552,40 @@ class ForgotPasswordPage extends StatefulWidget {
 }
 
 class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
+  static const _resetRedirect = 'https://notescache.netlify.app/reset';
+
   final _emailController = TextEditingController();
   bool _isSending = false;
   bool _emailSent = false;
+  int _cooldown = 0;
+  Timer? _timer;
 
   @override
   void dispose() {
+    _timer?.cancel();
     _emailController.dispose();
     super.dispose();
   }
 
+  /// Mirrors Supabase's per-user 60s window so people get feedback instead of
+  /// a silent 429. The real limit is enforced server-side by GoTrue.
+  void _startCooldown() {
+    _timer?.cancel();
+    setState(() => _cooldown = 60);
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() {
+        _cooldown--;
+        if (_cooldown <= 0) t.cancel();
+      });
+    });
+  }
+
   Future<void> _sendResetEmail() async {
+    if (_isSending || _cooldown > 0) return;
     final email = _emailController.text.trim();
     if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter your email address.')));
@@ -571,14 +596,24 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     try {
       await Supabase.instance.client.auth.resetPasswordForEmail(
         email,
-        redirectTo: 'https://notescache-reset.netlify.app',
+        redirectTo: _resetRedirect,
       );
-      if (mounted) setState(() { _isSending = false; _emailSent = true; });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isSending = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
+      if (!mounted) return;
+      setState(() { _isSending = false; _emailSent = true; });
+      _startCooldown();
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _isSending = false);
+      final message = e.statusCode == '429'
+          ? 'Too many reset requests. Wait a minute and try again.'
+          : e.message;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isSending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not send the reset email. Check your connection and try again.')),
+      );
     }
   }
 
@@ -614,7 +649,18 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           textAlign: TextAlign.center,
                           style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6)),
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 8),
+                        Text(
+                          'The link opens in your browser. Set a new password there, then come back and sign in.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.45)),
+                        ),
+                        const SizedBox(height: 16),
+                        TextButton(
+                          onPressed: (_cooldown > 0 || _isSending) ? null : _sendResetEmail,
+                          child: Text(_cooldown > 0 ? 'Resend in ${_cooldown}s' : 'Didn\'t get it? Resend'),
+                        ),
+                        const SizedBox(height: 8),
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
@@ -654,11 +700,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           width: double.infinity,
                           height: 52,
                           child: ElevatedButton(
-                            onPressed: _isSending ? null : _sendResetEmail,
+                            onPressed: (_isSending || _cooldown > 0) ? null : _sendResetEmail,
                             style: ElevatedButton.styleFrom(backgroundColor: primaryColor, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                             child: _isSending
                                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                                : const Text('SEND RESET LINK', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                : Text(_cooldown > 0 ? 'TRY AGAIN IN ${_cooldown}s' : 'SEND RESET LINK', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                           ),
                         ),
                       ],

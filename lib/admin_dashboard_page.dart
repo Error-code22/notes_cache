@@ -34,6 +34,7 @@ class AdminDashboardPage extends StatelessWidget {
     {'name': 'Roadmap', 'desc': 'App feature plans', 'icon': Icons.construction_rounded, 'color': Color(0xFF26A69A), 'page': 11},
     {'name': 'Docs & Legal', 'desc': 'About, terms & privacy', 'icon': Icons.description_rounded, 'color': Color(0xFF8D6E63), 'page': 10},
     {'name': 'Donations', 'desc': 'Approve student shares', 'icon': Icons.volunteer_activism_rounded, 'color': Color(0xFFEC407A), 'page': 12},
+    {'name': 'Notes Review', 'desc': 'Approve pending uploads', 'icon': Icons.fact_check_rounded, 'color': Color(0xFF8D6E63), 'page': 13},
   ];
 
   static final _pages = <Widget>[
@@ -50,6 +51,7 @@ class AdminDashboardPage extends StatelessWidget {
     const _DocsAndLegalPage(),
     const _RoadmapManagerPage(),
     const _DonationsReviewPage(),
+    const _NotesReviewPage(),
   ];
 
   @override
@@ -2291,5 +2293,348 @@ class _DonationsReviewPageState extends State<_DonationsReviewPage> with SingleT
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open file'), backgroundColor: Colors.red));
       }
     }
+  }
+}
+
+// Notes review queue ────────────────────────────────────────────────────────
+// Students upload notes with status='pending'. Staff see every status through
+// RLS, can preview the row + source file, and publish or hide it. Approved
+// notes become visible to the matching year and enter Notesy's index.
+class _NotesReviewPage extends StatefulWidget {
+  const _NotesReviewPage();
+
+  @override
+  State<_NotesReviewPage> createState() => _NotesReviewPageState();
+}
+
+class _NotesReviewPageState extends State<_NotesReviewPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+  final _service = NoteService();
+  List<Note> _pending = [];
+  List<Note> _approved = [];
+  List<Note> _rejected = [];
+  bool _loading = true;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 3, vsync: this)
+      ..addListener(() { if (!_tabs.indexIsChanging) _load(); });
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final results = await Future.wait([
+      _service.getNotesForModeration(status: 'pending'),
+      _service.getNotesForModeration(status: 'approved'),
+      _service.getNotesForModeration(status: 'rejected'),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _pending = results[0];
+      _approved = results[1];
+      _rejected = results[2];
+      _loading = false;
+    });
+  }
+
+  Future<void> _move(Note n, String status) async {
+    if (_busy) return;
+    final label = status == 'approved'
+        ? 'Approve'
+        : status == 'rejected'
+            ? 'Reject'
+            : 'Reopen';
+    final body = status == 'approved'
+        ? '"${n.title}" will be visible to Year ${n.targetYear} students and searchable by Notesy.'
+        : status == 'rejected'
+            ? '"${n.title}" stays hidden from other students. The uploader can still see it marked rejected.'
+            : '"${n.title}" goes back to the review queue. It will not be visible to other students.';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('$label this note?'),
+        content: Text(body),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: status == 'rejected' ? Colors.red : Colors.green,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(label),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _busy = true);
+    final ok = await _service.setNoteStatus(n.id, status);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok ? '$label: ${n.title}' : 'Could not update the note (permission or network error).'),
+      backgroundColor: ok ? (status == 'rejected' ? Colors.orange : Colors.green) : Colors.red,
+    ));
+    if (ok) _load();
+  }
+
+  Future<void> _preview(Note n) async {
+    final theme = Theme.of(context);
+    final raw = n.gDriveId?.trim() ?? '';
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(n.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    _pill('YEAR ${n.targetYear}', Colors.indigo),
+                    _pill('SEM ${n.semester}', Colors.blueGrey),
+                    if ((n.category ?? '').isNotEmpty) _pill(n.category!.toUpperCase(), Colors.purple),
+                    _pill(n.status.toUpperCase(), _statusColor(n.status)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (n.lecturerName.isNotEmpty)
+                  Text('Lecturer: ${n.lecturerName}', style: const TextStyle(fontSize: 12)),
+                Text(
+                  'Uploaded ${n.createdAt.day}/${n.createdAt.month}/${n.createdAt.year}'
+                  '${n.userId == null ? '' : ' • by ${n.userId!.substring(0, 8)}…'}',
+                  style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.55)),
+                ),
+                const Divider(height: 24),
+                SelectableText(
+                  n.content.trim().isEmpty
+                      ? 'No extracted text. Open the source file to review it.'
+                      : n.content,
+                  style: const TextStyle(fontSize: 13, height: 1.45),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          if (raw.isNotEmpty)
+            TextButton.icon(
+              onPressed: () => _openFile(raw),
+              icon: const Icon(Icons.open_in_new_rounded, size: 16),
+              label: const Text('Open file'),
+            ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          if (n.isPending) ...[
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () => Navigator.pop(ctx, 'rejected'),
+              child: const Text('Reject'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              onPressed: () => Navigator.pop(ctx, 'approved'),
+              child: const Text('Approve'),
+            ),
+          ],
+          if (n.isApproved)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'pending'),
+              child: const Text('Unpublish'),
+            ),
+          if (n.isRejected)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'pending'),
+              child: const Text('Reopen'),
+            ),
+        ],
+      ),
+    );
+    if (action != null) await _move(n, action);
+  }
+
+  Widget _pill(String text, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(text,
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+      );
+
+  Color _statusColor(String status) => status == 'pending'
+      ? Colors.orange
+      : status == 'approved'
+          ? Colors.green
+          : Colors.red;
+
+  Future<void> _openFile(String raw) async {
+    final uri = raw.contains('://')
+        ? Uri.tryParse(raw)
+        : Uri.tryParse('https://drive.google.com/file/d/$raw/view');
+    if (uri == null) return;
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open file'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notes Review'),
+        bottom: TabBar(
+          controller: _tabs,
+          tabs: [
+            Tab(text: 'Pending (${_pending.length})'),
+            Tab(text: 'Approved (${_approved.length})'),
+            Tab(text: 'Rejected (${_rejected.length})'),
+          ],
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tabs,
+              children: [
+                _list(theme, _pending),
+                _list(theme, _approved),
+                _list(theme, _rejected),
+              ],
+            ),
+    );
+  }
+
+  Widget _list(ThemeData theme, List<Note> items) {
+    if (items.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.fact_check_outlined,
+                size: 64, color: theme.colorScheme.onSurface.withValues(alpha: 0.15)),
+            const SizedBox(height: 12),
+            Text('Nothing here right now.',
+                style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: items.length,
+        itemBuilder: (context, i) {
+          final n = items[i];
+          final color = _statusColor(n.status);
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => _preview(n),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(n.title,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(n.status.toUpperCase(),
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Year ${n.targetYear} • Sem ${n.semester} • ${n.category ?? 'Uncategorised'}'
+                      '${n.lecturerName.isEmpty ? '' : ' • ${n.lecturerName}'}',
+                      style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+                    ),
+                    if (n.content.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        n.content.trim().replaceAll(RegExp(r'\s+'), ' '),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.75)),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    Text(
+                      '${n.createdAt.day}/${n.createdAt.month}/${n.createdAt.year}'
+                      ' • ${n.userId == null ? 'unknown uploader' : n.userId!.substring(0, 8)}…',
+                      style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.45)),
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        alignment: WrapAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => _preview(n),
+                            child: const Text('Preview'),
+                          ),
+                          if (n.isPending) ...[
+                            TextButton(
+                              style: TextButton.styleFrom(foregroundColor: Colors.red),
+                              onPressed: _busy ? null : () => _move(n, 'rejected'),
+                              child: const Text('Reject'),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                              onPressed: _busy ? null : () => _move(n, 'approved'),
+                              child: const Text('Approve'),
+                            ),
+                          ] else
+                            TextButton(
+                              onPressed: _busy ? null : () => _move(n, 'pending'),
+                              child: Text(n.isRejected ? 'Reopen' : 'Unpublish'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 }

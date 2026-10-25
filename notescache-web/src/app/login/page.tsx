@@ -16,7 +16,20 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
+  const [cooldown, setCooldown] = useState(0)
   const [showPolicy, setShowPolicy] = useState<'terms' | 'privacy' | null>(null)
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('reset') === '1') {
+      setInfo('Password updated. Sign in with your new password.')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [cooldown])
 
   useEffect(() => {
     let done = false
@@ -32,13 +45,20 @@ export default function LoginPage() {
     setError(''); setInfo('')
     if (mode === 'forgot') {
       if (!email) { setError('Email is required.'); return }
+      if (cooldown > 0) return
       setBusy(true)
       const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/login`,
+        redirectTo: `${window.location.origin}/reset`,
       })
       setBusy(false)
-      if (err) setError(err.message)
-      else setInfo('Check your email for a reset link!')
+      if (err) {
+        setError(err.message.includes('rate') || err.status === 429
+          ? 'Too many reset requests. Wait a minute and try again.'
+          : err.message)
+      } else {
+        setInfo('Check your email for a reset link!')
+        setCooldown(60)
+      }
       return
     }
     if (!email || !password) { setError('Email and password are required.'); return }
@@ -128,8 +148,16 @@ export default function LoginPage() {
         {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
         {info && <p className="text-sm text-emerald-600 mt-3">{info}</p>}
 
-        <button onClick={submit} disabled={busy} className="w-full mt-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition disabled:opacity-50">
-          {busy ? 'Please wait…' : mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Sign Up' : 'Send Reset Email'}
+        <button onClick={submit} disabled={busy || (mode === 'forgot' && cooldown > 0)} className="w-full mt-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition disabled:opacity-50">
+          {busy
+            ? 'Please wait.'
+            : mode === 'signin'
+              ? 'Sign In'
+              : mode === 'signup'
+                ? 'Sign Up'
+                : cooldown > 0
+                  ? `Resend in ${cooldown}s`
+                  : 'Send Reset Email'}
         </button>
 
         <div className="text-center mt-4 space-y-2">

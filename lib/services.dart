@@ -1251,6 +1251,42 @@ class NoteService {
     } catch (e) { debugPrint('rejectDonation error: $e'); return false; }
   }
 
+  /// Staff review queue for the shared library. RLS returns every status to
+  /// staff; a student only ever sees their own rows here.
+  Future<List<Note>> getNotesForModeration({String status = 'pending'}) async {
+    try {
+      final data = await _supabase
+          .from('notes')
+          .select()
+          .eq('status', status)
+          .order('created_at', ascending: false);
+      return (data as List)
+          .map((item) => Note.fromMap(Map<String, dynamic>.from(item)))
+          .toList();
+    } catch (e) {
+      debugPrint('getNotesForModeration error: $e');
+      return [];
+    }
+  }
+
+  /// Staff: move a note between pending / approved / rejected.
+  /// Returns false when RLS refused the write (no row came back).
+  Future<bool> setNoteStatus(String id, String status) async {
+    if (!const {'pending', 'approved', 'rejected'}.contains(status)) return false;
+    try {
+      final key = int.tryParse(id) ?? id;
+      final rows = await _supabase
+          .from('notes')
+          .update({'status': status})
+          .eq('id', key)
+          .select('id');
+      return (rows as List).isNotEmpty;
+    } catch (e) {
+      debugPrint('setNoteStatus error: $e');
+      return false;
+    }
+  }
+
   Future<List<AppFeedback>> getAllFeedback() async {
     try {
       final data = await _supabase.rpc('list_feedback');

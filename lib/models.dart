@@ -92,6 +92,8 @@ class Note {
   final String? summary;
   final String? pdfUrl;
   final bool isFromCache;
+  final String status; // pending | approved | rejected
+  final String? userId;
 
   Note({
     required this.id,
@@ -106,7 +108,13 @@ class Note {
     this.summary,
     this.pdfUrl,
     this.isFromCache = false,
+    this.status = 'approved',
+    this.userId,
   });
+
+  bool get isPending => status == 'pending';
+  bool get isApproved => status == 'approved';
+  bool get isRejected => status == 'rejected';
 
   factory Note.fromMap(Map<String, dynamic> map, {bool isFromCache = false}) {
     return Note(
@@ -122,6 +130,8 @@ class Note {
       summary: map['summary'],
       pdfUrl: map['pdf_url'],
       isFromCache: isFromCache,
+      status: (map['status'] as String?) ?? 'approved',
+      userId: map['user_id'] as String?,
     );
   }
 }

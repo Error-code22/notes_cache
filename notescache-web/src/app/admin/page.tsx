@@ -11,6 +11,23 @@ import {
 
 type ProfileRow = { id: string; full_name?: string; role?: string }
 
+// A row of `notes` waiting in the moderation queue.
+type NoteRow = {
+  id: number
+  title?: string
+  content?: string
+  lecturer_name?: string
+  target_year?: number
+  semester?: number
+  category?: string
+  gdrive_id?: string
+  pdf_url?: string
+  file_url?: string
+  user_id?: string
+  created_at?: string
+  status?: string
+}
+
 // A row of `donated_notes` (the donation review queue).
 type DonationRow = {
   id: number
@@ -49,6 +66,8 @@ export default function AdminDashboardPage() {
   const [donations, setDonations] = useState<DonationRow[]>([])
   const [recentDecisions, setRecentDecisions] = useState<DonationRow[]>([])
   const [donationLoading, setDonationLoading] = useState(false)
+  const [pendingNotes, setPendingNotes] = useState<NoteRow[]>([])
+  const [noteLoading, setNoteLoading] = useState(false)
 
   useEffect(() => {
     if (!isAdmin) return
@@ -98,6 +117,11 @@ export default function AdminDashboardPage() {
         await loadDonations()
         setDonationLoading(false)
       }
+      if (section === 'notes') {
+        setNoteLoading(true)
+        await loadNotes()
+        setNoteLoading(false)
+      }
     })()
   }, [section, isAdmin])
 
@@ -138,6 +162,35 @@ export default function AdminDashboardPage() {
     }
     setMsg('Donation rejected.')
     await loadDonations()
+  }
+
+  async function loadNotes() {
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setMsg(error ? error.message : '')
+    setPendingNotes((data as NoteRow[]) || [])
+  }
+
+  async function setNoteStatus(id: number, status: 'approved' | 'rejected') {
+    const { data, error } = await supabase
+      .from('notes')
+      .update({ status })
+      .eq('id', id)
+      .select('id')
+    if (error) {
+      setMsg(error.message)
+      return
+    }
+    if (!data?.length) {
+      setMsg('Update refused. Are you signed in as staff?')
+      return
+    }
+    setMsg(status === 'approved' ? 'Note approved.' : 'Note rejected.')
+    await loadNotes()
   }
 
   async function setConfig(key: string, value: string) {
@@ -246,7 +299,7 @@ export default function AdminDashboardPage() {
         <button onClick={() => setSection(null)} className="text-xs font-bold text-indigo-600 shrink-0">GRID</button>
       }>
         {msg && <div className="mb-4 text-sm text-indigo-700 bg-indigo-50 dark:bg-indigo-500/10 rounded-xl px-3 py-2">{msg}</div>}
-        {renderSection(section, { cfg, setConfig, feedback, users, setUserRole, updates, addUpdate, roadmap, plans, testModel, cleanupSummaries, batchConvertPdf, testOut, busy, stats, donations, recentDecisions, donationLoading, approveDonation, rejectDonation })}
+        {renderSection(section, { cfg, setConfig, feedback, users, setUserRole, updates, addUpdate, roadmap, plans, testModel, cleanupSummaries, batchConvertPdf, testOut, busy, stats, donations, recentDecisions, donationLoading, approveDonation, rejectDonation, pendingNotes, noteLoading, setNoteStatus })}
       </AppShell>
     )
   }
@@ -256,6 +309,7 @@ export default function AdminDashboardPage() {
     { id: 'users', name: 'User Hub', desc: 'Roles & verification', color: '#26A69A', icon: GroupIcon },
     { id: 'feedback', name: 'Feedback Central', desc: 'Bug reports & ideas', color: '#42A5F5', icon: ForumIcon },
     { id: 'donations', name: 'Donation Review', desc: 'Approve student notes', color: '#F06292', icon: HeartIcon },
+    { id: 'notes', name: 'Notes Review', desc: 'Approve pending uploads', color: '#8D6E63', icon: DocIcon },
     { id: 'vault', name: 'Content Vault', desc: 'Notes & backups', color: '#66BB6A', icon: BookIcon },
     { id: 'ai', name: 'AI Control Room', desc: 'Model & limits', color: '#AB47BC', icon: BrainIcon },
     { id: 'cloud', name: 'Cloud Status', desc: 'Storage & bandwidth', color: '#EF5350', icon: CloudIcon },
@@ -289,6 +343,7 @@ const SECTION_TITLES: Record<string, string> = {
   users: 'User Hub',
   feedback: 'Feedback Central',
   donations: 'Donation Review',
+  notes: 'Notes Review',
   vault: 'Content Vault',
   ai: 'AI Control Room',
   cloud: 'Cloud Status',
@@ -321,6 +376,9 @@ type SecProps = {
   donationLoading: boolean
   approveDonation: (id: number) => Promise<void>
   rejectDonation: (id: number) => Promise<void>
+  pendingNotes: NoteRow[]
+  noteLoading: boolean
+  setNoteStatus: (id: number, status: 'approved' | 'rejected') => Promise<void>
 }
 
 function renderSection(section: string, p: SecProps) {
@@ -518,6 +576,63 @@ function renderSection(section: string, p: SecProps) {
             <div className="text-xs text-gray-500 mt-1">{r.description}</div>
           </div>
         ))}
+      </div>
+    )
+  }
+  if (section === 'notes') {
+    if (p.noteLoading) {
+      return <div className="text-gray-400 text-sm py-8 text-center">Loading notes queue...</div>
+    }
+    return (
+      <div className="space-y-4">
+        <Kpi label="Pending review" value={p.pendingNotes.length} />
+        <div className="space-y-3">
+          {p.pendingNotes.map((n) => {
+            const file = n.pdf_url || n.gdrive_id || n.file_url
+            const href = file
+              ? file.includes('://')
+                ? file
+                : `https://drive.google.com/file/d/${file}/view`
+              : ''
+            return (
+              <div key={n.id} className="bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-2xl p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-semibold text-sm text-gray-900 dark:text-white">{n.title || 'Untitled note'}</div>
+                  <StatusBadge status={n.status} />
+                </div>
+                <div className="text-[11px] text-gray-500 mt-1">
+                  Year {n.target_year ?? '-'} / Sem {n.semester ?? '-'} / {n.category || 'uncategorised'}
+                  {n.lecturer_name ? ` / ${n.lecturer_name}` : ''}
+                </div>
+                <div className="text-[11px] text-gray-400 mt-0.5">
+                  {n.user_id ? `by ${n.user_id.slice(0, 8)}...` : 'unknown uploader'}
+                  {n.created_at ? ` on ${new Date(n.created_at).toLocaleDateString()}` : ''}
+                </div>
+                {n.content && (
+                  <div className="text-xs text-gray-600 dark:text-gray-300 mt-2 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                    {n.content}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {href && (
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-gray-300 dark:border-white/15 text-gray-600 dark:text-gray-300">
+                      Open file
+                    </a>
+                  )}
+                  <button onClick={() => p.setNoteStatus(n.id, 'approved')} className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-600 text-white">
+                    Approve
+                  </button>
+                  <button onClick={() => p.setNoteStatus(n.id, 'rejected')} className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-red-600 text-white">
+                    Reject
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+          {!p.pendingNotes.length && (
+            <div className="text-gray-400 text-sm py-8 text-center">No notes waiting for review.</div>
+          )}
+        </div>
       </div>
     )
   }
