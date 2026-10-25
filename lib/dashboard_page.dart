@@ -368,8 +368,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               const PopupMenuItem(value: 'updates', child: Row(children: [Icon(Icons.campaign_outlined, size: 20), SizedBox(width: 8), Text('Updates')])),
               const PopupMenuItem(value: 'feedback', child: Row(children: [Icon(Icons.bug_report_outlined, size: 20), SizedBox(width: 8), Text('Report a Bug')])),
               const PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings_outlined, size: 20), SizedBox(width: 8), Text('Settings')])),
-              const PopupMenuDivider(),
-              PopupMenuItem(value: 'logout', child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Row(children: [Icon(Icons.logout_rounded, size: 20, color: Colors.red), SizedBox(width: 8), Text('SIGN OUT', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))]))),
+              if (!user.isGuest) ...[
+                const PopupMenuDivider(),
+                PopupMenuItem(value: 'logout', child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Row(children: [Icon(Icons.logout_rounded, size: 20, color: Colors.red), SizedBox(width: 8), Text('SIGN OUT', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))]))),
+              ],
             ],
           ),
           const SizedBox(width: 12),
