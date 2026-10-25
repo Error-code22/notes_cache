@@ -307,8 +307,58 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Widget _buildGoogleButton(bool isLoading) {
+    return SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: OutlinedButton.icon(
+        onPressed: isLoading ? null : () async {
+          try {
+            final authService = context.read<AuthService>();
+            await authService.signInWithGoogle();
+            if (mounted && authService.currentUser != null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Welcome! Please complete your profile (year, etc.) from the Profile page.'),
+                  backgroundColor: Colors.green,
+                  duration: Duration(seconds: 4),
+                ),
+              );
+              Navigator.pushReplacementNamed(context, '/dashboard');
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Google sign-in failed: $e'), backgroundColor: Colors.red),
+              );
+            }
+          }
+        },
+        icon: const Icon(Icons.g_mobiledata, size: 24),
+        label: const Text('Continue with Google', style: TextStyle(fontWeight: FontWeight.w600)),
+        style: OutlinedButton.styleFrom(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          side: BorderSide(color: Colors.grey[300]!),
+        ),
+      ),
+    );
+  }
+
   List<Widget> _buildFormFields(bool isLoading, Color primaryColor) {
     return [
+      _buildGoogleButton(isLoading),
+      const SizedBox(height: 16),
+      Row(
+        children: [
+          const Expanded(child: Divider()),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text('OR', style: TextStyle(fontSize: 12, color: Colors.grey[500], fontWeight: FontWeight.w600)),
+          ),
+          const Expanded(child: Divider()),
+        ],
+      ),
+      const SizedBox(height: 16),
       if (_isSignUp) ...[
         _buildTextField(
           _nameController,
@@ -396,54 +446,6 @@ class _LoginPageState extends State<LoginPage> {
           child: isLoading
               ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
               : Text(_isSignUp ? 'Sign Up' : 'Sign In', style: const TextStyle(fontWeight: FontWeight.bold)),
-        ),
-      ),
-      const SizedBox(height: 16),
-      // ── OR divider ──
-      Row(
-        children: [
-          const Expanded(child: Divider()),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text('OR', style: TextStyle(fontSize: 12, color: Colors.grey[500], fontWeight: FontWeight.w600)),
-          ),
-          const Expanded(child: Divider()),
-        ],
-      ),
-      const SizedBox(height: 16),
-      // ── Google Sign-In ──
-      SizedBox(
-        width: double.infinity,
-        height: 50,
-        child: OutlinedButton.icon(
-          onPressed: isLoading ? null : () async {
-            try {
-              final authService = context.read<AuthService>();
-              await authService.signInWithGoogle();
-              if (mounted && authService.currentUser != null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Welcome! Please complete your profile (year, etc.) from the Profile page.'),
-                    backgroundColor: Colors.green,
-                    duration: Duration(seconds: 4),
-                  ),
-                );
-                Navigator.pushReplacementNamed(context, '/dashboard');
-              }
-            } catch (e) {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Google sign-in failed: $e'), backgroundColor: Colors.red),
-                );
-              }
-            }
-          },
-          icon: const Icon(Icons.g_mobiledata, size: 24),
-          label: const Text('Continue with Google', style: TextStyle(fontWeight: FontWeight.w600)),
-          style: OutlinedButton.styleFrom(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            side: BorderSide(color: Colors.grey[300]!),
-          ),
         ),
       ),
       const SizedBox(height: 16),
