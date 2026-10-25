@@ -148,7 +148,7 @@ class PricingPage extends StatelessWidget {
             const SizedBox(height: 16),
             const ListTile(
               leading: Icon(Icons.email),
-              title: Text('support@notescache.com'),
+              title: Text('notescache22@gmail.com'),
             ),
             const ListTile(
               leading: Icon(Icons.phone),
