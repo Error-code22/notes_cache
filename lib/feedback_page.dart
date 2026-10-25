@@ -16,8 +16,17 @@ class _FeedbackPageState extends State<FeedbackPage> {
 
   Future<void> _submit() async {
     if (_contentController.text.trim().isEmpty) return;
-    setState(() => _isSubmitting = true);
     final authService = context.read<AuthService>();
+    if (authService.currentUser == null || authService.currentUser!.isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sign in to send feedback.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    setState(() => _isSubmitting = true);
     final success = await authService.submitFeedback(_type, _contentController.text.trim());
     if (mounted) {
       setState(() => _isSubmitting = false);

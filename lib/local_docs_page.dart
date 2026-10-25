@@ -445,6 +445,17 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
     final authService = context.read<AuthService>();
     final noteService = context.read<NoteService>();
     final messenger = ScaffoldMessenger.of(context);
+
+    if (authService.currentUser == null || authService.currentUser!.isGuest) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Sign in to donate notes.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     messenger.showSnackBar(const SnackBar(content: Text('Uploading to library...'), backgroundColor: Colors.blue));
 
     final url = await CloudinaryService().uploadFile(

@@ -14,6 +14,7 @@ export default function FeedbackPage() {
   const [error, setError] = useState('')
 
   async function submit() {
+    if (!user) { setError('Please sign in to send feedback.'); return }
     if (!content.trim()) return
     setBusy(true)
     setError('')

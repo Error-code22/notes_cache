@@ -67,3 +67,6 @@ next_fixes.md
 
 # Local Netlify folder
 .netlify
+
+# TypeScript incremental build info
+*.tsbuildinfo

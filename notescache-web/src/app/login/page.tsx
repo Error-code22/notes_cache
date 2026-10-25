@@ -11,7 +11,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [name, setName] = useState('')
-  const [year, setYear] = useState(1)
   const [showPw, setShowPw] = useState(false)
   const [accepted, setAccepted] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -52,7 +51,7 @@ export default function LoginPage() {
     setBusy(true)
     try {
       if (mode === 'signin') await signInWithEmail(email, password)
-      else await signUpWithEmail(email, password, name.trim(), year)
+      else await signUpWithEmail(email, password, name.trim())
       router.push('/')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.')
@@ -96,11 +95,9 @@ export default function LoginPage() {
           {mode === 'signup' && (
             <>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full Name" className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white" />
-              <div className="flex gap-2">
-                {[1, 2, 3, 4].map((y) => (
-                  <button key={y} onClick={() => setYear(y)} className={`flex-1 py-2 rounded-xl text-sm font-medium border transition ${year === y ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-transparent text-gray-600 dark:text-gray-300 border-gray-300 dark:border-white/15'}`}>Yr {y}</button>
-                ))}
-              </div>
+              <p className="text-xs text-gray-500 px-1">
+                New accounts start in Year 1. Your university can adjust your year later.
+              </p>
             </>
           )}
           <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email Address" className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white" />

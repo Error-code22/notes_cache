@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
@@ -8,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
 import 'dart:async';
 
@@ -87,62 +90,172 @@ class GoogleDriveAuthService {
   Future<drive.DriveApi?> _getWindowsDriveApi() async {
     try {
       debugPrint('DriveAuth: Getting Drive API for Windows...');
-      final clientId = gauth.ClientId(
-        dotenv.env['GOOGLE_DRIVE_CLIENT_ID']!,
-        dotenv.env['GOOGLE_DRIVE_CLIENT_SECRET']!,
-      );
-      final scopes = [drive.DriveApi.driveFileScope];
-
       final prefs = await SharedPreferences.getInstance();
+
+      gauth.AccessCredentials? credentials;
       final tokenJson = prefs.getString('google_drive_token');
-      
       if (tokenJson != null) {
         try {
-          debugPrint('DriveAuth: Found stored token, trying to refresh...');
-          final credentials = gauth.AccessCredentials.fromJson(jsonDecode(tokenJson));
-          
-          // Check if we can actually use this token or refresh it
-          if (credentials.accessToken.hasExpired && credentials.refreshToken == null) {
-            debugPrint('DriveAuth: Stored token expired and no refresh token available. Clearing...');
-            await prefs.remove('google_drive_token');
-          } else {
-            final client = gauth.autoRefreshingClient(clientId, credentials, http.Client());
-            return drive.DriveApi(client);
-          }
+          credentials = gauth.AccessCredentials.fromJson(jsonDecode(tokenJson));
         } catch (e) {
-          debugPrint('DriveAuth: Error restoring stored token: $e');
+          debugPrint('DriveAuth: Stored token is unreadable, clearing: $e');
           await prefs.remove('google_drive_token');
         }
       }
 
-      debugPrint('DriveAuth: No stored token, prompting user in browser...');
-      
-      final httpClient = http.Client();
-      final credentials = await gauth.obtainAccessCredentialsViaUserConsent(
-        clientId, 
-        scopes, 
-        httpClient, 
-        (url) async {
-          debugPrint('DriveAuth: Opening browser for auth: $url');
-          if (await canLaunchUrl(Uri.parse(url))) {
-            await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-          } else {
-            throw 'Could not launch $url';
-          }
-        },
-      );
+      if (credentials == null) {
+        credentials = await _windowsConsentFlow();
+        await prefs.setString('google_drive_token', jsonEncode(credentials.toJson()));
+      } else if (_needsRefresh(credentials)) {
+        try {
+          credentials = await _refreshCredentials(credentials);
+          await prefs.setString('google_drive_token', jsonEncode(credentials.toJson()));
+        } catch (e) {
+          debugPrint('DriveAuth: Refresh failed, re-authenticating: $e');
+          await prefs.remove('google_drive_token');
+          credentials = await _windowsConsentFlow();
+          await prefs.setString('google_drive_token', jsonEncode(credentials.toJson()));
+        }
+      }
 
-      final authClient = gauth.authenticatedClient(httpClient, credentials);
-
-      // Store the credentials for next time
-      await prefs.setString('google_drive_token', jsonEncode(credentials.toJson()));
-      debugPrint('DriveAuth: Windows authentication successful and token stored.');
-      
-      return drive.DriveApi(authClient);
+      debugPrint('DriveAuth: Windows authentication ready.');
+      return drive.DriveApi(_DriveAuthClient(credentials, prefs));
     } catch (e) {
       debugPrint('DriveAuth: Windows Auth Error: $e');
       return null;
     }
+  }
+
+  bool _needsRefresh(gauth.AccessCredentials credentials) {
+    if (credentials.refreshToken == null) return credentials.accessToken.hasExpired;
+    final remaining =
+        credentials.accessToken.expiry.difference(DateTime.now().toUtc());
+    return remaining < const Duration(minutes: 2);
+  }
+
+  Future<gauth.AccessCredentials> _windowsConsentFlow() async {
+    final clientId = dotenv.env['GOOGLE_DRIVE_CLIENT_ID'];
+    if (clientId == null || clientId.isEmpty) {
+      throw StateError('GOOGLE_DRIVE_CLIENT_ID is missing from .env');
+    }
+
+    final scopes = [drive.DriveApi.driveFileScope];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final redirectUri = 'http://127.0.0.1:${server.port}';
+    final state = _randomUrlSafe(32);
+    final verifier = _randomUrlSafe(64);
+    final challenge = base64Url
+        .encode(sha256.convert(utf8.encode(verifier)).bytes)
+        .replaceAll('=', '');
+
+    final authUri = Uri.https('accounts.google.com', '/o/oauth2/v2/auth', {
+      'client_id': clientId,
+      'redirect_uri': redirectUri,
+      'response_type': 'code',
+      'scope': scopes.join(' '),
+      'access_type': 'offline',
+      'prompt': 'consent',
+      'state': state,
+      'code_challenge': challenge,
+      'code_challenge_method': 'S256',
+    });
+
+    debugPrint('DriveAuth: Opening browser for auth: $authUri');
+    if (!await launchUrl(authUri, mode: LaunchMode.externalApplication)) {
+      await server.close(force: true);
+      throw StateError('Could not open the Google sign-in page.');
+    }
+
+    try {
+      final request = await server.first.timeout(const Duration(minutes: 5));
+      final params = request.uri.queryParameters;
+
+      request.response
+        ..statusCode = 200
+        ..headers.contentType = ContentType.html
+        ..write('<html><body style="font-family:sans-serif;padding:40px">'
+            '<h2>NotesCache is connected to Google Drive.</h2>'
+            '<p>You can close this tab and return to the app.</p>'
+            '</body></html>');
+      await request.response.close();
+
+      if (params['error'] != null) {
+        throw StateError('Google sign-in was cancelled (${params['error']}).');
+      }
+      if (params['state'] != state) {
+        throw StateError('Google sign-in state mismatch. Please try again.');
+      }
+      final code = params['code'];
+      if (code == null || code.isEmpty) {
+        throw StateError('Google did not return an authorization code.');
+      }
+
+      return await _exchangeCode(code, verifier, redirectUri);
+    } finally {
+      await server.close(force: true);
+    }
+  }
+
+  String _randomUrlSafe(int length) {
+    const chars =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    final random = Random.secure();
+    return List.generate(length, (_) => chars[random.nextInt(chars.length)])
+        .join();
+  }
+
+  Future<gauth.AccessCredentials> _exchangeCode(
+    String code,
+    String verifier,
+    String redirectUri,
+  ) async {
+    final response = await Supabase.instance.client.functions.invoke(
+      'drive-oauth',
+      body: {
+        'action': 'exchange',
+        'code': code,
+        'codeVerifier': verifier,
+        'redirectUri': redirectUri,
+      },
+    );
+    return _credentialsFromResponse(response.data);
+  }
+
+  Future<gauth.AccessCredentials> _refreshCredentials(
+    gauth.AccessCredentials old,
+  ) async {
+    final refresh = old.refreshToken;
+    if (refresh == null) {
+      throw StateError('Google Drive session expired. Please sign in again.');
+    }
+    final response = await Supabase.instance.client.functions.invoke(
+      'drive-oauth',
+      body: {'action': 'refresh', 'refreshToken': refresh},
+    );
+    return _credentialsFromResponse(response.data, refreshToken: refresh);
+  }
+
+  gauth.AccessCredentials _credentialsFromResponse(
+    dynamic data, {
+    String? refreshToken,
+  }) {
+    final map = data is Map
+        ? Map<String, dynamic>.from(data)
+        : Map<String, dynamic>.from(jsonDecode(data.toString()) as Map);
+    final accessToken = map['access_token'] as String?;
+    final expiresIn = map['expires_in'] as num?;
+    if (accessToken == null || expiresIn == null) {
+      throw StateError('Drive OAuth returned an incomplete token response.');
+    }
+    return gauth.AccessCredentials(
+      gauth.AccessToken(
+        'Bearer',
+        accessToken,
+        DateTime.now().toUtc().add(Duration(seconds: expiresIn.toInt())),
+      ),
+      (map['refresh_token'] as String?) ?? refreshToken,
+      [drive.DriveApi.driveFileScope],
+    );
   }
 
   Future<String?> _getOrCreateFolder(drive.DriveApi api, String folderName) async {
@@ -279,5 +392,74 @@ class GoogleDriveAuthService {
       debugPrint('DriveAuth: Error uploading to Drive: $e');
       return null;
     }
+  }
+}
+
+/// Adds a bearer token to Drive requests and refreshes it through the
+/// `drive-oauth` Edge Function. The Google client secret never ships with the
+/// desktop app; it lives only in Supabase Function secrets.
+class _DriveAuthClient extends http.BaseClient {
+  _DriveAuthClient(this._credentials, this._prefs);
+
+  gauth.AccessCredentials _credentials;
+  final SharedPreferences _prefs;
+  final http.Client _inner = http.Client();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (_credentials.accessToken.hasExpired ||
+        _credentials.accessToken.expiry.difference(DateTime.now().toUtc()) <
+            const Duration(minutes: 2)) {
+      await _refresh();
+    }
+
+    request.headers['Authorization'] =
+        'Bearer ${_credentials.accessToken.data}';
+    final response = await _inner.send(request);
+    if (response.statusCode == 401) {
+      await response.stream.drain<void>();
+      await _prefs.remove('google_drive_token');
+      throw StateError('Google Drive session expired. Please retry the upload.');
+    }
+    return response;
+  }
+
+  Future<void> _refresh() async {
+    final refreshToken = _credentials.refreshToken;
+    if (refreshToken == null) {
+      throw StateError('Google Drive session expired. Please sign in again.');
+    }
+    final response = await Supabase.instance.client.functions.invoke(
+      'drive-oauth',
+      body: {'action': 'refresh', 'refreshToken': refreshToken},
+    );
+    final data = response.data;
+    final map = data is Map
+        ? Map<String, dynamic>.from(data)
+        : Map<String, dynamic>.from(jsonDecode(data.toString()) as Map);
+    final accessToken = map['access_token'] as String?;
+    final expiresIn = map['expires_in'] as num?;
+    if (accessToken == null || expiresIn == null) {
+      throw StateError('Drive OAuth refresh returned an incomplete response.');
+    }
+    _credentials = gauth.AccessCredentials(
+      gauth.AccessToken(
+        'Bearer',
+        accessToken,
+        DateTime.now().toUtc().add(Duration(seconds: expiresIn.toInt())),
+      ),
+      (map['refresh_token'] as String?) ?? refreshToken,
+      [drive.DriveApi.driveFileScope],
+    );
+    await _prefs.setString(
+      'google_drive_token',
+      jsonEncode(_credentials.toJson()),
+    );
+  }
+
+  @override
+  void close() {
+    _inner.close();
+    super.close();
   }
 }

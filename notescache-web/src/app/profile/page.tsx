@@ -10,7 +10,6 @@ export default function ProfilePage() {
   const { user, profile, loading } = useAuth()
   const [name, setName] = useState('')
   const [bio, setBio] = useState('')
-  const [year, setYear] = useState(1)
   const [friendCode, setFriendCode] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -20,7 +19,6 @@ export default function ProfilePage() {
   useEffect(() => {
     setName(profile?.full_name || '')
     setBio(profile?.bio || '')
-    setYear(profile?.year_level || 1)
   }, [profile])
 
   useEffect(() => {
@@ -38,7 +36,6 @@ export default function ProfilePage() {
     const { error } = await supabase.from('profiles').update({
       full_name: name.trim() || profile?.full_name,
       bio: bio.trim(),
-      year_level: year,
     }).eq('id', user.id)
     setMsg(error ? error.message : 'Profile updated!')
     setSaving(false)
@@ -123,9 +120,10 @@ export default function ProfilePage() {
           </div>
           <div>
             <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">Year level</label>
-            <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white">
-              {[1, 2, 3, 4].map((y) => <option key={y} value={y}>Year {y}</option>)}
-            </select>
+            <div className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 text-sm text-gray-700 dark:text-gray-200">
+              Year {profile?.year_level ?? 1}
+            </div>
+            <p className="text-[11px] text-gray-500 mt-1">Set by your university. Contact an admin to correct it.</p>
           </div>
           {msg && <p className="text-sm text-indigo-600">{msg}</p>}
           <button onClick={save} disabled={saving} className="w-full py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold disabled:opacity-50">

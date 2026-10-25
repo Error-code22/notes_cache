@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -16,7 +15,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:local_notifier/local_notifier.dart';
-import 'google_drive_auth_service.dart';
 import 'models.dart';
 
 class ThemeProvider extends ChangeNotifier {
@@ -234,17 +232,18 @@ class AuthService extends ChangeNotifier {
   Future<void> _checkAndAutoUpdateYear() async {
     if (_currentUser == null || !_currentUser!.hasRole(UserRole.student) || _currentUser!.yearLevel == null) return;
     if (_currentUser!.yearLevel! >= 4) return;
-    final now = DateTime.now();
-    final startYear = now.month >= 9 ? now.year : now.year - 1;
-    final targetStart = DateTime(startYear, 9, 1);
-    if (_currentUser!.lastYearUpdate == null || _currentUser!.lastYearUpdate!.isBefore(targetStart)) {
-      final newYear = _currentUser!.yearLevel! + 1;
-      try {
-        await _supabase.from('profiles').update({'year_level': newYear, 'last_year_update': now.toIso8601String()}).eq('id', _currentUser!.id);
+    try {
+      // The server owns the academic-year rule. The profile guard rejects any
+      // direct year_level write, so this RPC is the only self-service path.
+      final result = await _supabase.rpc('advance_my_year');
+      final newYear = result is num ? result.toInt() : null;
+      if (newYear != null) {
         final data = await _supabase.from('profiles').select().eq('id', _currentUser!.id).single();
         _currentUser = UserProfile.fromMap(data, _currentUser!.email);
         if (onYearAutoUpdated != null) onYearAutoUpdated!(newYear);
-      } catch (e) { debugPrint('Auto-year error: $e'); }
+      }
+    } catch (e) {
+      debugPrint('Auto-year error: $e');
     }
   }
 
@@ -450,17 +449,6 @@ class AuthService extends ChangeNotifier {
       debugPrint('deleteAccount error: $e');
       return false;
     }
-  }
-
-  Future<bool> updateYearLevel(int y) async {
-    if (_currentUser == null || _currentUser!.yearChanged) return false;
-    try {
-      await _supabase.from('profiles').update({'year_level': y, 'year_changed': true}).eq('id', _currentUser!.id);
-      final data = await _supabase.from('profiles').select().eq('id', _currentUser!.id).single();
-      _currentUser = UserProfile.fromMap(data, _currentUser!.email);
-      notifyListeners();
-      return true;
-    } catch (e) { debugPrint('updateYearLevel error: $e'); return false; }
   }
 
   Future<bool> updateProfileImage(File f) async {

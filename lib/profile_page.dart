@@ -200,7 +200,6 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
     final user = authService.currentUser!;
     final nameController = TextEditingController(text: user.fullName);
     final bioController = TextEditingController(text: user.bio);
-    var selectedYear = user.yearLevel ?? 1;
     var saving = false;
     var uploadingAvatar = false;
     var dialogAvatarUrl = user.avatarUrl; // live-updates when picker/upload changes it
@@ -351,27 +350,26 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                 const SizedBox(height: 14),
                 Text('Year Level', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
-                DropdownButtonFormField<int>(
-                  initialValue: selectedYear,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.school_outlined),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: theme.dividerColor),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 1, child: Text('Year 1')),
-                    DropdownMenuItem(value: 2, child: Text('Year 2')),
-                    DropdownMenuItem(value: 3, child: Text('Year 3')),
-                    DropdownMenuItem(value: 4, child: Text('Year 4')),
-                  ],
-                  onChanged: user.yearChanged ? null : (val) {
-                    if (val != null) setDialogState(() => selectedYear = val);
-                  },
+                  child: Row(
+                    children: [
+                      Icon(Icons.school_outlined, size: 20, color: primaryColor),
+                      const SizedBox(width: 10),
+                      Text('Year ${user.yearLevel ?? 1}'),
+                      const Spacer(),
+                      Text(
+                        'Set by your university',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
                 ),
-                if (user.yearChanged)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text('Year level can only be changed once', style: TextStyle(fontSize: 12, color: Colors.orange[700])),
-                  ),
               ],
             ),
           ),
@@ -389,9 +387,6 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                         fullName: nameController.text,
                         bio: bioController.text,
                       );
-                      if (selectedYear != (user.yearLevel ?? 1) && !user.yearChanged) {
-                        await authService.updateYearLevel(selectedYear);
-                      }
                       if (dialogCtx.mounted) {
                         setDialogState(() => saving = false);
                         Navigator.pop(dialogCtx);

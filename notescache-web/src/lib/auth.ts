@@ -69,10 +69,11 @@ export async function signInWithEmail(email: string, password: string) {
   if (error) throw new Error(error.message)
 }
 
-export async function signUpWithEmail(email: string, password: string, fullName: string, yearLevel: number) {
+export async function signUpWithEmail(email: string, password: string, fullName: string) {
   const { error } = await supabase.auth.signUp({
     email, password,
-    options: { data: { full_name: fullName, year_level: yearLevel, role: 'student' } },
+    // Role and year are assigned by the database trigger, not by the client.
+    options: { data: { full_name: fullName } },
   })
   if (error) throw new Error(error.message)
 }

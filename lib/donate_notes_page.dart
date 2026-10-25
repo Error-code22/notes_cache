@@ -115,13 +115,23 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
       return;
     }
 
+    final authService = context.read<AuthService>();
+    if (authService.currentUser == null || authService.currentUser!.isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sign in to donate notes.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isUploading = true;
       _uploadedCount = 0;
       _failedCount = 0;
     });
 
-    final authService = context.read<AuthService>();
     final cloudinaryService = CloudinaryService();
     final noteService = NoteService();
 
