@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/auth'
+import { getSupportConfig, whatsappUrl } from '../../lib/support'
 
 /**
  * Landing page for Supabase password-recovery links.
@@ -22,6 +23,15 @@ export default function ResetPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
+  const [supportWhatsapp, setSupportWhatsapp] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    getSupportConfig()
+      .then((c) => { if (!cancelled) setSupportWhatsapp(c.whatsapp) })
+      .catch(() => { /* button still opens the WhatsApp picker */ })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -103,12 +113,23 @@ export default function ResetPage() {
             <p className="text-sm text-red-600">
               {error || 'This reset link is invalid or has expired.'}
             </p>
+            <p className="text-xs text-gray-500">
+              Check your spam/junk folder for the newest email, or ask the admin to send a fresh link.
+            </p>
             <button
               onClick={() => router.replace('/login')}
               className="w-full py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition"
             >
               Request a new link
             </button>
+            <a
+              href={whatsappUrl(supportWhatsapp, 'Hi, my NotesCache password reset link is invalid or has expired. Please send me a fresh one.')}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full py-3 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm font-semibold hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition"
+            >
+              Contact admin on WhatsApp
+            </a>
           </div>
         )}
 

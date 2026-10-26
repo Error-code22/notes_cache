@@ -4,6 +4,7 @@ import 'policy_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'services.dart';
 
 class LoginPage extends StatefulWidget {
@@ -561,10 +562,30 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   bool _emailSent = false;
   int _cooldown = 0;
   Timer? _timer;
+  Timer? _contactTimer;
+  bool _showContactAdmin = false;
+  String _supportWhatsapp = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSupport();
+  }
+
+  Future<void> _loadSupport() async {
+    try {
+      final cfg = await context.read<NoteService>().getAppConfig();
+      if (!mounted) return;
+      setState(() => _supportWhatsapp = (cfg['support_whatsapp'] ?? '').toString());
+    } catch (_) {
+      // The contact button still opens WhatsApp's contact picker.
+    }
+  }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _contactTimer?.cancel();
     _emailController.dispose();
     super.dispose();
   }
@@ -601,8 +622,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         redirectTo: _resetRedirect,
       );
       if (!mounted) return;
-      setState(() { _isSending = false; _emailSent = true; });
+      _contactTimer?.cancel();
+      setState(() { _isSending = false; _emailSent = true; _showContactAdmin = false; });
       _startCooldown();
+      _contactTimer = Timer(const Duration(seconds: 10), () {
+        if (mounted) setState(() => _showContactAdmin = true);
+      });
     } on AuthException catch (e) {
       if (!mounted) return;
       setState(() => _isSending = false);
@@ -615,6 +640,24 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       setState(() => _isSending = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not send the reset email. Check your connection and try again.')),
+      );
+    }
+  }
+
+  Future<void> _contactAdminOnWhatsApp() async {
+    final email = _emailController.text.trim();
+    final message = Uri.encodeComponent(
+      'Hi, I requested a NotesCache password reset but I did not get the email. '
+      'My email is $email. Please help.',
+    );
+    final digits = _supportWhatsapp.replaceAll(RegExp(r'\D'), '');
+    final url = digits.isEmpty
+        ? 'https://wa.me/?text=$message'
+        : 'https://wa.me/$digits?text=$message';
+    final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open WhatsApp. Use Contact Support from Profile.')),
       );
     }
   }
@@ -657,11 +700,23 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           textAlign: TextAlign.center,
                           style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.45)),
                         ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Don\'t see it? Check your spam or junk folder. The link expires in 1 hour.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.55)),
+                        ),
                         const SizedBox(height: 16),
                         TextButton(
                           onPressed: (_cooldown > 0 || _isSending) ? null : _sendResetEmail,
                           child: Text(_cooldown > 0 ? 'Resend in ${_cooldown}s' : 'Didn\'t get it? Resend'),
                         ),
+                        if (_showContactAdmin)
+                          TextButton.icon(
+                            onPressed: _contactAdminOnWhatsApp,
+                            icon: const Icon(Icons.chat_outlined, size: 18),
+                            label: const Text('Still nothing? Contact admin on WhatsApp'),
+                          ),
                         const SizedBox(height: 8),
                         SizedBox(
                           width: double.infinity,

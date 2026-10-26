@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { signInWithEmail, signUpWithEmail, signInWithGoogle, supabase } from '../../lib/auth'
+import { getSupportConfig, whatsappUrl } from '../../lib/support'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -18,6 +19,8 @@ export default function LoginPage() {
   const [info, setInfo] = useState('')
   const [cooldown, setCooldown] = useState(0)
   const [showPolicy, setShowPolicy] = useState<'terms' | 'privacy' | null>(null)
+  const [supportWhatsapp, setSupportWhatsapp] = useState('')
+  const [showContactAdmin, setShowContactAdmin] = useState(false)
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('reset') === '1') {
@@ -30,6 +33,22 @@ export default function LoginPage() {
     const t = setTimeout(() => setCooldown((c) => c - 1), 1000)
     return () => clearTimeout(t)
   }, [cooldown])
+
+  useEffect(() => {
+    if (mode !== 'forgot') return
+    let cancelled = false
+    getSupportConfig()
+      .then((c) => { if (!cancelled) setSupportWhatsapp(c.whatsapp) })
+      .catch(() => { /* support button falls back to the WhatsApp picker */ })
+    return () => { cancelled = true }
+  }, [mode])
+
+  useEffect(() => {
+    setShowContactAdmin(false)
+    if (mode !== 'forgot' || !info) return
+    const t = setTimeout(() => setShowContactAdmin(true), 10000)
+    return () => clearTimeout(t)
+  }, [mode, info])
 
   useEffect(() => {
     let done = false
@@ -56,7 +75,7 @@ export default function LoginPage() {
           ? 'Too many reset requests. Wait a minute and try again.'
           : err.message)
       } else {
-        setInfo('Check your email for a reset link!')
+        setInfo('Check your email — including the spam/junk folder. The link expires in 1 hour.')
         setCooldown(60)
       }
       return
@@ -147,6 +166,17 @@ export default function LoginPage() {
 
         {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
         {info && <p className="text-sm text-emerald-600 mt-3">{info}</p>}
+
+        {mode === 'forgot' && showContactAdmin && (
+          <a
+            href={whatsappUrl(supportWhatsapp, `Hi, I requested a NotesCache password reset but I did not get the email. My email is ${email}. Please help.`)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block w-full mt-3 py-3 text-center border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm font-semibold hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition"
+          >
+            Didn&apos;t get it? Contact admin on WhatsApp
+          </a>
+        )}
 
         <button onClick={submit} disabled={busy || (mode === 'forgot' && cooldown > 0)} className="w-full mt-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition disabled:opacity-50">
           {busy
