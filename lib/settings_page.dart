@@ -338,7 +338,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _showSupportHub() {
     final theme = Theme.of(context);
-    final email = _appConfig['support_email'] ?? 'notescache22@gmail.com';
+    final email = _appConfig['support_email'] ?? 'ryanmuhia22@gmail.com';
     final phone = _appConfig['support_phone'] ?? '+254700000000';
     final whatsapp = _appConfig['support_whatsapp'] ?? '254700000000';
 

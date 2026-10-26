@@ -636,8 +636,8 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
             final url = _appConfig['help_center_url'];
             if (url != null && url.isNotEmpty) _launchUrl(url);
           }),
-          _settingsTile(Icons.email_outlined, 'Contact Support', _appConfig['support_email'] ?? 'notescache22@gmail.com', () {
-            final email = _appConfig['support_email'] ?? 'notescache22@gmail.com';
+          _settingsTile(Icons.email_outlined, 'Contact Support', _appConfig['support_email'] ?? 'ryanmuhia22@gmail.com', () {
+            final email = _appConfig['support_email'] ?? 'ryanmuhia22@gmail.com';
             _launchUrl('mailto:$email');
           }),
           _settingsTile(Icons.phone_outlined, 'Call Support', _appConfig['support_phone'] ?? '', () {
