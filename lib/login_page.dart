@@ -646,9 +646,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   Future<void> _contactAdminOnWhatsApp() async {
     final email = _emailController.text.trim();
+    final emailLine = email.isEmpty
+        ? 'My account email is (please type it).'
+        : 'My account email is $email.';
     final message = Uri.encodeComponent(
-      'Hi, I requested a NotesCache password reset but I did not get the email. '
-      'My email is $email. Please help.',
+      'Hi, I requested a NotesCache password reset but the link is invalid, '
+      'expired, or did not arrive. $emailLine Please send me a fresh link.',
     );
     final digits = _supportWhatsapp.replaceAll(RegExp(r'\D'), '');
     final url = digits.isEmpty

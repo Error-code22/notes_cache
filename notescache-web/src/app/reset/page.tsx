@@ -8,10 +8,10 @@ import { getSupportConfig, whatsappUrl } from '../../lib/support'
 /**
  * Landing page for Supabase password-recovery links.
  *
- * The link is a PKCE code (`?code=...`). supabase-js exchanges it on load and
- * emits a session, which is what lets updateUser() work without the old
- * password. Hash-style links (`#access_token=...&type=recovery`) are handled
- * by the same client, so both email templates work.
+ * Web-initiated links are PKCE codes (`?code=...`), which supabase-js
+ * exchanges on load. App-initiated links use the implicit flow and arrive as
+ * `#access_token=...&refresh_token=...`; those are installed manually with
+ * setSession(). Both paths produce the recovery session needed by updateUser().
  */
 export default function ResetPage() {
   const router = useRouter()
@@ -24,6 +24,7 @@ export default function ResetPage() {
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
   const [supportWhatsapp, setSupportWhatsapp] = useState('')
+  const [requestEmail, setRequestEmail] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -31,6 +32,15 @@ export default function ResetPage() {
       .then((c) => { if (!cancelled) setSupportWhatsapp(c.whatsapp) })
       .catch(() => { /* button still opens the WhatsApp picker */ })
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem('notescache_reset_email')
+      if (saved) setRequestEmail(saved)
+    } catch {
+      // Private mode can block localStorage; the field still accepts an email.
+    }
   }, [])
 
   useEffect(() => {
@@ -124,6 +134,11 @@ export default function ResetPage() {
     setTimeout(() => router.replace('/login?reset=1'), 1200)
   }
 
+  const requestEmailValue = requestEmail.trim()
+  const whatsappMessage = requestEmailValue
+    ? `Hi, my NotesCache password reset link is invalid or has expired. My account email is ${requestEmailValue}. Please send me a fresh link.`
+    : 'Hi, my NotesCache password reset link is invalid or has expired. My account email is (please type it). Please send me a fresh link.'
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-600 flex items-center justify-center px-4 py-8">
       <div className="w-full max-w-md bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-8">
@@ -147,6 +162,23 @@ export default function ResetPage() {
             <p className="text-xs text-gray-500">
               Check your spam/junk folder for the newest email, or ask the admin to send a fresh link.
             </p>
+            <label className="block text-left">
+              <span className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
+                Your NotesCache email
+              </span>
+              <input
+                value={requestEmail}
+                onChange={(e) => setRequestEmail(e.target.value)}
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white"
+              />
+              <span className="mt-1 block text-[11px] text-gray-400">
+                Include this in the WhatsApp message so the admin can find your account.
+              </span>
+            </label>
             <button
               onClick={() => router.replace('/login')}
               className="w-full py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition"
@@ -154,7 +186,7 @@ export default function ResetPage() {
               Request a new link
             </button>
             <a
-              href={whatsappUrl(supportWhatsapp, 'Hi, my NotesCache password reset link is invalid or has expired. Please send me a fresh one.')}
+              href={whatsappUrl(supportWhatsapp, whatsappMessage)}
               target="_blank"
               rel="noopener noreferrer"
               className="block w-full py-3 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm font-semibold hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition"

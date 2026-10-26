@@ -75,6 +75,11 @@ export default function LoginPage() {
           ? 'Too many reset requests. Wait a minute and try again.'
           : err.message)
       } else {
+        try {
+          window.localStorage.setItem('notescache_reset_email', email.trim().toLowerCase())
+        } catch {
+          // Private mode can block localStorage; the reset page asks for it again.
+        }
         setInfo('Check your email — including the spam/junk folder. The link expires in 1 hour.')
         setCooldown(60)
       }
