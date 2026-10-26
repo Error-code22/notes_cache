@@ -50,6 +50,12 @@ export default function ResetPage() {
     } catch {
       // Prefill is best-effort; the field still works.
     }
+    if (linkedEmail) {
+      // Keep the email out of the address bar after reading it from the link.
+      const url = new URL(window.location.href)
+      url.searchParams.delete('email')
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+    }
   }, [])
 
   useEffect(() => {
