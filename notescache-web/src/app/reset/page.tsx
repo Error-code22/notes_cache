@@ -45,11 +45,41 @@ export default function ResetPage() {
       return
     }
 
-    // Give supabase-js a moment to exchange the PKCE code before declaring
-    // the link dead.
-    const fallback = setTimeout(() => { if (!cancelled) setReady(true) }, 4000)
+    // The Flutter app requests recovery emails with the implicit flow, so its
+    // links arrive as #access_token=...&refresh_token=.... The web client is
+    // configured for PKCE and rejects those automatically. Accept both: parse
+    // the hash ourselves and install the session with setSession().
+    const accessToken = hash.get('access_token')
+    const refreshToken = hash.get('refresh_token')
 
-    supabase.auth.getSession().then(({ data }) => {
+    const fallback = setTimeout(() => { if (!cancelled) setReady(true) }, 6000)
+
+    const boot = async () => {
+      if (accessToken && refreshToken) {
+        const { data, error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        })
+        if (cancelled) return
+        if (sessionError) {
+          setError(sessionError.message)
+          setReady(true)
+          clearTimeout(fallback)
+          return
+        }
+        if (data.session) {
+          setEmail(data.session.user.email ?? '')
+          setHasSession(true)
+          setReady(true)
+          clearTimeout(fallback)
+          window.history.replaceState(null, '', window.location.pathname + window.location.search)
+        }
+        return
+      }
+
+      // Web-initiated links use PKCE (?code=...). The client normally exchanges
+      // this during initialization; getSession() is the confirmation.
+      const { data } = await supabase.auth.getSession()
       if (cancelled) return
       if (data.session) {
         setEmail(data.session.user.email ?? '')
@@ -57,7 +87,8 @@ export default function ResetPage() {
         setReady(true)
         clearTimeout(fallback)
       }
-    })
+    }
+    boot()
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (cancelled) return
