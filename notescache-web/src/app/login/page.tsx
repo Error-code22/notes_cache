@@ -66,8 +66,10 @@ export default function LoginPage() {
       if (!email) { setError('Email is required.'); return }
       if (cooldown > 0) return
       setBusy(true)
+      const resetRedirect = new URL('/reset', window.location.origin)
+      resetRedirect.searchParams.set('email', email.trim())
       const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset`,
+        redirectTo: resetRedirect.toString(),
       })
       setBusy(false)
       if (err) {

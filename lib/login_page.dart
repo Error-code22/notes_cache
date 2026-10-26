@@ -617,9 +617,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
     setState(() => _isSending = true);
     try {
+      final redirect = Uri.parse(_resetRedirect).replace(
+        queryParameters: {'email': email},
+      );
       await Supabase.instance.client.auth.resetPasswordForEmail(
         email,
-        redirectTo: _resetRedirect,
+        redirectTo: redirect.toString(),
       );
       if (!mounted) return;
       _contactTimer?.cancel();

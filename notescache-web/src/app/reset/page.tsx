@@ -35,11 +35,20 @@ export default function ResetPage() {
   }, [])
 
   useEffect(() => {
+    const linkedEmail = new URLSearchParams(window.location.search).get('email')?.trim() ?? ''
+    let saved = ''
     try {
-      const saved = window.localStorage.getItem('notescache_reset_email')
-      if (saved) setRequestEmail(saved)
+      saved = window.localStorage.getItem('notescache_reset_email') ?? ''
     } catch {
       // Private mode can block localStorage; the field still accepts an email.
+    }
+    const initial = linkedEmail || saved
+    if (!initial) return
+    setRequestEmail(initial)
+    try {
+      window.localStorage.setItem('notescache_reset_email', initial.toLowerCase())
+    } catch {
+      // Prefill is best-effort; the field still works.
     }
   }, [])
 
@@ -167,6 +176,7 @@ export default function ResetPage() {
                 Your NotesCache email
               </span>
               <input
+                id="reset-email"
                 value={requestEmail}
                 onChange={(e) => setRequestEmail(e.target.value)}
                 type="email"
@@ -176,7 +186,7 @@ export default function ResetPage() {
                 className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white"
               />
               <span className="mt-1 block text-[11px] text-gray-400">
-                Include this in the WhatsApp message so the admin can find your account.
+                Type it here so the WhatsApp message includes it and the admin can find your account.
               </span>
             </label>
             <button
@@ -185,14 +195,24 @@ export default function ResetPage() {
             >
               Request a new link
             </button>
-            <a
-              href={whatsappUrl(supportWhatsapp, whatsappMessage)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block w-full py-3 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm font-semibold hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition"
-            >
-              Contact admin on WhatsApp
-            </a>
+            {requestEmailValue ? (
+              <a
+                href={whatsappUrl(supportWhatsapp, whatsappMessage)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block w-full py-3 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm font-semibold hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition"
+              >
+                Contact admin on WhatsApp
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={() => document.getElementById('reset-email')?.focus()}
+                className="block w-full py-3 border border-gray-300 dark:border-white/15 text-gray-400 rounded-xl text-sm font-semibold cursor-not-allowed"
+              >
+                Enter your email to contact admin
+              </button>
+            )}
           </div>
         )}
 
