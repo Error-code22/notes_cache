@@ -120,6 +120,18 @@ class ThemeProvider extends ChangeNotifier {
   }
 }
 
+class AdminResetLink {
+  final String link;
+  final String email;
+  final int expiresInSeconds;
+
+  const AdminResetLink({
+    required this.link,
+    required this.email,
+    required this.expiresInSeconds,
+  });
+}
+
 class AuthService extends ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
   UserProfile? _currentUser;
@@ -346,6 +358,48 @@ class AuthService extends ChangeNotifier {
       await _supabase.from('profiles').update({'role': roleString}).eq('id', uid);
       return true;
     } catch (e) { debugPrint('updateUserRoles error: $e'); return false; }
+  }
+
+  /// Admin-only: asks the server to generate a single-use recovery link.
+  /// The service-role key stays in the Edge Function; this client only sends
+  /// the target email and the admin's JWT.
+  Future<AdminResetLink> createPasswordResetLink(String email) async {
+    if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin)) {
+      throw Exception('Admin access required.');
+    }
+    final session = _supabase.auth.currentSession;
+    if (session == null) throw Exception('Please sign in again.');
+
+    try {
+      final response = await _supabase.functions.invoke(
+        'admin-reset-link',
+        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+        body: {'email': email.trim()},
+      );
+      final raw = response.data;
+      final data = raw is String ? jsonDecode(raw) : raw;
+      if (data is Map && data['link'] is String && (data['link'] as String).isNotEmpty) {
+        return AdminResetLink(
+          link: data['link'] as String,
+          email: (data['email'] as String?) ?? email.trim(),
+          expiresInSeconds: (data['expiresInSeconds'] as num?)?.toInt() ?? 3600,
+        );
+      }
+      throw Exception('The server did not return a reset link.');
+    } on FunctionException catch (e) {
+      final details = e.details;
+      String? message;
+      if (details is Map) {
+        message = (details['error'] ?? details['message'])?.toString();
+      } else if (details is String && details.isNotEmpty) {
+        message = details;
+      }
+      throw Exception(message ?? 'Could not create the reset link.');
+    } catch (e) {
+      if (e is Exception) rethrow;
+      debugPrint('createPasswordResetLink error: $e');
+      throw Exception('Could not create the reset link.');
+    }
   }
 
   Future<void> ensureFriendCode() async {
