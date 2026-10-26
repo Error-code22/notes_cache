@@ -3,7 +3,7 @@
 **Many notes. One place.** — A campus study companion for students.
 
 [![Download on Android](https://img.shields.io/badge/Download-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk)
-[![Download on Windows](https://img.shields.io/badge/Download-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-Windows.zip)
+[![Download on Windows](https://img.shields.io/badge/Download-Windows%20(v1.0.4)-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Error-code22/notes_cache/releases/download/v1.0.4/NotesCache-Windows.zip)
 [![Visit the site](https://img.shields.io/badge/Website-notescache.netlify.app-4A90D9?style=for-the-badge)](https://notescache.netlify.app)
 
 NotesCache is a study companion for students: browse lecture notes by year and semester, ask Notesy (an AI study assistant) anything — including screenshots — chat with classmates, and open documents right in the app.
@@ -19,6 +19,7 @@ NotesCache is a study companion for students: browse lecture notes by year and s
 
 ## Releases
 
+- **v1.0.5** — Admin-generated password reset links, reset-flow fixes, support-contact cleanup
 - **v1.0.4** — Notesy overhaul: 3-image vision, chat history sidebar, vault mode with decoys, pill input, speed optimizations, security hardening
 - **v1.0.3** — Google Sign-In, admin dashboard redesign, account linking, offline startup fix
 - **v1.0.2** — In-app updater, admin updates manager, feedback explorer fix
