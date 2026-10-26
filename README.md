@@ -30,7 +30,7 @@ NotesCache is a study companion for students: browse lecture notes by year and s
 
 See the live roadmap at [notescache.netlify.app](https://notescache.netlify.app) or in the app (homepage → "What's Coming"). Up next: voice replies, flashcards to Memory Lab, note-context AI, chat sharing, weekly study summaries, push notifications.
 
-The engineering and campus-launch plan lives in [`STRATEGY.md`](STRATEGY.md). Security findings and evidence live in [`AUDIT.md`](AUDIT.md).
+Engineering, migration, and security notes are maintained privately and are not published in this repository.
 
 ## License
 

@@ -44,8 +44,12 @@ desktop.ini
 
 # Supabase
 supabase/.temp/
+supabase/**/.temp/
 supabase/functions/
 node_modules/
+
+# Private backend migrations (kept in the local private workspace)
+/supabase/migrations/
 
 # Firebase — contains a per-project API key; re-download with:
 #   npx firebase-tools apps:sdkconfig ANDROID <appId> --project notescache -o android/app/google-services.json
