@@ -52,8 +52,8 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
 
   // Document-only extensions (no images, no media)
   static const Set<String> _docExts = {
-    '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.csv',
-    '.txt', '.md', '.rtf', '.odt', '.ods', '.odp',
+    '.pdf', '.epub', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx',
+    '.csv', '.txt', '.md', '.rtf', '.odt', '.ods', '.odp',
   };
 
   List<LocalDocEntry> _imported = [];
@@ -83,6 +83,8 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   }
 
   Future<void> _loadIndex() async {
+    // Runs the one-time NotesCache folder migration before reading paths.
+    await _docsDirectory();
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_indexKey);
     if (raw == null) return;
@@ -286,7 +288,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
               Text(
-                'You are about to let NotesCache read every document in a folder you choose.',
+                'You are about to let Foluma read every document in a folder you choose.',
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               ),
               SizedBox(height: 10),
@@ -334,7 +336,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
 
   Future<String> _docsDirectory() async {
     final appDir = await NoteService().getAppDirectory();
-    final dir = Directory('$appDir\\local_docs');
+    final dir = Directory(p.join(appDir, 'local_docs'));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir.path;
   }
@@ -353,10 +355,13 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
       if (sourcePath == null) continue;
       final source = File(sourcePath);
       final baseName = p.basename(sourcePath);
-      var uniquePath = '$dir\\$baseName';
+      var uniquePath = p.join(dir, baseName);
       var counter = 1;
       while (File(uniquePath).existsSync()) {
-        uniquePath = '$dir\\${p.basenameWithoutExtension(baseName)}($counter)${p.extension(baseName)}';
+        uniquePath = p.join(
+          dir,
+          '${p.basenameWithoutExtension(baseName)}($counter)${p.extension(baseName)}',
+        );
         counter++;
       }
       try {
@@ -410,7 +415,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('This submits the document for admin review. Once approved it appears in the shared NotesCache library, visible to everyone. This action is covered by the app\'s Terms of Service.', style: TextStyle(fontSize: 12)),
+              const Text('This submits the document for admin review. Once approved it appears in the shared Foluma library, visible to everyone. This action is covered by the app\'s Terms of Service.', style: TextStyle(fontSize: 12)),
               const SizedBox(height: 16),
               DropdownButtonFormField<int>(
                 initialValue: year,
@@ -708,7 +713,15 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
         subtitle: Text('$dirName • ${_fmtSize(file.lengthSync())}', style: const TextStyle(fontSize: 11)),
         onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => FileViewerPage(file: file, title: p.basename(file.path))),
+          MaterialPageRoute(
+            builder: (_) => FileViewerPage(
+              file: file,
+              title: p.basename(file.path),
+              // Local files are saved in place. A no-op hook still lets the
+              // basic DOCX/PDF editors enable their save controls.
+              onSave: (_) async {},
+            ),
+          ),
         ),
         trailing: PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert_rounded, size: 20),
@@ -729,10 +742,13 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   Future<void> _copyScanned(File file) async {
     final dir = await _docsDirectory();
     final baseName = p.basename(file.path);
-    var uniquePath = '$dir\\$baseName';
+    var uniquePath = p.join(dir, baseName);
     var counter = 1;
     while (File(uniquePath).existsSync()) {
-      uniquePath = '$dir\\${p.basenameWithoutExtension(baseName)}($counter)${p.extension(baseName)}';
+      uniquePath = p.join(
+        dir,
+        '${p.basenameWithoutExtension(baseName)}($counter)${p.extension(baseName)}',
+      );
       counter++;
     }
     try {
@@ -790,7 +806,10 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
           );
         }
         final doc = _imported[index - 1];
-        final ext = p.extension(doc.name).toLowerCase();
+        // Older indexes stored a full malformed path in `name`; always show
+        // the real filename from the current path.
+        final name = p.basename(doc.path);
+        final ext = p.extension(name).toLowerCase();
         return Card(
           elevation: 0,
           margin: const EdgeInsets.only(bottom: 8),
@@ -803,7 +822,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
               decoration: BoxDecoration(color: primaryColor.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
               child: Icon(_iconForExt(ext), color: primaryColor),
             ),
-            title: Text(doc.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), overflow: TextOverflow.ellipsis),
+            title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), overflow: TextOverflow.ellipsis),
             subtitle: Text('${_typeLabel(ext)} • ${_fmtSize(doc.size)} • Offline', style: const TextStyle(fontSize: 11)),
             trailing: IconButton(
               icon: Icon(Icons.delete_outline_rounded, color: theme.colorScheme.onSurface.withOpacity(0.4), size: 20),
@@ -811,7 +830,14 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
             ),
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => FileViewerPage(file: File(doc.path), title: doc.name)),
+              MaterialPageRoute(
+                builder: (_) => FileViewerPage(
+                  file: File(doc.path),
+                  title: name,
+                  // The imported copy is writable; persist edits in place.
+                  onSave: (_) async {},
+                ),
+              ),
             ),
           ),
         );
@@ -822,6 +848,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   String _typeLabel(String ext) {
     switch (ext) {
       case '.pdf': return 'PDF';
+      case '.epub': return 'EPUB';
       case '.ppt': case '.pptx': case '.odp': return 'PPT';
       case '.doc': case '.docx': case '.rtf': case '.odt': return 'DOC';
       case '.xls': case '.xlsx': case '.csv': case '.ods': return 'XLS';
@@ -833,6 +860,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
   IconData _iconForExt(String ext) {
     switch (ext) {
       case '.pdf': return Icons.picture_as_pdf_rounded;
+      case '.epub': return Icons.menu_book_rounded;
       case '.ppt': case '.pptx': case '.odp': return Icons.slideshow_rounded;
       case '.doc': case '.docx': case '.rtf': case '.odt': return Icons.article_rounded;
       case '.xls': case '.xlsx': case '.csv': case '.ods': return Icons.table_chart_rounded;

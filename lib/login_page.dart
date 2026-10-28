@@ -148,7 +148,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 32),
                       const Text(
-                        'NotesCache',
+                        'Foluma',
                         style: TextStyle(
                           fontSize: 36,
                           fontWeight: FontWeight.bold,
@@ -157,7 +157,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Your Campus Study Companion',
+                        'Open anything.',
                         style: TextStyle(
                           fontSize: 18,
                           color: Colors.white.withOpacity(0.85),
@@ -299,7 +299,7 @@ class _LoginPageState extends State<LoginPage> {
         ),
         const SizedBox(height: 8),
         Text(
-          _isSignUp ? 'Join NotesCache and start studying smarter' : 'Sign in to access your study materials',
+          _isSignUp ? 'Join Foluma and start studying smarter' : 'Sign in to access your study materials',
           style: TextStyle(fontSize: 15, color: theme.colorScheme.onSurface.withOpacity(0.6)),
         ),
         const SizedBox(height: 32),
@@ -560,6 +560,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   final _emailController = TextEditingController();
   bool _isSending = false;
   bool _emailSent = false;
+  String? _sentEmail;
   int _cooldown = 0;
   Timer? _timer;
   Timer? _contactTimer;
@@ -626,7 +627,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       );
       if (!mounted) return;
       _contactTimer?.cancel();
-      setState(() { _isSending = false; _emailSent = true; _showContactAdmin = false; });
+      setState(() {
+        _isSending = false;
+        _emailSent = true;
+        _showContactAdmin = false;
+        _sentEmail = email;
+      });
       _startCooldown();
       _contactTimer = Timer(const Duration(seconds: 10), () {
         if (mounted) setState(() => _showContactAdmin = true);
@@ -648,13 +654,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Future<void> _contactAdminOnWhatsApp() async {
-    final email = _emailController.text.trim();
-    final emailLine = email.isEmpty
-        ? 'My account email is (please type it).'
-        : 'My account email is $email.';
+    final email = (_sentEmail ?? _emailController.text).trim();
+    if (email.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter your account email first, then try WhatsApp again.')),
+        );
+      }
+      return;
+    }
     final message = Uri.encodeComponent(
-      'Hi, I requested a NotesCache password reset but the link is invalid, '
-      'expired, or did not arrive. $emailLine Please send me a fresh link.',
+      'Hi, I requested a Foluma password reset but the link is invalid, '
+      'expired, or did not arrive. My account email is $email. '
+      'Please send me a fresh link.',
     );
     final digits = _supportWhatsapp.replaceAll(RegExp(r'\D'), '');
     final url = digits.isEmpty
@@ -696,7 +708,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         const Text('Check Your Email!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
                         Text(
-                          'We sent a password reset link to:\n${_emailController.text.trim()}',
+                          'We sent a password reset link to:\n${_sentEmail ?? _emailController.text.trim()}',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6)),
                         ),

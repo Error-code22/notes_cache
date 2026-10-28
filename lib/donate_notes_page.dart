@@ -62,7 +62,7 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
     try {
       FilePickerResult? result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png', 'txt', 'md'],
+        allowedExtensions: ['pdf', 'epub', 'doc', 'docx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png', 'txt', 'md'],
         allowMultiple: true,
       );
 

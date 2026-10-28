@@ -23,7 +23,7 @@ class PricingPage extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Unlock the full power of NotesCache for your studies',
+              'Unlock the full power of Foluma for your studies',
               style: theme.textTheme.bodyLarge?.copyWith(color: Colors.grey[600]),
               textAlign: TextAlign.center,
             ),
@@ -142,7 +142,7 @@ class PricingPage extends StatelessWidget {
             const Icon(Icons.business, size: 48, color: Color(0xFF2E7D32)),
             const SizedBox(height: 16),
             const Text(
-              'Get NotesCache for your entire campus.\n\nContact us to discuss pricing, custom branding, and bulk enrollment for your institution.',
+              'Get Foluma for your entire campus.\n\nContact us to discuss pricing, custom branding, and bulk enrollment for your institution.',
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),

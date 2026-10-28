@@ -27,9 +27,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"notes_cache", origin, size)) {
+  if (!window.Create(L"Foluma", origin, size)) {
     return EXIT_FAILURE;
   }
+  // Show immediately. The Flutter runner normally waits for its first frame,
+  // but a startup exception then leaves a running process with no visible
+  // window. A visible window also gives us a place to surface that error.
+  window.Show();
   window.SetQuitOnClose(true);
 
   ::MSG msg;

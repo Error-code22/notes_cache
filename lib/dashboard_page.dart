@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
@@ -21,9 +21,12 @@ import 'local_docs_page.dart';
 import 'class_rep_page.dart';
 import 'upload_note_page.dart';
 import 'push_service.dart';
+import 'share_intent_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+const MethodChannel _installerChannel = MethodChannel('foluma/installer');
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -53,14 +56,18 @@ class _FeaturePill extends StatelessWidget {
         children: [
           Icon(icon, size: 14, color: theme.colorScheme.primary),
           const SizedBox(width: 5),
-          Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+          ),
         ],
       ),
     );
   }
 }
 
-class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
+class _DashboardPageState extends State<DashboardPage>
+    with WidgetsBindingObserver {
   final ConnectivityService _connectivity = ConnectivityService();
   final SupabaseKeepAliveService _keepAlive = SupabaseKeepAliveService();
 
@@ -70,35 +77,35 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     _connectivity.start();
     _keepAlive.start();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final authService = context.read<AuthService>();
-        final themeProvider = context.read<ThemeProvider>();
-        
-        authService.updateThemeProvider(themeProvider);
-        
-        if (authService.currentUser != null) {
-          themeProvider.setUserId(authService.currentUser!.id);
-          themeProvider.setUserTheme(authService.currentUser!);
-          _setupBackgroundNotifications();
-        } else {
-          // Wait for user to be loaded if session is still recovering
-          authService.addListener(_onAuthChanged);
-        }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final authService = context.read<AuthService>();
+      final themeProvider = context.read<ThemeProvider>();
 
-        authService.onYearAutoUpdated = (newYear) {
-          _showCongratulationPopup(newYear);
-        };
+      authService.updateThemeProvider(themeProvider);
 
-        // Ask for notification permission AFTER the first frame so the OS
-        // dialog never delays startup (was blocking in main()).
-        if (Platform.isAndroid) {
-          context.read<NotificationService>().requestPermission();
-          unawaited(_checkForUpdate());
-        }
+      if (authService.currentUser != null) {
+        themeProvider.setUserId(authService.currentUser!.id);
+        themeProvider.setUserTheme(authService.currentUser!);
+        _setupBackgroundNotifications();
+      } else {
+        // Wait for user to be loaded if session is still recovering
+        authService.addListener(_onAuthChanged);
+      }
 
-        // First-run setup: offer to import the user's notes folder.
-        unawaited(_maybeOfferNotesFolderSetup());
-      });
+      authService.onYearAutoUpdated = (newYear) {
+        _showCongratulationPopup(newYear);
+      };
+
+      // Ask for notification permission AFTER the first frame so the OS
+      // dialog never delays startup (was blocking in main()).
+      if (Platform.isAndroid) {
+        context.read<NotificationService>().requestPermission();
+        unawaited(_checkForUpdate());
+      }
+
+      // First-run setup: offer to import the user's notes folder.
+      unawaited(_maybeOfferNotesFolderSetup());
+    });
   }
 
   /// One-time setup prompt (per install). "Select folder" hands off to
@@ -119,7 +126,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             child: Text(
               'Have a folder full of lecture notes?\n\n'
               'Pick it once and every PDF, Word, PowerPoint, Excel and text file in it '
-              'becomes readable right here in NotesCache — offline, opened in place.\n\n'
+              'becomes readable right here in Foluma — offline, opened in place.\n\n'
               'Nothing is uploaded by this step, and nothing is shared with anyone '
               'unless you explicitly choose to. You will be asked to accept the '
               'Terms of Service before the folder is read.',
@@ -143,7 +150,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       if (choice == 'pick' && mounted) {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const LocalDocsPage(autoImportFolder: true)),
+          MaterialPageRoute(
+            builder: (_) => const LocalDocsPage(autoImportFolder: true),
+          ),
         );
       }
     } catch (e) {
@@ -170,7 +179,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     super.dispose();
   }
 
-  void _onAuthChanged() {    final authService = context.read<AuthService>();    if (authService.currentUser != null) {
+  void _onAuthChanged() {
+    final authService = context.read<AuthService>();
+    if (authService.currentUser != null) {
       authService.removeListener(_onAuthChanged);
       final themeProvider = context.read<ThemeProvider>();
       themeProvider.setUserId(authService.currentUser!.id);
@@ -191,50 +202,73 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
       // Remove previous subscriptions so re-subscribing (e.g. on app resume)
       // doesn't create duplicate/conflicting channels.
-      for (final name in ['public:chat_messages', 'public:notes', 'public:app_updates']) {
+      for (final name in [
+        'public:chat_messages',
+        'public:notes',
+        'public:app_updates',
+      ]) {
         supabase.removeChannel(supabase.channel(name));
       }
 
       // 1. Chat Messages
-      supabase.channel('public:chat_messages').onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'chat_messages',
-        callback: (payload) {
-          final msg = payload.newRecord;
-          if (msg['sender_id'] != user.id) {
-            ns.showNotification(
-              title: 'New Message from ${msg['sender_name']}',
-              body: msg['content'],
-              payload: 'route:/dashboard',
-            );
-          }
-        }
-      ).subscribe();
+      supabase
+          .channel('public:chat_messages')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'chat_messages',
+            callback: (payload) {
+              final msg = payload.newRecord;
+              if (msg['sender_id'] != user.id) {
+                ns.showNotification(
+                  title: 'New Message from ${msg['sender_name']}',
+                  body: msg['content'],
+                  payload: 'route:/dashboard',
+                );
+              }
+            },
+          )
+          .subscribe();
 
       // 2. Document Uploads (Lecturers only)
-      supabase.channel('public:notes').onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'notes',
-        callback: (payload) {
-          final note = payload.newRecord;
-          if (note['target_year'] == user.yearLevel && note['lecturer_name'] != 'Student Upload' && note['lecturer_name'] != 'Guest Contributor') {
-            ns.showNotification(title: 'New Material: ${note['title']}', body: 'Uploaded by ${note['lecturer_name']}', payload: 'route:/dashboard');
-          }
-        }
-      ).subscribe();
+      supabase
+          .channel('public:notes')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'notes',
+            callback: (payload) {
+              final note = payload.newRecord;
+              if (note['target_year'] == user.yearLevel &&
+                  note['lecturer_name'] != 'Student Upload' &&
+                  note['lecturer_name'] != 'Guest Contributor') {
+                ns.showNotification(
+                  title: 'New Material: ${note['title']}',
+                  body: 'Uploaded by ${note['lecturer_name']}',
+                  payload: 'route:/dashboard',
+                );
+              }
+            },
+          )
+          .subscribe();
 
       // 3. App Updates (Admin announcements)
-      supabase.channel('public:app_updates').onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'app_updates',
-        callback: (payload) {
-          final update = payload.newRecord;
-          ns.showNotification(title: 'App Update: ${update['title']}', body: update['content'], payload: 'route:/dashboard');
-        }
-      ).subscribe();
+      supabase
+          .channel('public:app_updates')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'app_updates',
+            callback: (payload) {
+              final update = payload.newRecord;
+              ns.showNotification(
+                title: 'App Update: ${update['title']}',
+                body: update['content'],
+                payload: 'route:/dashboard',
+              );
+            },
+          )
+          .subscribe();
     }
   }
 
@@ -258,17 +292,45 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 color: primaryColor.withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.auto_awesome_rounded, size: 60, color: primaryColor),
+              child: Icon(
+                Icons.auto_awesome_rounded,
+                size: 60,
+                color: primaryColor,
+              ),
             ),
             const SizedBox(height: 24),
-            Text('Congratulations!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
+            Text(
+              'Congratulations!',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
             const SizedBox(height: 12),
-            Text('Welcome to your new academic year!', textAlign: TextAlign.center, style: TextStyle(fontSize: 16, color: theme.colorScheme.onSurface.withOpacity(0.7))),
+            Text(
+              'Welcome to your new academic year!',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: theme.colorScheme.onSurface.withOpacity(0.7),
+              ),
+            ),
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(color: primaryColor, borderRadius: BorderRadius.circular(12)),
-              child: Text('YEAR $newYear', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+              decoration: BoxDecoration(
+                color: primaryColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'YEAR $newYear',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
             ),
             const SizedBox(height: 24),
             SizedBox(
@@ -279,9 +341,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   backgroundColor: primaryColor,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
-                child: const Text('LET\'S GET STARTED', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'LET\'S GET STARTED',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ],
@@ -312,25 +379,53 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(user.fullName ?? 'Student', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
+            Text(
+              user.fullName ?? 'Student',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Flexible(
                   child: Text(
                     user.roles.map((r) => r.name.toUpperCase()).join(' • '),
-                    style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6), fontSize: 12),
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 if (user.hasRole(UserRole.admin)) ...[
                   const SizedBox(width: 8),
                   InkWell(
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AdminDashboardPage())),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AdminDashboardPage(),
+                      ),
+                    ),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(color: primaryColor, borderRadius: BorderRadius.circular(4)),
-                      child: const Text('ADMIN', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: primaryColor,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'ADMIN',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 8,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -340,37 +435,136 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         ),
         actions: [
           IconButton(
-            icon: Icon(context.watch<ThemeProvider>().themeMode == ThemeMode.dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined, color: primaryColor),
+            icon: Icon(
+              context.watch<ThemeProvider>().themeMode == ThemeMode.dark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
+              color: primaryColor,
+            ),
             onPressed: () {
               final provider = context.read<ThemeProvider>();
               // system mode renders dark on dark OSes; treat it as light for
               // toggling so the FIRST click always produces a visible change.
-              final next = provider.themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+              final next = provider.themeMode == ThemeMode.light
+                  ? ThemeMode.dark
+                  : ThemeMode.light;
               provider.setThemeMode(next);
             },
           ),
           PopupMenuButton<String>(
-            icon: CircleAvatar(radius: 16, backgroundColor: primaryColor.withOpacity(0.1), child: Icon(Icons.person, size: 20, color: primaryColor)),
+            icon: CircleAvatar(
+              radius: 16,
+              backgroundColor: primaryColor.withOpacity(0.1),
+              child: Icon(Icons.person, size: 20, color: primaryColor),
+            ),
             onSelected: (value) {
-              if (value == 'profile') Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfilePage()));
-              else if (value == 'settings') Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsPage()));
-              else if (value == 'updates') Navigator.push(context, MaterialPageRoute(builder: (context) => const UpdatesPage()));
-              else if (value == 'feedback') Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackPage()));
-              else if (value == 'signin') Navigator.pushNamed(context, '/login');
-              else if (value == 'logout') _showLogoutConfirmation(context, authService);
+              if (value == 'profile')
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ProfilePage()),
+                );
+              else if (value == 'settings')
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsPage()),
+                );
+              else if (value == 'updates')
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const UpdatesPage()),
+                );
+              else if (value == 'feedback')
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const FeedbackPage()),
+                );
+              else if (value == 'signin')
+                Navigator.pushNamed(context, '/login');
+              else if (value == 'logout')
+                _showLogoutConfirmation(context, authService);
             },
             itemBuilder: (context) => [
               if (user.isGuest) ...[
-                const PopupMenuItem(value: 'signin', child: Row(children: [Icon(Icons.login_rounded, size: 20), SizedBox(width: 8), Text('Sign In')])),
+                const PopupMenuItem(
+                  value: 'signin',
+                  child: Row(
+                    children: [
+                      Icon(Icons.login_rounded, size: 20),
+                      SizedBox(width: 8),
+                      Text('Sign In'),
+                    ],
+                  ),
+                ),
                 const PopupMenuDivider(),
               ],
-              const PopupMenuItem(value: 'profile', child: Row(children: [Icon(Icons.person_outline, size: 20), SizedBox(width: 8), Text('My Profile')])),
-              const PopupMenuItem(value: 'updates', child: Row(children: [Icon(Icons.campaign_outlined, size: 20), SizedBox(width: 8), Text('Updates')])),
-              const PopupMenuItem(value: 'feedback', child: Row(children: [Icon(Icons.bug_report_outlined, size: 20), SizedBox(width: 8), Text('Report a Bug')])),
-              const PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings_outlined, size: 20), SizedBox(width: 8), Text('Settings')])),
+              const PopupMenuItem(
+                value: 'profile',
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline, size: 20),
+                    SizedBox(width: 8),
+                    Text('My Profile'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'updates',
+                child: Row(
+                  children: [
+                    Icon(Icons.campaign_outlined, size: 20),
+                    SizedBox(width: 8),
+                    Text('Updates'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'feedback',
+                child: Row(
+                  children: [
+                    Icon(Icons.bug_report_outlined, size: 20),
+                    SizedBox(width: 8),
+                    Text('Report a Bug'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings_outlined, size: 20),
+                    SizedBox(width: 8),
+                    Text('Settings'),
+                  ],
+                ),
+              ),
               if (!user.isGuest) ...[
                 const PopupMenuDivider(),
-                PopupMenuItem(value: 'logout', child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Row(children: [Icon(Icons.logout_rounded, size: 20, color: Colors.red), SizedBox(width: 8), Text('SIGN OUT', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))]))),
+                PopupMenuItem(
+                  value: 'logout',
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.logout_rounded, size: 20, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text(
+                          'SIGN OUT',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ],
           ),
@@ -386,24 +580,43 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               child: SafeArea(
                 bottom: false,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline_rounded, color: Colors.white, size: 18),
+                      const Icon(
+                        Icons.info_outline_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
                       const SizedBox(width: 10),
                       const Expanded(
                         child: Text(
                           'Demo mode: browsing & donating only. Sign in for full access.',
-                          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                       InkWell(
                         onTap: () => Navigator.pushNamed(context, '/login'),
                         child: const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
                           child: Text(
                             'SIGN IN',
-                            style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold, decoration: TextDecoration.underline),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              decoration: TextDecoration.underline,
+                            ),
                           ),
                         ),
                       ),
@@ -425,12 +638,20 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: Row(
                       children: [
-                        Icon(Icons.wifi_off_rounded, color: Colors.white, size: 18),
+                        Icon(
+                          Icons.wifi_off_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                         SizedBox(width: 10),
                         Expanded(
                           child: Text(
                             'You\'re offline — some features may be unavailable',
-                            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ],
@@ -444,7 +665,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             child: SafeArea(
               top: false,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24.0,
+                  vertical: 16.0,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -457,7 +681,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                             'Browse and read the shared library',
                             Icons.menu_book_rounded,
                             Colors.blue,
-                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => NotesPage(connectivity: _connectivity))),
+                            () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    NotesPage(connectivity: _connectivity),
+                              ),
+                            ),
                           ),
                           const SizedBox(height: 16),
                           _buildHubCard(
@@ -466,7 +696,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                             'Share notes with everyone on the app',
                             Icons.volunteer_activism,
                             Colors.pink,
-                            () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DonateNotesPage())),
+                            () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const DonateNotesPage(),
+                              ),
+                            ),
                           ),
                           if (user.hasRole(UserRole.classRep)) ...[
                             const SizedBox(height: 16),
@@ -476,7 +711,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                               'Set the next class and alert your year',
                               Icons.campaign_rounded,
                               Colors.teal,
-                              () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ClassRepPage())),
+                              () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const ClassRepPage(),
+                                ),
+                              ),
                             ),
                           ],
                           if (user.hasRole(UserRole.lecturer)) ...[
@@ -487,7 +727,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                               'Publish a note straight to the library',
                               Icons.upload_rounded,
                               Colors.indigo,
-                              () => Navigator.push(context, MaterialPageRoute(builder: (context) => const UploadNotePage())),
+                              () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const UploadNotePage(),
+                                ),
+                              ),
                             ),
                           ],
                           const SizedBox(height: 16),
@@ -505,7 +750,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     );
   }
 
-  Widget _buildHubCard(BuildContext context, String title, String subtitle, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildHubCard(
+    BuildContext context,
+    String title,
+    String subtitle,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) {
     final theme = Theme.of(context);
     return Card(
       elevation: 0,
@@ -523,7 +775,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             children: [
               Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(16)),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: Icon(icon, color: color, size: 32),
               ),
               const SizedBox(width: 20),
@@ -531,13 +786,28 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 4),
-                    Text(subtitle, style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withOpacity(0.5))),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    ),
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, color: theme.colorScheme.onSurface.withOpacity(0.2)),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: theme.colorScheme.onSurface.withOpacity(0.2),
+              ),
             ],
           ),
         ),
@@ -558,59 +828,85 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         side: BorderSide(color: accent.withOpacity(0.18)),
       ),
       child: InkWell(
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AiChatPage())),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const AiChatPage()),
+        ),
         borderRadius: BorderRadius.circular(24),
         child: Padding(
           padding: const EdgeInsets.all(22),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 64,
-                        height: 64,
-                        decoration: BoxDecoration(
-                          color: accent.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Icon(Icons.psychology_alt_rounded, color: accent, size: 34),
-                      ),
-                      const SizedBox(width: 18),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+              Row(
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      Icons.psychology_alt_rounded,
+                      color: accent,
+                      size: 34,
+                    ),
+                  ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           children: [
-                            Row(
-                              children: [
-                                const Expanded(
-                                  child: Text('Notesy Memory Lab', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            const Expanded(
+                              child: Text(
+                                'Notesy Memory Lab',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: warm.withOpacity(0.14),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text('NEW', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: warm)),
-                                ),
-                              ],
+                              ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Quizzes, flashcards & memory tools',
-                              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.5)),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: warm.withOpacity(0.14),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                'NEW',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  color: warm,
+                                ),
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        Text(
+                          'Quizzes, flashcards & memory tools',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 14),
                 ],
               ),
-            ),
+              const SizedBox(height: 14),
+            ],
           ),
+        ),
+      ),
     );
   }
 
@@ -618,6 +914,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   /// GitHub release; if newer, offers download + install with a persistent
   /// progress dialog. Also shows a "What's New" popup after updating.
   Future<void> _checkForUpdate() async {
+    // A document loaded from Android's Open-with / Share sheet should stay in
+    // front. Update and What's New dialogs can wait for the next launch.
+    if (ShareIntentService.openedFromShare) return;
+
     final updateService = UpdateService();
     final latest = await updateService.getLatestVersion();
     if (latest == null || !mounted) return;
@@ -639,7 +939,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
     // Already downloaded this version earlier (user dismissed the dialog)?
     if (await updateService.hasCachedApk(latest)) {
-      await _showUpdateDialog(updateService, latest, installed, readyToInstall: true);
+      await _showUpdateDialog(
+        updateService,
+        latest,
+        installed,
+        readyToInstall: true,
+      );
       return;
     }
     await _showUpdateDialog(updateService, latest, installed);
@@ -695,11 +1000,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           if (downloading && !downloadStarted) {
             downloadStarted = true;
             Future.microtask(() async {
-              downloadedPath = await updateService.downloadApk(onProgress: (received, total) {
-                if (total > 0 && ctx.mounted) {
-                  setDialogState(() => progress = received / total);
-                }
-              });
+              downloadedPath = await updateService.downloadApk(
+                onProgress: (received, total) {
+                  if (total > 0 && ctx.mounted) {
+                    setDialogState(() => progress = received / total);
+                  }
+                },
+              );
               if (downloadedPath == null) {
                 if (ctx.mounted) {
                   setDialogState(() {
@@ -725,12 +1032,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(done
-                    ? 'v$latest is downloaded and ready.'
-                    : 'A new version of NotesCache is out (v$latest — you have v$installed).\n\nDownloading…'),
+                Text(
+                  done
+                      ? 'v$latest is downloaded and ready.'
+                      : 'A new version of Foluma is out (v$latest — you have v$installed).\n\nDownloading…',
+                ),
                 const SizedBox(height: 20),
                 if (downloading) ...[
-                  LinearProgressIndicator(value: progress == 0 ? null : progress, minHeight: 8),
+                  LinearProgressIndicator(
+                    value: progress == 0 ? null : progress,
+                    minHeight: 8,
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     progress == 0
@@ -739,13 +1051,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ] else if (failed) ...[
-                  const Text('Download failed. Check your connection.',
-                      style: TextStyle(color: Colors.red, fontSize: 13)),
+                  const Text(
+                    'Download failed. Check your connection.',
+                    style: TextStyle(color: Colors.red, fontSize: 13),
+                  ),
                 ] else if (!done) ...[
                   Text(
                     canInstall
                         ? 'You\'ll be able to install it right away.'
-                        : 'You\'ll need to allow NotesCache to install apps in settings first.',
+                        : 'You\'ll need to allow Foluma to install apps in settings first.',
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ],
@@ -770,30 +1084,52 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 ),
               if (done)
                 ElevatedButton(
+                  // Always offer INSTALL. Permission is re-checked when this is
+                  // tapped, so returning from Android settings doesn't leave a
+                  // stale "OPEN SETTINGS" button with no way to install.
                   onPressed: () async {
-                    if (!canInstall) {
-                      await openAppSettings();
+                    if (!await _canInstallPackages()) {
+                      await _openInstallSettings();
                       if (ctx.mounted) {
                         messenger.showSnackBar(
-                          const SnackBar(content: Text('Enable "Install unknown apps" for NotesCache, then reopen the app to install.'), backgroundColor: Colors.orange),
+                          const SnackBar(
+                            content: Text(
+                              'Allow Foluma to install unknown apps, then tap INSTALL again.',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
                         );
                       }
                       return;
                     }
-                    final path = downloadedPath ?? await updateService.apkFilePath();
-                    final result = await OpenFilex.open(path);
-                    if (ctx.mounted && result.type != ResultType.done) {
-                      messenger.showSnackBar(
-                        SnackBar(
-                          content: Text(result.type == ResultType.noAppToOpen
-                              ? 'Install blocked. Enable "Install unknown apps" for NotesCache in settings.'
-                              : 'Could not open installer: ${result.message}'),
-                          backgroundColor: Colors.orange,
-                        ),
+
+                    final path =
+                        downloadedPath ?? await updateService.apkFilePath();
+                    try {
+                      final opened = await _installerChannel.invokeMethod<bool>(
+                        'installApk',
+                        {'path': path},
                       );
+                      if (opened != true) {
+                        throw PlatformException(
+                          code: 'install_failed',
+                          message: 'The package installer did not open.',
+                        );
+                      }
+                    } on PlatformException catch (e) {
+                      if (ctx.mounted) {
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Could not open installer: ${e.message ?? e.code}',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                      }
                     }
                   },
-                  child: Text(canInstall ? 'INSTALL' : 'OPEN SETTINGS'),
+                  child: const Text('INSTALL'),
                 ),
             ],
           );
@@ -805,11 +1141,20 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<bool> _canInstallPackages() async {
     if (!Platform.isAndroid) return true;
     try {
-      final status = await Permission.requestInstallPackages.status;
-      return status.isGranted;
+      return await _installerChannel.invokeMethod<bool>('canInstallPackages') ??
+          true;
     } catch (e) {
       debugPrint('Install permission check error: $e');
-      return true; // default to trying; installer will surface issues
+      return true; // default to trying; the installer will surface issues
+    }
+  }
+
+  Future<void> _openInstallSettings() async {
+    try {
+      await _installerChannel.invokeMethod<void>('openInstallSettings');
+    } catch (e) {
+      debugPrint('Could not open install settings: $e');
+      await openAppSettings();
     }
   }
 
@@ -819,15 +1164,24 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Sign Out?'),
-        content: const Text('Are you sure you want to sign out of NotesCache?'),
+        content: const Text('Are you sure you want to sign out of Foluma?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL', style: TextStyle(color: Colors.grey))),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+          ),
           ElevatedButton(
             onPressed: () async {
               await authService.signOut();
               if (context.mounted) Navigator.pop(context);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
             child: const Text('SIGN OUT'),
           ),
         ],
@@ -838,13 +1192,21 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
 IconData roadmapIconFor(String? name) {
   switch (name) {
-    case 'mic': return Icons.mic_rounded;
-    case 'notifications': return Icons.notifications_active_rounded;
-    case 'draw': return Icons.draw_rounded;
-    case 'play_circle': return Icons.play_circle_fill_rounded;
-    case 'upload': return Icons.upload_file_rounded;
-    case 'translate': return Icons.translate_rounded;
-    case 'quiz': return Icons.quiz_rounded;
-    default: return Icons.construction_rounded;
+    case 'mic':
+      return Icons.mic_rounded;
+    case 'notifications':
+      return Icons.notifications_active_rounded;
+    case 'draw':
+      return Icons.draw_rounded;
+    case 'play_circle':
+      return Icons.play_circle_fill_rounded;
+    case 'upload':
+      return Icons.upload_file_rounded;
+    case 'translate':
+      return Icons.translate_rounded;
+    case 'quiz':
+      return Icons.quiz_rounded;
+    default:
+      return Icons.construction_rounded;
   }
 }

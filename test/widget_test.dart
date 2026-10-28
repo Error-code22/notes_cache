@@ -5,14 +5,25 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:notes_cache/services.dart';
 import 'package:notes_cache/main.dart';
 
 void main() {
-  testWidgets('App builds and shows login page by default', (WidgetTester tester) async {
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
+    await Supabase.initialize(
+      url: 'https://example.supabase.co',
+      anonKey: 'test-anon-key',
+    );
+  });
+
+  testWidgets('App builds and shows login page by default', (
+    WidgetTester tester,
+  ) async {
     // Build our app with initialRoute and required providers.
     await tester.pumpWidget(
       MultiProvider(

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'models.dart';
@@ -76,7 +77,10 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     if (url.isEmpty) return null;
     final noteService = context.read<NoteService>();
     final appDirPath = await noteService.getAppDirectory();
-    final file = File('$appDirPath\\ai_doc_${widget.note.id}${_resolveFileExt()}');
+    final file = File(p.join(
+      appDirPath,
+      'ai_doc_${widget.note.id}${_resolveFileExt()}',
+    ));
     if (!await file.exists()) {
       final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
       debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
@@ -443,7 +447,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       }
       
       final fileName = '${widget.note.title.replaceAll(' ', '_')}$downloadExt';
-      final filePath = '$appDirPath\\$fileName';
+      final filePath = p.join(appDirPath, fileName);
       final file = File(filePath);
 
       if (!await file.exists()) {

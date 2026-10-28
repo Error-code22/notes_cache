@@ -1,0 +1,28 @@
+Foluma offline document viewers — third-party components
+=========================================================
+
+The HTML/JS viewers bundled in this folder are unmodified distribution builds
+of the following projects:
+
+docx-preview 0.4.1
+  https://github.com/VolodymyrBaydalka/docxjs
+  License: Apache-2.0 (see LICENSE-docx-preview.txt)
+
+JSZip 3.10.1
+  https://github.com/Stuk/jszip
+  License: MIT or GPLv3; Foluma uses the MIT option
+  (see LICENSE-jszip.txt)
+
+SheetJS Community Edition (xlsx) 0.18.5
+  https://github.com/SheetJS/sheetjs
+  License: Apache-2.0 (see LICENSE-sheetjs.txt)
+
+These components run locally in the device WebView. They do not make network
+requests for document content.
+
+PPTX files are read with Foluma's own zip/XML text extractor. No third-party
+PPTX renderer is bundled.
+
+The Flutter WebView bridge is provided by webview_flutter (BSD-3-Clause).
+PDF rendering uses pdfrx (MIT) and PDF annotations use flutter_pdf_annotations
+(MIT). Full dependency licence texts are included with the release notices.

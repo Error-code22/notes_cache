@@ -174,7 +174,7 @@ class GoogleDriveAuthService {
         ..statusCode = 200
         ..headers.contentType = ContentType.html
         ..write('<html><body style="font-family:sans-serif;padding:40px">'
-            '<h2>NotesCache is connected to Google Drive.</h2>'
+            '<h2>Foluma is connected to Google Drive.</h2>'
             '<p>You can close this tab and return to the app.</p>'
             '</body></html>');
       await request.response.close();

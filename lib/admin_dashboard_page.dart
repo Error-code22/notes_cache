@@ -26,7 +26,7 @@ class AdminDashboardPage extends StatelessWidget {
     {'name': 'Feedback Central', 'desc': 'Bug reports & ideas', 'icon': Icons.forum_rounded, 'color': Color(0xFF42A5F5), 'page': 2},
     {'name': 'Content Vault', 'desc': 'Notes & backups', 'icon': Icons.library_books_rounded, 'color': Color(0xFF66BB6A), 'page': 3},
     {'name': 'AI Control Room', 'desc': 'Model & limits', 'icon': Icons.psychology_rounded, 'color': Color(0xFFAB47BC), 'page': 4},
-    {'name': 'Cloud Status', 'desc': 'Storage & bandwidth', 'icon': Icons.cloud_rounded, 'color': Color(0xFFEF5350), 'page': 5},
+    {'name': 'Cloud Status', 'desc': 'Cloudinary + R2 usage', 'icon': Icons.cloud_rounded, 'color': Color(0xFFEF5350), 'page': 5},
     {'name': 'System Health', 'desc': 'Feature toggles & charts', 'icon': Icons.monitor_heart_rounded, 'color': Color(0xFFEC407A), 'page': 6},
     {'name': 'Help & Support', 'desc': 'Contact & channels', 'icon': Icons.headset_mic_rounded, 'color': Color(0xFFFFA726), 'page': 7},
     {'name': 'App Updates', 'desc': 'Announcements', 'icon': Icons.campaign_rounded, 'color': Color(0xFF7E57C2), 'page': 8},
@@ -1201,18 +1201,39 @@ class _CloudStatusPage extends StatefulWidget {
 
 class _CloudStatusPageState extends State<_CloudStatusPage> {
   Map<String, dynamic>? _data;
+  Map<String, dynamic>? _r2;
+  String? _r2Error;
   bool _loading = true;
 
   @override
   void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() { _loading = true; _r2Error = null; });
+
     try {
       final r = await Supabase.instance.client.functions.invoke('cloudinary-usage');
       final d = r.data;
-      if (mounted) setState(() { _data = d is Map ? Map<String, dynamic>.from(d) : null; _loading = false; });
-    } catch (_) { if (mounted) setState(() => _loading = false); }
+      _data = d is Map ? Map<String, dynamic>.from(d) : null;
+    } catch (_) {
+      _data = null;
+    }
+
+    try {
+      final r = await Supabase.instance.client.functions.invoke('r2-usage');
+      final d = r.data;
+      if (d is Map && d['error'] == null) {
+        _r2 = Map<String, dynamic>.from(d);
+      } else {
+        _r2 = null;
+        _r2Error = d is Map ? (d['error'] ?? d['hint'] ?? 'Could not load R2 usage').toString() : 'Could not load R2 usage';
+      }
+    } catch (e) {
+      _r2 = null;
+      _r2Error = 'R2 usage is unavailable. Add CLOUDFLARE_API_TOKEN to Supabase secrets.';
+    }
+
+    if (mounted) setState(() => _loading = false);
   }
 
   @override
@@ -1221,36 +1242,155 @@ class _CloudStatusPageState extends State<_CloudStatusPage> {
       appBar: AppBar(title: const Text('Cloud Status')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _data == null || _data!['error'] != null
-              ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text(_data?['error']?.toString() ?? 'Could not load', style: const TextStyle(color: Colors.red)),
-                  const SizedBox(height: 8),
-                  TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Retry')),
-                ]))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      _usageBar('Credits Used', '${(_data!['creditsUsedPercent'] ?? 0).toStringAsFixed(2)}%',
-                          (_data!['creditsUsedPercent'] ?? 0).toDouble() / 100, Colors.indigo),
-                      const SizedBox(height: 16),
-                      _usageBar('Storage', '${((_data!['storageBytes'] ?? 0) / 1e9).toStringAsFixed(2)} GB',
-                          (_data!['storageCreditsPercent'] ?? 0).toDouble() / 100, Colors.blue),
-                      const SizedBox(height: 16),
-                      _usageBar('Bandwidth (this month)', '${((_data!['bandwidthBytes'] ?? 0) / 1e9).toStringAsFixed(2)} GB',
-                          (_data!['bandwidthCreditsPercent'] ?? 0).toDouble() / 100, Colors.green),
-                      const SizedBox(height: 12),
-                      Text('Free tier = 25 credits/month. Each credit = 1GB storage OR 1GB bandwidth.', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-                      const SizedBox(height: 16),
-                      Row(children: [
-                        Icon(Icons.workspace_premium_outlined, size: 16, color: Theme.of(context).colorScheme.primary),
-                        const SizedBox(width: 6),
-                        Text('Plan: ${_data!['plan'] ?? 'Free'}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.primary)),
-                      ]),
-                    ],
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _cloudinarySection(context),
+                  const SizedBox(height: 24),
+                  _r2Section(context),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _cloudinarySection(BuildContext context) {
+    final d = _data;
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.cloud_outlined, size: 20),
+              const SizedBox(width: 8),
+              Text('Cloudinary', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            ]),
+            const SizedBox(height: 14),
+            if (d == null || d['error'] != null)
+              Text(d?['error']?.toString() ?? 'Cloudinary usage is unavailable.', style: const TextStyle(color: Colors.red, fontSize: 12))
+            else ...[
+              _usageBar('Credits Used', '${(d['creditsUsedPercent'] ?? 0).toStringAsFixed(2)}%',
+                  (d['creditsUsedPercent'] ?? 0).toDouble() / 100, Colors.indigo),
+              const SizedBox(height: 14),
+              _usageBar('Storage', '${((d['storageBytes'] ?? 0) / 1e9).toStringAsFixed(2)} GB',
+                  (d['storageCreditsPercent'] ?? 0).toDouble() / 100, Colors.blue),
+              const SizedBox(height: 14),
+              _usageBar('Bandwidth (this month)', '${((d['bandwidthBytes'] ?? 0) / 1e9).toStringAsFixed(2)} GB',
+                  (d['bandwidthCreditsPercent'] ?? 0).toDouble() / 100, Colors.green),
+              const SizedBox(height: 10),
+              Text('Free tier = 25 credits/month. Each credit = 1GB storage OR 1GB bandwidth.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+              const SizedBox(height: 10),
+              Row(children: [
+                Icon(Icons.workspace_premium_outlined, size: 16, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 6),
+                Text('Plan: ${d['plan'] ?? 'Free'}',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.primary)),
+              ]),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _r2Section(BuildContext context) {
+    final d = _r2;
+    final usedBytes = (d?['usedBytes'] ?? 0).toDouble();
+    final freeBytes = (d?['freeBytes'] ?? 10000000000).toDouble();
+    final remainingBytes = (d?['remainingBytes'] ?? 0).toDouble();
+    final fraction = (d?['usedFraction'] ?? 0).toDouble().clamp(0.0, 1.0);
+    final usedGb = usedBytes / 1e9;
+    final freeGb = freeBytes / 1e9;
+    final remainingGb = remainingBytes / 1e9;
+    final color = fraction >= 0.9 ? Colors.red : fraction >= 0.8 ? Colors.orange : Colors.teal;
+
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.cloud_queue_rounded, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Cloudflare R2', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+              ),
+              IconButton(
+                onPressed: _loading ? null : _load,
+                icon: const Icon(Icons.refresh, size: 20),
+                tooltip: 'Refresh R2 usage',
+              ),
+            ]),
+            const SizedBox(height: 6),
+            if (d == null)
+              Text(_r2Error ?? 'R2 usage is unavailable.', style: const TextStyle(color: Colors.red, fontSize: 12))
+            else ...[
+              _usageBar('Storage used', '${usedGb.toStringAsFixed(2)} / ${freeGb.toStringAsFixed(0)} GB',
+                  fraction, color, caption: '${remainingGb.toStringAsFixed(2)} GB left on the 10 GB free tier'),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _pill(Icons.inventory_2_outlined, '${d['objectCount'] ?? 0} objects'),
+                  _pill(Icons.public, 'Egress free'),
+                  _pill(Icons.workspace_premium_outlined, 'Free tier'),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (fraction >= 0.8)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    fraction >= 1
+                        ? 'Storage is over the 10 GB free tier. Delete old releases or upgrade to avoid charges.'
+                        : 'You are close to the 10 GB free tier. Delete old releases or upgrade before it fills up.',
+                    style: TextStyle(fontSize: 12, color: fraction >= 1 ? Colors.red : Colors.orange[800]),
                   ),
                 ),
+              const SizedBox(height: 10),
+              Text(
+                'Free tier: 10 GB-month storage. Downloads/egress are free. '
+                'Class A/B operations are not shown here — this card tracks storage only. '
+                'Cloudflare metrics can lag a few minutes.',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+              ),
+            ],
+            if (d == null && (_r2Error ?? '').isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to Supabase secrets, then refresh.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pill(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.grey.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 13, color: Colors.grey[600]),
+        const SizedBox(width: 4),
+        Text(text, style: TextStyle(fontSize: 11, color: Colors.grey[700])),
+      ]),
     );
   }
 }
@@ -1879,7 +2019,7 @@ class _DocsAndLegalPageState extends State<_DocsAndLegalPage> {
     final c = await ns.getAppConfig();
     if (!mounted) return;
     setState(() {
-      _about.text = c['about_text'] ?? 'NotesCache v1.0.0';
+      _about.text = c['about_text'] ?? 'Foluma v1.0.6';
       _terms.text = c['terms_and_conditions'] ?? '';
       _privacy.text = c['privacy_policy'] ?? '';
       _loading = false;
@@ -1908,7 +2048,7 @@ class _DocsAndLegalPageState extends State<_DocsAndLegalPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                _multiline('About Text', _about, 'NotesCache — Your campus study companion'),
+                _multiline('About Text', _about, 'Foluma — Open anything.'),
                 const SizedBox(height: 12),
                 _multiline('Terms & Conditions', _terms, 'Enter your terms of service...'),
                 const SizedBox(height: 12),
@@ -1952,7 +2092,7 @@ Widget _kpi(String label, String value, IconData icon, Color color) {
   );
 }
 
-Widget _usageBar(String label, String valueText, double fraction, Color color) {
+Widget _usageBar(String label, String valueText, double fraction, Color color, {String? caption}) {
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -1971,7 +2111,7 @@ Widget _usageBar(String label, String valueText, double fraction, Color color) {
         ),
       ),
       const SizedBox(height: 2),
-      Text('${(fraction * 100).toStringAsFixed(1)}% of monthly credits', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+      Text(caption ?? '${(fraction * 100).toStringAsFixed(1)}% of monthly credits', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
     ],
   );
 }

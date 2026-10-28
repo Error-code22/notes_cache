@@ -632,7 +632,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
           _settingsTile(Icons.bug_report_outlined, 'Report a Bug', 'Let us know if something is broken', () {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const FeedbackPage()));
           }),
-          _settingsTile(Icons.help_outline, 'Help Center', 'Get help using NotesCache', () {
+          _settingsTile(Icons.help_outline, 'Help Center', 'Get help using Foluma', () {
             final url = _appConfig['help_center_url'];
             if (url != null && url.isNotEmpty) _launchUrl(url);
           }),
@@ -662,7 +662,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
 
           // About
           _sectionHeader('About'),
-          _settingsTile(Icons.info_outline, 'About NotesCache', _appConfig['about_text'] ?? 'NotesCache v1.0.0', () => _showInfoDialog(context, 'About', _appConfig['about_text'] ?? 'NotesCache v1.0.0')),
+          _settingsTile(Icons.info_outline, 'About Foluma', _appConfig['about_text'] ?? 'Foluma v1.0.6', () => _showInfoDialog(context, 'About Foluma', _appConfig['about_text'] ?? 'Foluma v1.0.6\n\nFoluma comes from folio + luma: a place for your pages, made bright and easy to read. Open anything — notes, PDFs, EPUB books, Office files and local documents — even offline.' )),
           _settingsTile(Icons.description_outlined, 'Terms & Conditions', 'View our terms of service', () => _showInfoDialog(context, 'Terms & Conditions', _appConfig['terms_and_conditions'] ?? 'No terms available.')),
           _settingsTile(Icons.privacy_tip_outlined, 'Privacy Policy', 'How we handle your data', () => _showInfoDialog(context, 'Privacy Policy', _appConfig['privacy_policy'] ?? 'No policy available.')),
           const Divider(height: 32),

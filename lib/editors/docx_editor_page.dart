@@ -57,7 +57,7 @@ class _DocxEditorPageState extends State<DocxEditorPage> {
       final paragraphs = DocxService.textToParagraphs(_controller.text);
       final bytes = DocxService.buildDocx(paragraphs);
       await widget.file.writeAsBytes(bytes);
-      _dirty = false;
+      if (mounted) setState(() => _dirty = false);
       await widget.onSave?.call(widget.file);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -145,7 +145,9 @@ class _DocxEditorPageState extends State<DocxEditorPage> {
                                 border: InputBorder.none,
                                 contentPadding: EdgeInsets.all(8),
                               ),
-                              onChanged: (_) => _dirty = true,
+                              onChanged: (_) {
+                                if (!_dirty) setState(() => _dirty = true);
+                              },
                             ),
                           ),
                         ),

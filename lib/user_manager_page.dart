@@ -138,7 +138,7 @@ class _UserManagerPageState extends State<UserManagerPage> {
     final result = _resetLink;
     if (result == null) return;
     final message =
-        'Hi, here is your NotesCache password reset link for ${result.email}. '
+        'Hi, here is your Foluma password reset link for ${result.email}. '
         'It expires in 1 hour and can be used once.\n\n'
         '${result.link}\n\n'
         'If you did not request this, ignore this message.';

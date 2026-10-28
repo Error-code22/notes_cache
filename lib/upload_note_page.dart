@@ -57,7 +57,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
     try {
       FilePickerResult? result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'pub', 'jpg', 'jpeg', 'png', 'txt', 'md', 'csv', 'xls', 'xlsx', 'mp4', 'mp3', 'wav', 'mov', 'mkv', 'm4a', 'py', 'java', 'cpp', 'dart', 'html', 'json'],
+        allowedExtensions: ['pdf', 'epub', 'doc', 'docx', 'ppt', 'pptx', 'pub', 'jpg', 'jpeg', 'png', 'txt', 'md', 'csv', 'xls', 'xlsx', 'mp4', 'mp3', 'wav', 'mov', 'mkv', 'm4a', 'py', 'java', 'cpp', 'dart', 'html', 'json'],
         allowMultiple: true,
       );
 

@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'editors/office_docx.dart';
 import 'editors/office_pptx.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -35,14 +36,20 @@ class ThemeProvider extends ChangeNotifier {
   String get fontFamily => _fontFamily;
   double get textScale => _textScale;
 
-  ThemeProvider() { _loadSettings(); }
-  void setUserId(String? id) { _currentUserId = id; }
+  ThemeProvider() {
+    _loadSettings();
+  }
+  void setUserId(String? id) {
+    _currentUserId = id;
+  }
 
   void setUserTheme(UserProfile user) {
     // Never override a theme the user changed manually this session
     // (profile loads asynchronously and used to clobber the first click).
     if (_userCustomized) return;
-    _themeMode = user.themeMode == 'light' ? ThemeMode.light : (user.themeMode == 'dark' ? ThemeMode.dark : ThemeMode.system);
+    _themeMode = user.themeMode == 'light'
+        ? ThemeMode.light
+        : (user.themeMode == 'dark' ? ThemeMode.dark : ThemeMode.system);
     _seedColor = Color(user.themeColor);
     _fontFamily = user.themeFont;
     notifyListeners();
@@ -51,8 +58,10 @@ class ThemeProvider extends ChangeNotifier {
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final mode = prefs.getString(_themeKey);
-    if (mode == 'light') _themeMode = ThemeMode.light;
-    else if (mode == 'dark') _themeMode = ThemeMode.dark;
+    if (mode == 'light')
+      _themeMode = ThemeMode.light;
+    else if (mode == 'dark')
+      _themeMode = ThemeMode.dark;
     final colorVal = prefs.getInt(_colorKey);
     if (colorVal != null) _seedColor = Color(colorVal);
     _fontFamily = prefs.getString(_fontKey) ?? 'Inter';
@@ -62,37 +71,48 @@ class ThemeProvider extends ChangeNotifier {
 
   Future<void> setThemeMode(ThemeMode m) async {
     _userCustomized = true;
-    _themeMode = m; notifyListeners();
+    _themeMode = m;
+    notifyListeners();
     (await SharedPreferences.getInstance()).setString(_themeKey, m.name);
     _syncToSupabase();
   }
 
   Future<void> setSeedColor(Color c) async {
     _userCustomized = true;
-    _seedColor = c; notifyListeners();
+    _seedColor = c;
+    notifyListeners();
     (await SharedPreferences.getInstance()).setInt(_colorKey, c.value);
     _syncToSupabase();
   }
 
   Future<void> setFontFamily(String f) async {
     _userCustomized = true;
-    _fontFamily = f; notifyListeners();
+    _fontFamily = f;
+    notifyListeners();
     (await SharedPreferences.getInstance()).setString(_fontKey, f);
     _syncToSupabase();
   }
 
   Future<void> setTextScale(double s) async {
-    _textScale = s; notifyListeners();
+    _textScale = s;
+    notifyListeners();
     (await SharedPreferences.getInstance()).setDouble(_textScaleKey, s);
   }
 
   Future<void> _syncToSupabase() async {
     if (_currentUserId == null) return;
     try {
-      await Supabase.instance.client.from('profiles').update({
-        'theme_mode': _themeMode.name, 'theme_color': _seedColor.value, 'theme_font': _fontFamily,
-      }).eq('id', _currentUserId!);
-    } catch (e) { debugPrint('Theme sync error: $e'); }
+      await Supabase.instance.client
+          .from('profiles')
+          .update({
+            'theme_mode': _themeMode.name,
+            'theme_color': _seedColor.value,
+            'theme_font': _fontFamily,
+          })
+          .eq('id', _currentUserId!);
+    } catch (e) {
+      debugPrint('Theme sync error: $e');
+    }
   }
 
   ThemeData getThemeData(Brightness b) {
@@ -162,7 +182,9 @@ class AuthService extends ChangeNotifier {
       }
     });
   }
-  void updateThemeProvider(ThemeProvider p) { _themeProvider = p; }
+  void updateThemeProvider(ThemeProvider p) {
+    _themeProvider = p;
+  }
 
   Future<void> _recoverSession() async {
     final session = _supabase.auth.currentSession;
@@ -183,66 +205,96 @@ class AuthService extends ChangeNotifier {
   Future<void> signIn(String e, String p) async {
     _setLoading(true);
     try {
-      final res = await _supabase.auth.signInWithPassword(email: e, password: p);
+      final res = await _supabase.auth.signInWithPassword(
+        email: e,
+        password: p,
+      );
       if (res.user != null) await _fetchUserProfile(res.user!);
-    } finally { _setLoading(false); }
+    } finally {
+      _setLoading(false);
+    }
   }
 
   Future<void> signUp(String e, String p, String n) async {
     _setLoading(true);
     try {
-      final res = await _supabase.auth.signUp(email: e, password: p, data: {'full_name': n, 'year_level': 1, 'role': 'student'});
+      final res = await _supabase.auth.signUp(
+        email: e,
+        password: p,
+        data: {'full_name': n, 'year_level': 1, 'role': 'student'},
+      );
       if (res.user != null) await _fetchUserProfile(res.user!);
-    } finally { _setLoading(false); }
+    } finally {
+      _setLoading(false);
+    }
   }
 
   Future<void> _fetchUserProfile(User user) async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Offline-first: show the last known profile immediately. The network
+    // refresh below still updates it when a connection is available.
+    final cachedData = prefs.getString('offline_profile_${user.id}');
+    final cachedEmail = prefs.getString('offline_email_${user.id}');
+    if (cachedData != null && cachedEmail != null) {
+      try {
+        _currentUser = UserProfile.fromMap(jsonDecode(cachedData), cachedEmail);
+        _applyCurrentUserTheme();
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Cached profile could not be read: $e');
+      }
+    }
+
     try {
       // Try fetching from Supabase (fast timeout — if offline, use cache immediately)
-      final data = await _supabase.from('profiles').select().eq('id', user.id).single()
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .single()
           .timeout(const Duration(seconds: 5));
       _currentUser = UserProfile.fromMap(data, user.email!);
-      
+
       // Save for offline use
       await prefs.setString('offline_profile_${user.id}', jsonEncode(data));
       await prefs.setString('offline_email_${user.id}', user.email!);
-      
-      if (_themeProvider != null) {
-        _themeProvider!.setUserId(_currentUser!.id);
-        _themeProvider!.setUserTheme(_currentUser!);
-      }
+
+      _applyCurrentUserTheme();
       await _checkAndAutoUpdateYear();
       notifyListeners();
-    } catch (e) { 
+    } catch (e) {
       debugPrint('Online profile fetch failed, trying offline cache...');
-      final cachedData = prefs.getString('offline_profile_${user.id}');
-      final cachedEmail = prefs.getString('offline_email_${user.id}');
-      if (cachedData != null && cachedEmail != null) {
-        _currentUser = UserProfile.fromMap(jsonDecode(cachedData), cachedEmail);
-        // Offline path must still apply the saved theme — otherwise a flaky
-        // profile fetch silently reverts dark mode to the device default.
-        if (_themeProvider != null) {
-          _themeProvider!.setUserId(_currentUser!.id);
-          _themeProvider!.setUserTheme(_currentUser!);
-        }
-        notifyListeners();
-      } else {
+      if (_currentUser == null) {
         // No cache, no network — go guest so the dashboard loads quickly
         _enterGuestMode();
       }
     }
   }
 
+  void _applyCurrentUserTheme() {
+    final user = _currentUser;
+    if (user == null || _themeProvider == null) return;
+    _themeProvider!.setUserId(user.id);
+    _themeProvider!.setUserTheme(user);
+  }
+
   Future<bool> isOnline() async {
     try {
-      final result = await InternetAddress.lookup('google.com').timeout(const Duration(seconds: 3));
+      final result = await InternetAddress.lookup(
+        'google.com',
+      ).timeout(const Duration(seconds: 3));
       return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-    } catch (_) { return false; }
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _checkAndAutoUpdateYear() async {
-    if (_currentUser == null || !_currentUser!.hasRole(UserRole.student) || _currentUser!.yearLevel == null) return;
+    if (_currentUser == null ||
+        !_currentUser!.hasRole(UserRole.student) ||
+        _currentUser!.yearLevel == null)
+      return;
     if (_currentUser!.yearLevel! >= 4) return;
     try {
       // The server owns the academic-year rule. The profile guard rejects any
@@ -250,7 +302,11 @@ class AuthService extends ChangeNotifier {
       final result = await _supabase.rpc('advance_my_year');
       final newYear = result is num ? result.toInt() : null;
       if (newYear != null) {
-        final data = await _supabase.from('profiles').select().eq('id', _currentUser!.id).single();
+        final data = await _supabase
+            .from('profiles')
+            .select()
+            .eq('id', _currentUser!.id)
+            .single();
         _currentUser = UserProfile.fromMap(data, _currentUser!.email);
         if (onYearAutoUpdated != null) onYearAutoUpdated!(newYear);
       }
@@ -266,7 +322,9 @@ class AuthService extends ChangeNotifier {
       if (token != null) {
         await _supabase.from('device_tokens').delete().eq('token', token);
       }
-    } catch (_) { /* best effort */ }
+    } catch (_) {
+      /* best effort */
+    }
     await _supabase.auth.signOut();
     _enterGuestMode();
   }
@@ -344,20 +402,33 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<List<UserProfile>> getAllUsers() async {
-    if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin)) return [];
+    if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin))
+      return [];
     try {
       final List<dynamic> data = await _supabase.from('profiles').select();
-      return data.map((item) => UserProfile.fromMap(item, item['email'] ?? '')).toList();
-    } catch (e) { debugPrint('getAllUsers error: $e'); return []; }
+      return data
+          .map((item) => UserProfile.fromMap(item, item['email'] ?? ''))
+          .toList();
+    } catch (e) {
+      debugPrint('getAllUsers error: $e');
+      return [];
+    }
   }
 
   Future<bool> updateUserRoles(String uid, List<UserRole> roles) async {
-    if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin)) return false;
+    if (_currentUser == null || !_currentUser!.hasRole(UserRole.admin))
+      return false;
     try {
       final roleString = roles.map((r) => r.name).join(',');
-      await _supabase.from('profiles').update({'role': roleString}).eq('id', uid);
+      await _supabase
+          .from('profiles')
+          .update({'role': roleString})
+          .eq('id', uid);
       return true;
-    } catch (e) { debugPrint('updateUserRoles error: $e'); return false; }
+    } catch (e) {
+      debugPrint('updateUserRoles error: $e');
+      return false;
+    }
   }
 
   /// Admin-only: asks the server to generate a single-use recovery link.
@@ -378,7 +449,9 @@ class AuthService extends ChangeNotifier {
       );
       final raw = response.data;
       final data = raw is String ? jsonDecode(raw) : raw;
-      if (data is Map && data['link'] is String && (data['link'] as String).isNotEmpty) {
+      if (data is Map &&
+          data['link'] is String &&
+          (data['link'] as String).isNotEmpty) {
         return AdminResetLink(
           link: data['link'] as String,
           email: (data['email'] as String?) ?? email.trim(),
@@ -404,16 +477,24 @@ class AuthService extends ChangeNotifier {
 
   Future<void> ensureFriendCode() async {
     if (_currentUser == null || _currentUser!.friendCode != null) return;
-    
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; 
+
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final rnd = math.Random();
-    String gen(int len) => List.generate(len, (i) => chars[rnd.nextInt(chars.length)]).join();
-    
-    final code = '${gen(3)}-${gen(3)}'; 
-    
+    String gen(int len) =>
+        List.generate(len, (i) => chars[rnd.nextInt(chars.length)]).join();
+
+    final code = '${gen(3)}-${gen(3)}';
+
     try {
-      await _supabase.from('profiles').update({'friend_code': code}).eq('id', _currentUser!.id);
-      final data = await _supabase.from('profiles').select().eq('id', _currentUser!.id).single();
+      await _supabase
+          .from('profiles')
+          .update({'friend_code': code})
+          .eq('id', _currentUser!.id);
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', _currentUser!.id)
+          .single();
       _currentUser = UserProfile.fromMap(data, _currentUser!.email);
       notifyListeners();
     } catch (e) {
@@ -424,9 +505,19 @@ class AuthService extends ChangeNotifier {
   Future<void> updateProfileDetails({String? fullName, String? bio}) async {
     if (_currentUser == null) return;
     try {
-      final updates = {if (fullName != null) 'full_name': fullName, if (bio != null) 'bio': bio};
-      await _supabase.from('profiles').update(updates).eq('id', _currentUser!.id);
-      final data = await _supabase.from('profiles').select().eq('id', _currentUser!.id).single();
+      final updates = {
+        if (fullName != null) 'full_name': fullName,
+        if (bio != null) 'bio': bio,
+      };
+      await _supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', _currentUser!.id);
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', _currentUser!.id)
+          .single();
       _currentUser = UserProfile.fromMap(data, _currentUser!.email);
       notifyListeners();
     } catch (e) {
@@ -437,11 +528,20 @@ class AuthService extends ChangeNotifier {
   Future<void> updateProfilePublic(bool isPublic) async {
     if (_currentUser == null) return;
     try {
-      await _supabase.from('profiles').update({'is_profile_public': isPublic}).eq('id', _currentUser!.id);
-      final data = await _supabase.from('profiles').select().eq('id', _currentUser!.id).single();
+      await _supabase
+          .from('profiles')
+          .update({'is_profile_public': isPublic})
+          .eq('id', _currentUser!.id);
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', _currentUser!.id)
+          .single();
       _currentUser = UserProfile.fromMap(data, _currentUser!.email);
       notifyListeners();
-    } catch (e) { debugPrint('updateProfilePublic error: $e'); }
+    } catch (e) {
+      debugPrint('updateProfilePublic error: $e');
+    }
   }
 
   Future<bool> deleteAccount() async {
@@ -454,30 +554,43 @@ class AuthService extends ChangeNotifier {
         for (final e in ext) {
           await _supabase.storage.from('avatars').remove(['$uid/avatar.$e']);
         }
-      } catch (_) { /* Safe to ignore: avatar may not exist yet */ }
+      } catch (_) {
+        /* Safe to ignore: avatar may not exist yet */
+      }
 
       // Delete AI chat history
       try {
         await _supabase.from('ai_chat_history').delete().eq('user_id', uid);
-      } catch (_) { /* Table may not exist */ }
+      } catch (_) {
+        /* Table may not exist */
+      }
 
       // Delete friend relationships
       try {
         await _supabase.from('friends').delete().eq('user_id', uid);
         await _supabase.from('friends').delete().eq('friend_id', uid);
-      } catch (_) { /* Table may not exist */ }
+      } catch (_) {
+        /* Table may not exist */
+      }
 
       // Remove user from chat room memberships
       try {
-        final rooms = await _supabase.from('chat_rooms').select('id, member_ids');
+        final rooms = await _supabase
+            .from('chat_rooms')
+            .select('id, member_ids');
         for (final room in rooms) {
           final members = List<String>.from(room['member_ids'] ?? []);
           if (members.contains(uid)) {
             members.remove(uid);
-            await _supabase.from('chat_rooms').update({'member_ids': members}).eq('id', room['id']);
+            await _supabase
+                .from('chat_rooms')
+                .update({'member_ids': members})
+                .eq('id', room['id']);
           }
         }
-      } catch (_) { /* Best effort */ }
+      } catch (_) {
+        /* Best effort */
+      }
 
       // Delete user notes
       await _supabase.from('notes').delete().eq('user_id', uid);
@@ -538,21 +651,30 @@ class AuthService extends ChangeNotifier {
       // Delete old avatar if exists (ignore errors — file may not exist)
       try {
         await _supabase.storage.from('avatars').remove([storagePath]);
-      } catch (_) { /* Safe to ignore: upsert will overwrite anyway */ }
+      } catch (_) {
+        /* Safe to ignore: upsert will overwrite anyway */
+      }
 
       // Upload new avatar
-      await _supabase.storage.from('avatars').upload(
-        storagePath,
-        f,
-        fileOptions: const FileOptions(upsert: true),
-      );
+      await _supabase.storage
+          .from('avatars')
+          .upload(storagePath, f, fileOptions: const FileOptions(upsert: true));
 
       // Get public URL
-      final publicUrl = _supabase.storage.from('avatars').getPublicUrl(storagePath);
+      final publicUrl = _supabase.storage
+          .from('avatars')
+          .getPublicUrl(storagePath);
 
       // Update profile
-      await _supabase.from('profiles').update({'avatar_url': publicUrl}).eq('id', userId);
-      final data = await _supabase.from('profiles').select().eq('id', userId).single();
+      await _supabase
+          .from('profiles')
+          .update({'avatar_url': publicUrl})
+          .eq('id', userId);
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
       _currentUser = UserProfile.fromMap(data, _currentUser!.email);
       notifyListeners();
       return true;
@@ -567,8 +689,15 @@ class AuthService extends ChangeNotifier {
     if (_currentUser == null) return false;
     try {
       final userId = _currentUser!.id;
-      await _supabase.from('profiles').update({'avatar_url': url}).eq('id', userId);
-      final data = await _supabase.from('profiles').select().eq('id', userId).single();
+      await _supabase
+          .from('profiles')
+          .update({'avatar_url': url})
+          .eq('id', userId);
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
       _currentUser = UserProfile.fromMap(data, _currentUser!.email);
       notifyListeners();
       return true;
@@ -581,11 +710,25 @@ class AuthService extends ChangeNotifier {
   /// Check magic bytes to validate image file type
   bool _isValidImageMagic(List<int> bytes) {
     // JPEG: FF D8 FF
-    if (bytes.length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) return true;
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xFF &&
+        bytes[1] == 0xD8 &&
+        bytes[2] == 0xFF)
+      return true;
     // PNG: 89 50 4E 47
-    if (bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) return true;
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47)
+      return true;
     // WebP: RIFF....WEBP
-    if (bytes.length >= 4 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46) return true;
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46)
+      return true;
     return false;
   }
 
@@ -620,7 +763,10 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _setLoading(bool v) { _isLoading = v; notifyListeners(); }
+  void _setLoading(bool v) {
+    _isLoading = v;
+    notifyListeners();
+  }
 
   Future<bool> submitFeedback(String type, String content) async {
     if (_currentUser == null) return false;
@@ -633,12 +779,17 @@ class AuthService extends ChangeNotifier {
         'created_at': DateTime.now().toIso8601String(),
       });
       return true;
-    } catch (e) { debugPrint('submitFeedback error: $e'); return false; }
+    } catch (e) {
+      debugPrint('submitFeedback error: $e');
+      return false;
+    }
   }
 }
 
 class NoteService {
   final SupabaseClient _supabase = Supabase.instance.client;
+
+  static Future<String>? _appDirectoryFuture;
 
   // --- note file health checking ---
   static const String _healthCacheKey = 'note_file_health';
@@ -675,7 +826,8 @@ class NoteService {
         // healthy files are trusted for 12h to save requests.
         final cachedAt = (cached['at'] as num?)?.toInt() ?? 0;
         final isAlive = cached['alive'] == true;
-        final ttlMs = (isAlive ? _healthTtl : const Duration(minutes: 10)).inMilliseconds;
+        final ttlMs =
+            (isAlive ? _healthTtl : const Duration(minutes: 10)).inMilliseconds;
         if (now - cachedAt < ttlMs) {
           final wasKnown = _fileHealth[id] != null;
           _fileHealth[id] = isAlive;
@@ -696,7 +848,10 @@ class NoteService {
     // Check in batches of 5
     final before = Map<String, bool>.from(_fileHealth);
     for (var i = 0; i < toCheck.length; i += 5) {
-      final batch = toCheck.sublist(i, i + 5 > toCheck.length ? toCheck.length : i + 5);
+      final batch = toCheck.sublist(
+        i,
+        i + 5 > toCheck.length ? toCheck.length : i + 5,
+      );
       await Future.wait(batch.map(_checkFile));
     }
     for (final n in toCheck) {
@@ -707,7 +862,9 @@ class NoteService {
     }
 
     final toSave = <String, dynamic>{};
-    _fileHealth.forEach((id, alive) => toSave[id] = {'alive': alive, 'at': now});
+    _fileHealth.forEach(
+      (id, alive) => toSave[id] = {'alive': alive, 'at': now},
+    );
     await prefs.setString(_healthCacheKey, jsonEncode(toSave));
 
     final changed = _healthChanged;
@@ -724,7 +881,9 @@ class NoteService {
       final url = raw.contains('://')
           ? raw
           : 'https://drive.google.com/uc?export=download&id=$raw';
-      final resp = await http.head(Uri.parse(url)).timeout(const Duration(seconds: 8));
+      final resp = await http
+          .head(Uri.parse(url))
+          .timeout(const Duration(seconds: 8));
       _fileHealth[id] = resp.statusCode == 200;
     } catch (_) {
       _fileHealth[id] = false;
@@ -733,14 +892,23 @@ class NoteService {
     }
   }
 
-  Future<List<Note>> getNotesForUser(UserProfile u, {int? semester, String? searchQuery, bool myNotesOnly = false}) async {
+  Future<List<Note>> getNotesForUser(
+    UserProfile u, {
+    int? semester,
+    String? searchQuery,
+    bool myNotesOnly = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final cacheKey = 'notes_cache_${u.id}_${semester ?? "all"}';
 
     try {
       var q = _supabase.from('notes').select();
       // Only restrict by yearLevel if they are strictly a student
-      final isStrictlyStudent = u.hasRole(UserRole.student) && !u.hasRole(UserRole.admin) && !u.hasRole(UserRole.moderator) && !u.hasRole(UserRole.lecturer);
+      final isStrictlyStudent =
+          u.hasRole(UserRole.student) &&
+          !u.hasRole(UserRole.admin) &&
+          !u.hasRole(UserRole.moderator) &&
+          !u.hasRole(UserRole.lecturer);
 
       if (myNotesOnly) {
         q = q.eq('user_id', u.id);
@@ -749,14 +917,17 @@ class NoteService {
       }
       if (semester != null) q = q.eq('semester', semester);
       if (searchQuery != null) q = q.ilike('title', '%$searchQuery%');
-      
-      final List<dynamic> data = await q.order('created_at', ascending: false).timeout(const Duration(seconds: 5));
-      
+
+      final List<dynamic> data = await q
+          .order('created_at', ascending: false)
+          .timeout(const Duration(seconds: 5));
+
       // Save to cache
-      if (searchQuery == null) { // Only cache full lists
+      if (searchQuery == null) {
+        // Only cache full lists
         await prefs.setString(cacheKey, jsonEncode(data));
       }
-      
+
       return data.map((item) => Note.fromMap(item)).toList();
     } catch (e, st) {
       debugPrint('[NotesDebug] ERROR: $e\n$st');
@@ -780,21 +951,32 @@ class NoteService {
     return [];
   }
 
-  Future<List<UserActivity>> getUserActivity(String uid, {required Duration period}) async {
+  Future<List<UserActivity>> getUserActivity(
+    String uid, {
+    required Duration period,
+  }) async {
     final cutoff = DateTime.now().subtract(period).toIso8601String();
     try {
       // Filter by uid to ensure privacy in profile history
-      final List<dynamic> data = await _supabase.from('notes')
+      final List<dynamic> data = await _supabase
+          .from('notes')
           .select()
           .eq('user_id', uid)
           .gt('created_at', cutoff)
           .order('created_at', ascending: false);
-          
-      return data.map((item) => UserActivity(
-        id: item['id'].toString(), title: 'Note Uploaded: ${item['title']}',
-        description: 'You added this to the Year ${item['target_year']} library',
-        timestamp: DateTime.parse(item['created_at']), type: 'upload',
-      )).toList();
+
+      return data
+          .map(
+            (item) => UserActivity(
+              id: item['id'].toString(),
+              title: 'Note Uploaded: ${item['title']}',
+              description:
+                  'You added this to the Year ${item['target_year']} library',
+              timestamp: DateTime.parse(item['created_at']),
+              type: 'upload',
+            ),
+          )
+          .toList();
     } catch (e) {
       // Schema may not have user_id column yet — return empty list gracefully
       debugPrint('getUserActivity error (user_id column may not exist): $e');
@@ -809,29 +991,60 @@ class NoteService {
     required int fileSize,
   }) async {
     try {
-      final sizeMatches = await _supabase.from('notes').select().eq('target_year', year).eq('semester', semester).eq('file_size', fileSize);
-      if (sizeMatches.isNotEmpty) return {'reason': 'exact_size', 'note': sizeMatches.first};
+      final sizeMatches = await _supabase
+          .from('notes')
+          .select()
+          .eq('target_year', year)
+          .eq('semester', semester)
+          .eq('file_size', fileSize);
+      if (sizeMatches.isNotEmpty)
+        return {'reason': 'exact_size', 'note': sizeMatches.first};
 
-      final List<dynamic> allNotes = await _supabase.from('notes').select('title, id').eq('target_year', year).eq('semester', semester);
-      final normalizedNew = title.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+      final List<dynamic> allNotes = await _supabase
+          .from('notes')
+          .select('title, id')
+          .eq('target_year', year)
+          .eq('semester', semester);
+      final normalizedNew = title.toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9]'),
+        '',
+      );
 
       for (var existing in allNotes) {
         final existingTitle = (existing['title'] as String).toLowerCase();
-        final normalizedExisting = existingTitle.replaceAll(RegExp(r'[^a-z0-9]'), '');
-        if (normalizedNew == normalizedExisting || (normalizedNew.length > 5 && normalizedExisting.contains(normalizedNew)) || (normalizedExisting.length > 5 && normalizedNew.contains(normalizedExisting))) {
+        final normalizedExisting = existingTitle.replaceAll(
+          RegExp(r'[^a-z0-9]'),
+          '',
+        );
+        if (normalizedNew == normalizedExisting ||
+            (normalizedNew.length > 5 &&
+                normalizedExisting.contains(normalizedNew)) ||
+            (normalizedExisting.length > 5 &&
+                normalizedNew.contains(normalizedExisting))) {
           return {'reason': 'similar_title', 'note': existing};
         }
       }
       return null;
-    } catch (e) { debugPrint('findDuplicateNote error: $e'); return null; }
+    } catch (e) {
+      debugPrint('findDuplicateNote error: $e');
+      return null;
+    }
   }
 
-  Future<bool> deleteNote(String id, {String? userId, bool isAdmin = false}) async {
+  Future<bool> deleteNote(
+    String id, {
+    String? userId,
+    bool isAdmin = false,
+  }) async {
     try {
       if (isAdmin) {
         await _supabase.from('notes').delete().eq('id', id);
       } else if (userId != null) {
-        await _supabase.from('notes').delete().eq('id', id).eq('user_id', userId);
+        await _supabase
+            .from('notes')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', userId);
       } else {
         return false;
       }
@@ -842,7 +1055,21 @@ class NoteService {
     }
   }
 
-  Future<bool> saveNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, String? summary, int? fileSize, String? userId, int? telegramMsgId, String? telegramFileId, String? pdfUrl}) async {
+  Future<bool> saveNote({
+    required String title,
+    required String lecturerName,
+    required int targetYear,
+    required int semester,
+    String? gDriveId,
+    String? content,
+    String? category,
+    String? summary,
+    int? fileSize,
+    String? userId,
+    int? telegramMsgId,
+    String? telegramFileId,
+    String? pdfUrl,
+  }) async {
     try {
       await _supabase.from('notes').insert({
         'title': title,
@@ -861,13 +1088,19 @@ class NoteService {
         if (pdfUrl != null) 'pdf_url': pdfUrl,
       });
       return true;
-    } catch (e) { debugPrint('saveNote error: $e'); return false; }
+    } catch (e) {
+      debugPrint('saveNote error: $e');
+      return false;
+    }
   }
 
   /// Updates a note's stored file URL after an edit re-upload.
   Future<bool> updateNoteFileUrl(String noteId, String gDriveId) async {
     try {
-      await _supabase.from('notes').update({'gdrive_id': gDriveId}).eq('id', noteId);
+      await _supabase
+          .from('notes')
+          .update({'gdrive_id': gDriveId})
+          .eq('id', noteId);
       return true;
     } catch (e) {
       debugPrint('updateNoteFileUrl error: $e');
@@ -878,7 +1111,10 @@ class NoteService {
   /// Updates a note's AI-generated summary.
   Future<bool> updateNoteSummary(String noteId, String summary) async {
     try {
-      await _supabase.from('notes').update({'summary': summary}).eq('id', noteId);
+      await _supabase
+          .from('notes')
+          .update({'summary': summary})
+          .eq('id', noteId);
       return true;
     } catch (e) {
       debugPrint('updateNoteSummary error: $e');
@@ -889,7 +1125,10 @@ class NoteService {
   /// Updates a note's pdf_url after client-side conversion.
   Future<bool> updateNotePdfUrl(String noteId, String pdfUrl) async {
     try {
-      await _supabase.from('notes').update({'pdf_url': pdfUrl}).eq('id', noteId);
+      await _supabase
+          .from('notes')
+          .update({'pdf_url': pdfUrl})
+          .eq('id', noteId);
       return true;
     } catch (e) {
       debugPrint('updateNotePdfUrl error: $e');
@@ -953,7 +1192,9 @@ class NoteService {
   String localFileNameFor(Note note) {
     var ext = '';
     final lowerTitle = note.title.toLowerCase();
-    final titleMatch = RegExp(r'\.(pdf|docx|doc|pptx|ppt|txt|md|csv|xlsx|xls|jpg|jpeg|png|mp4|mp3|wav|mov|mkv|m4a)$').firstMatch(lowerTitle);
+    final titleMatch = RegExp(
+      r'\.(pdf|docx|doc|pptx|ppt|txt|md|csv|xlsx|xls|jpg|jpeg|png|mp4|mp3|wav|mov|mkv|m4a)$',
+    ).firstMatch(lowerTitle);
     if (titleMatch != null) {
       ext = '.${titleMatch.group(1)}';
     } else if (note.gDriveId != null) {
@@ -970,7 +1211,7 @@ class NoteService {
   Future<bool> isAvailableOffline(Note note) async {
     try {
       final appDir = await getAppDirectory();
-      return File('$appDir\\${localFileNameFor(note)}').existsSync();
+      return File(p.join(appDir, localFileNameFor(note))).existsSync();
     } catch (_) {
       return false;
     }
@@ -988,34 +1229,45 @@ class NoteService {
     final toDownload = <Note>[];
 
     for (final n in notes) {
-      final path = '$appDir\\${localFileNameFor(n)}';
+      final path = p.join(appDir, localFileNameFor(n));
       if (!File(path).existsSync()) toDownload.add(n);
     }
 
     final total = toDownload.length;
     for (var i = 0; i < toDownload.length; i += 5) {
-      final batch = toDownload.sublist(i, i + 5 > toDownload.length ? toDownload.length : i + 5);
-      await Future.wait(batch.map((n) async {
-        try {
-          final raw = n.gDriveId?.trim() ?? '';
-          if (raw.isEmpty) {
+      final batch = toDownload.sublist(
+        i,
+        i + 5 > toDownload.length ? toDownload.length : i + 5,
+      );
+      await Future.wait(
+        batch.map((n) async {
+          try {
+            final raw = n.gDriveId?.trim() ?? '';
+            if (raw.isEmpty) {
+              failed++;
+              return;
+            }
+            final url = raw.contains('://')
+                ? raw
+                : 'https://drive.google.com/uc?export=download&id=$raw';
+            final response = await http
+                .get(Uri.parse(url))
+                .timeout(const Duration(seconds: 60));
+            if (response.statusCode == 200) {
+              await File(
+                p.join(appDir, localFileNameFor(n)),
+              ).writeAsBytes(response.bodyBytes);
+              ok++;
+            } else {
+              failed++;
+            }
+          } catch (_) {
             failed++;
-            return;
+          } finally {
+            onProgress?.call(i + batch.length, total);
           }
-          final url = raw.contains('://') ? raw : 'https://drive.google.com/uc?export=download&id=$raw';
-          final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
-          if (response.statusCode == 200) {
-            await File('$appDir\\${localFileNameFor(n)}').writeAsBytes(response.bodyBytes);
-            ok++;
-          } else {
-            failed++;
-          }
-        } catch (_) {
-          failed++;
-        } finally {
-          onProgress?.call(i + batch.length, total);
-        }
-      }));
+        }),
+      );
     }
     return (ok: ok, failed: failed);
   }
@@ -1023,7 +1275,10 @@ class NoteService {
   /// Logs a note download for the admin usage charts. Best-effort.
   Future<void> logDownload(String noteId, int fileSize) async {
     try {
-      await _supabase.rpc('log_download', params: {'p_note_id': noteId, 'p_file_size': fileSize});
+      await _supabase.rpc(
+        'log_download',
+        params: {'p_note_id': noteId, 'p_file_size': fileSize},
+      );
     } catch (e) {
       debugPrint('logDownload error: $e');
     }
@@ -1032,8 +1287,13 @@ class NoteService {
   /// Daily download/bandwidth buckets for the admin charts.
   Future<List<Map<String, dynamic>>> getDownloadStats({int days = 14}) async {
     try {
-      final data = await _supabase.rpc('get_download_stats', params: {'p_days': days});
-      return (data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final data = await _supabase.rpc(
+        'get_download_stats',
+        params: {'p_days': days},
+      );
+      return (data as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
     } catch (e) {
       debugPrint('getDownloadStats error: $e');
       return [];
@@ -1043,8 +1303,13 @@ class NoteService {
   /// Daily upload/storage-growth buckets from the notes table.
   Future<List<Map<String, dynamic>>> getStorageGrowth({int days = 14}) async {
     try {
-      final data = await _supabase.rpc('get_storage_growth', params: {'p_days': days});
-      return (data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final data = await _supabase.rpc(
+        'get_storage_growth',
+        params: {'p_days': days},
+      );
+      return (data as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
     } catch (e) {
       debugPrint('getStorageGrowth error: $e');
       return [];
@@ -1076,14 +1341,18 @@ class NoteService {
           text = await file.readAsString();
         }
       } else if (ext == 'docx') {
-        text = (await DocxService.readParagraphs(file)).map((p) => p.map((r) => r.text).join()).join('\n');
+        text = (await DocxService.readParagraphs(
+          file,
+        )).map((p) => p.map((r) => r.text).join()).join('\n');
       } else if (ext == 'pptx' || ext == 'ppt') {
         text = await PptxService.toMarkdown(file);
       } else {
         text = await file.readAsString();
       }
       final trimmed = text.trim();
-      return trimmed.length > maxChars ? trimmed.substring(0, maxChars) : trimmed;
+      return trimmed.length > maxChars
+          ? trimmed.substring(0, maxChars)
+          : trimmed;
     } catch (e) {
       debugPrint('extractNoteText error: $e');
       return '';
@@ -1121,11 +1390,13 @@ class NoteService {
       } else if (ext == 'txt' || ext == 'md') {
         final text = (await file.readAsString()).trim();
         if (text.length >= 40) {
-          await _insertChunks([{
-            'source': sourceName,
-            'page': 1,
-            'preview': text.length > 4000 ? text.substring(0, 4000) : text,
-          }]);
+          await _insertChunks([
+            {
+              'source': sourceName,
+              'page': 1,
+              'preview': text.length > 4000 ? text.substring(0, 4000) : text,
+            },
+          ]);
           debugPrint('AI indexing complete for $sourceName');
         }
       }
@@ -1149,7 +1420,7 @@ class NoteService {
           .select('id, title, gdrive_id, category')
           .timeout(const Duration(seconds: 30));
       final appDirPath = await getAppDirectory();
-      final tmp = Directory('$appDirPath\\ai_reindex');
+      final tmp = Directory(p.join(appDirPath, 'ai_reindex'));
       if (!await tmp.exists()) await tmp.create(recursive: true);
 
       for (var item in data) {
@@ -1162,7 +1433,8 @@ class NoteService {
         final titleMatch = RegExp(r'\.(pdf|txt|md)$').firstMatch(lowerTitle);
         if (titleMatch != null) {
           ext = '.${titleMatch.group(1)}';
-        } else if (category.contains('pdf') || url.toLowerCase().contains('.pdf')) {
+        } else if (category.contains('pdf') ||
+            url.toLowerCase().contains('.pdf')) {
           ext = '.pdf';
         } else if (url.toLowerCase().contains('.txt')) {
           ext = '.txt';
@@ -1188,9 +1460,11 @@ class NoteService {
         try {
           final file = File('${tmp.path}\\note_${item['id']}$ext');
           if (!await file.exists()) {
-            final response = await http.get(Uri.parse(url))
+            final response = await http
+                .get(Uri.parse(url))
                 .timeout(const Duration(seconds: 60));
-            if (response.statusCode != 200) throw Exception('download failed (HTTP ${response.statusCode})');
+            if (response.statusCode != 200)
+              throw Exception('download failed (HTTP ${response.statusCode})');
             await file.writeAsBytes(response.bodyBytes);
           }
           await indexForAi(file, title);
@@ -1228,7 +1502,17 @@ class NoteService {
   /// Submits a donation for admin review — it is NOT public until approved.
   /// Writes both `gdrive_id` (what Note.fromMap reads) and `file_url`
   /// (legacy column) so the file opens either way.
-  Future<bool> saveDonatedNote({required String title, required String lecturerName, required int targetYear, required int semester, String? gDriveId, String? content, String? category, int? fileSize, String? userId}) async {
+  Future<bool> saveDonatedNote({
+    required String title,
+    required String lecturerName,
+    required int targetYear,
+    required int semester,
+    String? gDriveId,
+    String? content,
+    String? category,
+    int? fileSize,
+    String? userId,
+  }) async {
     try {
       await _supabase.from('donated_notes').insert({
         'title': title,
@@ -1245,7 +1529,10 @@ class NoteService {
         if (userId != null) 'user_id': userId,
       });
       return true;
-    } catch (e) { debugPrint('saveDonatedNote error: $e'); return false; }
+    } catch (e) {
+      debugPrint('saveDonatedNote error: $e');
+      return false;
+    }
   }
 
   /// Public browse list — only admin-approved donations are visible.
@@ -1275,17 +1562,29 @@ class NoteService {
           .order('created_at', ascending: false);
       return data.map((item) => DonationSubmission.fromMap(item)).toList();
     } catch (e) {
-      debugPrint('getMyDonations error: $e'); return [];
+      debugPrint('getMyDonations error: $e');
+      return [];
     }
   }
 
   /// Admin review queue — non-admins get [] (RPC returns an empty set).
-  Future<List<DonationSubmission>> getDonationQueue({String status = 'pending'}) async {
+  Future<List<DonationSubmission>> getDonationQueue({
+    String status = 'pending',
+  }) async {
     try {
-      final data = await _supabase.rpc('list_donation_queue', params: {'p_status': status});
-      return (data as List).map((item) => DonationSubmission.fromMap(Map<String, dynamic>.from(item))).toList();
+      final data = await _supabase.rpc(
+        'list_donation_queue',
+        params: {'p_status': status},
+      );
+      return (data as List)
+          .map(
+            (item) =>
+                DonationSubmission.fromMap(Map<String, dynamic>.from(item)),
+          )
+          .toList();
     } catch (e) {
-      debugPrint('getDonationQueue error: $e'); return [];
+      debugPrint('getDonationQueue error: $e');
+      return [];
     }
   }
 
@@ -1294,15 +1593,24 @@ class NoteService {
     try {
       await _supabase.rpc('approve_donation', params: {'p_id': id});
       return true;
-    } catch (e) { debugPrint('approveDonation error: $e'); return false; }
+    } catch (e) {
+      debugPrint('approveDonation error: $e');
+      return false;
+    }
   }
 
   /// Admin: decline a donation (never published).
   Future<bool> rejectDonation(int id, {String? note}) async {
     try {
-      await _supabase.rpc('reject_donation', params: {'p_id': id, 'p_note': note});
+      await _supabase.rpc(
+        'reject_donation',
+        params: {'p_id': id, 'p_note': note},
+      );
       return true;
-    } catch (e) { debugPrint('rejectDonation error: $e'); return false; }
+    } catch (e) {
+      debugPrint('rejectDonation error: $e');
+      return false;
+    }
   }
 
   /// Staff review queue for the shared library. RLS returns every status to
@@ -1326,7 +1634,8 @@ class NoteService {
   /// Staff: move a note between pending / approved / rejected.
   /// Returns false when RLS refused the write (no row came back).
   Future<bool> setNoteStatus(String id, String status) async {
-    if (!const {'pending', 'approved', 'rejected'}.contains(status)) return false;
+    if (!const {'pending', 'approved', 'rejected'}.contains(status))
+      return false;
     try {
       final key = int.tryParse(id) ?? id;
       final rows = await _supabase
@@ -1350,7 +1659,9 @@ class NoteService {
           userId: (item['user_id'] as String?) ?? '',
           type: (item['type'] ?? 'bug').toString(),
           content: (item['content'] ?? '').toString(),
-          createdAt: DateTime.parse((item['created_at'] ?? DateTime.now().toIso8601String()).toString()),
+          createdAt: DateTime.parse(
+            (item['created_at'] ?? DateTime.now().toIso8601String()).toString(),
+          ),
           userName: item['full_name'] as String?,
         );
       }).toList();
@@ -1362,7 +1673,10 @@ class NoteService {
 
   Future<void> insertAppUpdate(String title, String content) async {
     try {
-      await _supabase.from('app_updates').insert({'title': title, 'content': content});
+      await _supabase.from('app_updates').insert({
+        'title': title,
+        'content': content,
+      });
     } catch (e) {
       debugPrint('Error inserting app update: $e');
     }
@@ -1449,7 +1763,10 @@ class NoteService {
 
   Future<bool> togglePricingPlanActive(String id, bool active) async {
     try {
-      await _supabase.from('pricing_plans').update({'active': active}).eq('id', id);
+      await _supabase
+          .from('pricing_plans')
+          .update({'active': active})
+          .eq('id', id);
       return true;
     } catch (e) {
       debugPrint('togglePricingPlan error: $e');
@@ -1504,19 +1821,247 @@ class NoteService {
     }
   }
 
-  Future<String> getAppDirectory() async {
+  Future<String> getAppDirectory() =>
+      _appDirectoryFuture ??= _initAppDirectory();
+
+  Future<String> _initAppDirectory() async {
     final d = await getApplicationDocumentsDirectory();
-    final dir = Directory('${d.path}\\NotesCache');
+    final dir = Directory(p.join(d.path, 'NotesCache'));
+
+    // Older Android builds built this path with a literal backslash. That put
+    // downloaded notes at the data root as files named
+    // "app_flutter\NotesCache\...", and Local Docs in sibling folders with
+    // backslashes in their names. Move everything to the real folder once.
+    final legacy = Directory('${d.path}\\NotesCache');
+    if (legacy.path != dir.path) {
+      try {
+        if (await legacy.exists()) {
+          if (!await dir.exists()) {
+            await legacy.rename(dir.path);
+          } else {
+            await _copyDirectoryContents(legacy, dir);
+            await legacy.delete(recursive: true);
+          }
+        }
+        if (!await dir.exists()) await dir.create(recursive: true);
+
+        await _migrateLegacyEntries(
+          Directory(p.dirname(d.path)),
+          '${p.basename(d.path)}\\NotesCache',
+          dir,
+        );
+        await _migrateLegacyRootFiles(
+          Directory(p.dirname(d.path)),
+          '${p.basename(d.path)}\\',
+          dir,
+        );
+        await _rewriteLocalDocPaths(
+          oldRoot: legacy.path,
+          newRoot: dir.path,
+          oldDocsRoot: '${d.path}\\NotesCache\\local_docs',
+          newDocsRoot: p.join(dir.path, 'local_docs'),
+        );
+      } catch (e) {
+        debugPrint('NotesCache folder migration failed: $e');
+      }
+    }
+
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir.path;
   }
 
+  Future<void> _migrateLegacyEntries(
+    Directory parent,
+    String legacyName,
+    Directory newRoot,
+  ) async {
+    final prefix = '$legacyName\\';
+    final entries = await parent.list(followLinks: false).toList();
+    for (final entity in entries) {
+      final name = p.basename(entity.path);
+      if (!name.startsWith(prefix)) continue;
+      final rel = name.substring(prefix.length).replaceAll('\\', '/');
+      if (rel.isEmpty) continue;
+      final targetPath = p.join(newRoot.path, rel);
+
+      if (entity is Directory) {
+        final target = Directory(targetPath);
+        await target.parent.create(recursive: true);
+        if (await target.exists()) {
+          await _copyDirectoryContents(entity, target);
+          await entity.delete(recursive: true);
+        } else {
+          try {
+            await entity.rename(target.path);
+          } catch (_) {
+            await _copyDirectoryContents(entity, target);
+            await entity.delete(recursive: true);
+          }
+        }
+      } else if (entity is File) {
+        final target = File(targetPath);
+        if (await target.exists()) continue; // keep the newer file
+        await target.parent.create(recursive: true);
+        try {
+          await entity.rename(target.path);
+        } catch (_) {
+          await entity.copy(target.path);
+          await entity.delete();
+        }
+      }
+    }
+  }
+
+  /// Moves files written as `app_flutter\name.ext` (a literal backslash in the
+  /// old Android path) into the real app directory. This covers downloads made
+  /// before [getAppDirectory] starting returning a POSIX path.
+  Future<void> _migrateLegacyRootFiles(
+    Directory parent,
+    String prefix,
+    Directory newRoot,
+  ) async {
+    final entries = await parent.list(followLinks: false).toList();
+    for (final entity in entries) {
+      final name = p.basename(entity.path);
+      if (!name.startsWith(prefix)) continue;
+      final rel = name.substring(prefix.length).replaceAll('\\', '/');
+      if (rel.isEmpty || rel == 'NotesCache' || rel.startsWith('NotesCache/')) {
+        continue;
+      }
+      final targetPath = p.join(newRoot.path, rel);
+      if (entity is Directory) {
+        final target = Directory(targetPath);
+        if (await target.exists()) continue;
+        await target.parent.create(recursive: true);
+        try {
+          await entity.rename(target.path);
+        } catch (_) {
+          await _copyDirectoryContents(entity, target);
+          await entity.delete(recursive: true);
+        }
+      } else if (entity is File) {
+        final target = File(targetPath);
+        if (await target.exists()) {
+          await entity.delete();
+          continue;
+        }
+        await target.parent.create(recursive: true);
+        try {
+          await entity.rename(target.path);
+        } catch (_) {
+          await entity.copy(target.path);
+          await entity.delete();
+        }
+      }
+    }
+  }
+
+  Future<void> _copyDirectoryContents(Directory from, Directory to) async {
+    await for (final entity in from.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      final rel = p
+          .relative(entity.path, from: from.path)
+          .replaceAll('\\', '/')
+          .replaceFirst(RegExp(r'^/+'), '');
+      if (rel.isEmpty) continue;
+      final target = File(p.join(to.path, rel));
+      if (await target.exists()) continue;
+      await target.parent.create(recursive: true);
+      await entity.copy(target.path);
+    }
+  }
+
+  Future<void> _rewriteLocalDocPaths({
+    required String oldRoot,
+    required String newRoot,
+    required String oldDocsRoot,
+    required String newDocsRoot,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('local_docs_index');
+    if (raw == null) return;
+
+    String? rewrite(String path) {
+      // Old Local Docs folder, whose whole name contained backslashes.
+      final oldDocsPrefix = '$oldDocsRoot\\';
+      if (path.startsWith(oldDocsPrefix)) {
+        return p.join(
+          newDocsRoot,
+          path.substring(oldDocsPrefix.length).replaceAll('\\', '/'),
+        );
+      }
+
+      // Recover paths already rewritten by an earlier build of this migration
+      // (old root + a literal "\local_docs\" suffix).
+      final movedDocsPrefix = '$newRoot\\local_docs\\';
+      if (path.startsWith(movedDocsPrefix)) {
+        return p.join(
+          newDocsRoot,
+          path.substring(movedDocsPrefix.length).replaceAll('\\', '/'),
+        );
+      }
+
+      final oldRootBackslash = '$oldRoot\\';
+      if (path.startsWith(oldRootBackslash)) {
+        return p.join(
+          newRoot,
+          path.substring(oldRootBackslash.length).replaceAll('\\', '/'),
+        );
+      }
+      final oldRootSlash = '$oldRoot/';
+      if (path.startsWith(oldRootSlash)) {
+        return p.join(newRoot, path.substring(oldRootSlash.length));
+      }
+      return null;
+    }
+
+    try {
+      final list = jsonDecode(raw);
+      if (list is! List) return;
+      var changed = false;
+      for (final item in list) {
+        if (item is Map && item['path'] is String) {
+          final path = item['path'] as String;
+          final updated = rewrite(path);
+          final finalPath = updated ?? path;
+          if (updated != null && updated != path) {
+            item['path'] = updated;
+            changed = true;
+          }
+          final cleanName = p.basename(finalPath);
+          if (item['name'] != cleanName) {
+            item['name'] = cleanName;
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        await prefs.setString('local_docs_index', jsonEncode(list));
+      }
+    } catch (e) {
+      debugPrint('Local docs index migration failed: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> getAdminStats() async {
     try {
-      final u = await _supabase.from('profiles').select('id').count(CountOption.exact);
-      final n = await _supabase.from('notes').select('id').count(CountOption.exact);
-      return {'totalUsers': u.count ?? 0, 'totalNotes': n.count ?? 0, 'storageUsed': '0.5 GB'};
-    } catch (e) { debugPrint('getAdminStats error: $e'); return {'totalUsers': 0, 'totalNotes': 0, 'storageUsed': 'N/A'}; }
+      final u = await _supabase
+          .from('profiles')
+          .select('id')
+          .count(CountOption.exact);
+      final n = await _supabase
+          .from('notes')
+          .select('id')
+          .count(CountOption.exact);
+      return {
+        'totalUsers': u.count ?? 0,
+        'totalNotes': n.count ?? 0,
+        'storageUsed': '0.5 GB',
+      };
+    } catch (e) {
+      debugPrint('getAdminStats error: $e');
+      return {'totalUsers': 0, 'totalNotes': 0, 'storageUsed': 'N/A'};
+    }
   }
 
   Map<String, String>? _configCache;
@@ -1539,15 +2084,19 @@ class NoteService {
       return _configCache!;
     } catch (e) {
       debugPrint('getAppConfig error, using defaults: $e');
-      return _configCache ?? {
-        'about_text': 'NotesCache v1.0.0\n\nYour campus study companion. Access lecture notes, chat with classmates, and get instant AI-powered help — all in one place.\n\nBuilt for students, by students.\n\n© 2026 NotesCache. All rights reserved.',
-        'terms_and_conditions': 'NOTESCACHE TERMS OF SERVICE\n\nLast Updated: June 2026\n\n1. ACCEPTANCE OF TERMS\nBy accessing or using NotesCache ("the App"), you agree to be bound by these Terms of Service. If you do not agree, do not use the App.\n\n2. ELIGIBILITY\nYou must be a currently enrolled student or staff member at a recognized educational institution. You must provide accurate registration information.\n\n3. ACCOUNT RESPONSIBILITY\nYou are responsible for maintaining the confidentiality of your account. You agree to notify us immediately of any unauthorized use. One account per person.\n\n4. USER CONTENT\n4.1 By uploading notes, documents, or other materials ("User Content"), you grant NotesCache a non-exclusive, royalty-free license to store, display, and distribute such content within the App for educational purposes.\n4.2 You retain ownership of your User Content.\n4.3 You must not upload content that infringes copyright, contains malware, or violates any law.\n4.4 NotesCache reserves the right to remove any User Content at its discretion.\n\n5. AI SERVICES\n5.1 The App provides AI-powered assistance ("Notesy") for educational purposes only.\n5.2 AI responses may contain errors. Always verify information with official course materials.\n5.3 AI usage is subject to daily limits based on your subscription tier.\n5.4 Do not attempt to manipulate, reverse-engineer, or abuse the AI system.\n\n6. PROHIBITED USES\n- Sharing account credentials\n- Scraping or automated data collection\n- Harassment, spam, or abusive behavior in chat rooms\n- Uploading copyrighted material without authorization\n- Attempting to bypass security measures or rate limits\n- Using the App for commercial purposes without a Campus License\n\n7. SUBSCRIPTION & PAYMENTS\n7.1 Free tier is available at no cost with limited features.\n7.2 Paid subscriptions (Student Pro, Campus License) are billed via M-Pesa.\n7.3 Subscriptions auto-renew unless cancelled before the billing date.\n7.4 Refunds are available within 7 days of purchase if less than 10 AI queries were made.\n\n8. TERMINATION\nWe may suspend or terminate your account for violations of these Terms. Upon termination, your right to use the App ceases immediately.\n\n9. LIMITATION OF LIABILITY\nNotesCache is provided "as is" without warranties. We are not liable for any damages arising from use of the App, including but not limited to academic consequences from relying on AI-generated content.\n\n10. GOVERNING LAW\nThese Terms are governed by the laws of the Republic of Kenya.\n\n11. CONTACT\nFor questions about these Terms, contact: ryanmuhia22@gmail.com',
-        'privacy_policy': 'NOTESCACHE PRIVACY POLICY\n\nLast Updated: June 2026\n\n1. INFORMATION WE COLLECT\n1.1 Account Information: Name, email address, university, year of study, and profile photo (optional).\n1.2 User Content: Notes, documents, and materials you upload to the platform.\n1.3 Chat Messages: Messages you send in chat rooms and direct messages.\n1.4 AI Interactions: Questions asked to Notesy AI and the responses generated.\n1.5 Usage Data: App activity, feature usage, and session information.\n\n2. HOW WE USE YOUR INFORMATION\n2.1 To provide and improve the App\'s services.\n2.2 To power AI features (lecture search, question answering).\n2.3 To enable communication between users (chat rooms, friend system).\n2.4 To enforce usage limits and prevent abuse.\n2.5 To send important service announcements.\n\n3. DATA SHARING\n3.1 We do NOT sell your personal data to third parties.\n3.2 We use Supabase (supabase.com) for data storage and authentication. Their privacy policy applies to infrastructure-level data handling.\n3.3 We use Groq (groq.com) and Google AI (ai.google.dev) for AI processing. Questions sent to AI may be processed by these providers.\n3.4 We may disclose information if required by law or to protect our rights.\n\n4. DATA STORAGE & SECURITY\n4.1 All data is stored on Supabase servers with enterprise-grade encryption.\n4.2 Chat messages are encrypted in transit and at rest.\n4.3 We implement Row Level Security (RLS) to ensure users can only access their own data.\n4.4 Passwords are hashed and never stored in plain text.\n\n5. YOUR RIGHTS\n5.1 You can update your profile information at any time from the app.\n5.2 You can delete your account from Profile > Settings > Delete Account.\n5.3 Upon account deletion, your personal data, chat messages, and AI history are permanently removed.\n5.4 Notes you uploaded may be retained for the benefit of the student community.\n\n6. GUEST MODE\n6.1 Guest users can browse notes and use limited AI features.\n6.2 Guest activity is not linked to personal identity.\n6.3 Notes uploaded by guests are permanently stored in the library.\n\n7. CHILDREN\'S PRIVACY\nThe App is intended for users aged 16 and above. We do not knowingly collect data from children under 16.\n\n8. CHANGES TO THIS POLICY\nWe may update this Privacy Policy from time to time. We will notify users of significant changes via in-app announcements.\n\n9. CONTACT\nFor privacy-related inquiries, contact: ryanmuhia22@gmail.com',
-        'support_email': 'ryanmuhia22@gmail.com',
-        'support_phone': '+254700000000',
-        'support_whatsapp': '254700000000',
-        'mpesa_no': '123456'
-      };
+      return _configCache ??
+          {
+            'about_text':
+                'Foluma v1.0.6\n\nFoluma comes from folio + luma: a place for your pages, made bright and easy to read. Open anything — notes, PDFs, EPUB books, Office files and local documents — even offline.\n\nBuilt for students, by students.\n\n© 2026 Foluma contributors. Licensed under AGPL-3.0.',
+            'terms_and_conditions':
+                'FOLUMA TERMS OF SERVICE\n\nLast Updated: June 2026\n\n1. ACCEPTANCE OF TERMS\nBy accessing or using Foluma ("the App"), you agree to be bound by these Terms of Service. If you do not agree, do not use the App.\n\n2. ELIGIBILITY\nYou must be a currently enrolled student or staff member at a recognized educational institution. You must provide accurate registration information.\n\n3. ACCOUNT RESPONSIBILITY\nYou are responsible for maintaining the confidentiality of your account. You agree to notify us immediately of any unauthorized use. One account per person.\n\n4. USER CONTENT\n4.1 By uploading notes, documents, or other materials ("User Content"), you grant Foluma a non-exclusive, royalty-free license to store, display, and distribute such content within the App for educational purposes.\n4.2 You retain ownership of your User Content.\n4.3 You must not upload content that infringes copyright, contains malware, or violates any law.\n4.4 Foluma reserves the right to remove any User Content at its discretion.\n\n5. AI SERVICES\n5.1 The App provides AI-powered assistance ("Notesy") for educational purposes only.\n5.2 AI responses may contain errors. Always verify information with official course materials.\n5.3 AI usage is subject to daily limits based on your subscription tier.\n5.4 Do not attempt to manipulate, reverse-engineer, or abuse the AI system.\n\n6. PROHIBITED USES\n- Sharing account credentials\n- Scraping or automated data collection\n- Harassment, spam, or abusive behavior in chat rooms\n- Uploading copyrighted material without authorization\n- Attempting to bypass security measures or rate limits\n- Using the App for commercial purposes without a Campus License\n\n7. SUBSCRIPTION & PAYMENTS\n7.1 Free tier is available at no cost with limited features.\n7.2 Paid subscriptions (Student Pro, Campus License) are billed via M-Pesa.\n7.3 Subscriptions auto-renew unless cancelled before the billing date.\n7.4 Refunds are available within 7 days of purchase if less than 10 AI queries were made.\n\n8. TERMINATION\nWe may suspend or terminate your account for violations of these Terms. Upon termination, your right to use the App ceases immediately.\n\n9. LIMITATION OF LIABILITY\nFoluma is provided "as is" without warranties. We are not liable for any damages arising from use of the App, including but not limited to academic consequences from relying on AI-generated content.\n\n10. GOVERNING LAW\nThese Terms are governed by the laws of the Republic of Kenya.\n\n11. CONTACT\nFor questions about these Terms, contact: ryanmuhia22@gmail.com',
+            'privacy_policy':
+                'FOLUMA PRIVACY POLICY\n\nLast Updated: June 2026\n\n1. INFORMATION WE COLLECT\n1.1 Account Information: Name, email address, university, year of study, and profile photo (optional).\n1.2 User Content: Notes, documents, and materials you upload to the platform.\n1.3 Chat Messages: Messages you send in chat rooms and direct messages.\n1.4 AI Interactions: Questions asked to Notesy AI and the responses generated.\n1.5 Usage Data: App activity, feature usage, and session information.\n\n2. HOW WE USE YOUR INFORMATION\n2.1 To provide and improve the App\'s services.\n2.2 To power AI features (lecture search, question answering).\n2.3 To enable communication between users (chat rooms, friend system).\n2.4 To enforce usage limits and prevent abuse.\n2.5 To send important service announcements.\n\n3. DATA SHARING\n3.1 We do NOT sell your personal data to third parties.\n3.2 We use Supabase (supabase.com) for data storage and authentication. Their privacy policy applies to infrastructure-level data handling.\n3.3 We use Groq (groq.com) and Google AI (ai.google.dev) for AI processing. Questions sent to AI may be processed by these providers.\n3.4 We may disclose information if required by law or to protect our rights.\n\n4. DATA STORAGE & SECURITY\n4.1 All data is stored on Supabase servers with enterprise-grade encryption.\n4.2 Chat messages are encrypted in transit and at rest.\n4.3 We implement Row Level Security (RLS) to ensure users can only access their own data.\n4.4 Passwords are hashed and never stored in plain text.\n\n5. YOUR RIGHTS\n5.1 You can update your profile information at any time from the app.\n5.2 You can delete your account from Profile > Settings > Delete Account.\n5.3 Upon account deletion, your personal data, chat messages, and AI history are permanently removed.\n5.4 Notes you uploaded may be retained for the benefit of the student community.\n\n6. GUEST MODE\n6.1 Guest users can browse notes and use limited AI features.\n6.2 Guest activity is not linked to personal identity.\n6.3 Notes uploaded by guests are permanently stored in the library.\n\n7. CHILDREN\'S PRIVACY\nThe App is intended for users aged 16 and above. We do not knowingly collect data from children under 16.\n\n8. CHANGES TO THIS POLICY\nWe may update this Privacy Policy from time to time. We will notify users of significant changes via in-app announcements.\n\n9. CONTACT\nFor privacy-related inquiries, contact: ryanmuhia22@gmail.com',
+            'support_email': 'ryanmuhia22@gmail.com',
+            'support_phone': '+254700000000',
+            'support_whatsapp': '254700000000',
+            'mpesa_no': '123456',
+          };
     }
   }
 
@@ -1568,11 +2117,14 @@ class NoteService {
       final bytes = await file.readAsBytes();
       final b64 = base64Encode(bytes);
       final mime = _audioMime(file.path);
-      final response = await _supabase.functions.invoke('notesy', body: {
-        'action': 'transcribe_audio',
-        'audioBase64': b64,
-        'mimeType': mime,
-      });
+      final response = await _supabase.functions.invoke(
+        'notesy',
+        body: {
+          'action': 'transcribe_audio',
+          'audioBase64': b64,
+          'mimeType': mime,
+        },
+      );
       final raw = response.data;
       final data = raw is String ? jsonDecode(raw) : raw;
       if (data is Map) return Map<String, dynamic>.from(data);
@@ -1595,14 +2147,22 @@ class NoteService {
   String _audioMime(String path) {
     final ext = path.split('.').last.toLowerCase();
     switch (ext) {
-      case 'm4a': return 'audio/mp4';
-      case 'mp4': return 'audio/mp4';
-      case 'wav': return 'audio/wav';
-      case 'ogg': return 'audio/ogg';
-      case 'opus': return 'audio/ogg';
-      case 'webm': return 'audio/webm';
-      case 'flac': return 'audio/flac';
-      default: return 'audio/mpeg';
+      case 'm4a':
+        return 'audio/mp4';
+      case 'mp4':
+        return 'audio/mp4';
+      case 'wav':
+        return 'audio/wav';
+      case 'ogg':
+        return 'audio/ogg';
+      case 'opus':
+        return 'audio/ogg';
+      case 'webm':
+        return 'audio/webm';
+      case 'flac':
+        return 'audio/flac';
+      default:
+        return 'audio/mpeg';
     }
   }
 
@@ -1666,34 +2226,60 @@ class ChatService {
   final SupabaseClient _supabase = Supabase.instance.client;
   Future<UserProfile?> findUserByCode(String c) async {
     final normalized = c.replaceAll('-', '').toUpperCase();
-    final data = await _supabase.from('profiles').select().inFilter('friend_code', [normalized, _formatWithDash(normalized)]).maybeSingle();
+    final data = await _supabase.from('profiles').select().inFilter(
+      'friend_code',
+      [normalized, _formatWithDash(normalized)],
+    ).maybeSingle();
     return data != null ? UserProfile.fromMap(data, data['email'] ?? '') : null;
   }
 
   String _formatWithDash(String c) {
-    if (c.length == 6 && !c.contains('-')) return '${c.substring(0, 3)}-${c.substring(3)}';
+    if (c.length == 6 && !c.contains('-'))
+      return '${c.substring(0, 3)}-${c.substring(3)}';
     return c;
   }
+
   Future<bool> addFriend(String uid, String fid) async {
-    try { await _supabase.from('friends').insert({'user_id': uid, 'friend_id': fid, 'status': 'accepted'}); return true; } catch (e) { return false; }
+    try {
+      await _supabase.from('friends').insert({
+        'user_id': uid,
+        'friend_id': fid,
+        'status': 'accepted',
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
+
   Stream<List<FriendRelation>> getFriendsStream(String uid) {
-    return _supabase.from('friends').stream(primaryKey: ['id']).eq('user_id', uid).asyncMap((data) async {
-      if (data.isEmpty) return <FriendRelation>[];
-      // Batch-fetch all friend profiles in one query instead of N individual calls
-      final friendIds = data.map((item) => item['friend_id'] as String).toList();
-      final profiles = await _supabase.from('profiles').select().inFilter('id', friendIds);
-      final profileMap = {for (var p in profiles) p['id'] as String: p};
-      return data.map((item) {
-        final prof = profileMap[item['friend_id']];
-        return FriendRelation(
-          userId: uid,
-          friendId: item['friend_id'],
-          status: item['status'],
-          friendProfile: prof != null ? UserProfile.fromMap(prof, prof['email'] ?? '') : null,
-        );
-      }).toList();
-    });
+    return _supabase
+        .from('friends')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', uid)
+        .asyncMap((data) async {
+          if (data.isEmpty) return <FriendRelation>[];
+          // Batch-fetch all friend profiles in one query instead of N individual calls
+          final friendIds = data
+              .map((item) => item['friend_id'] as String)
+              .toList();
+          final profiles = await _supabase
+              .from('profiles')
+              .select()
+              .inFilter('id', friendIds);
+          final profileMap = {for (var p in profiles) p['id'] as String: p};
+          return data.map((item) {
+            final prof = profileMap[item['friend_id']];
+            return FriendRelation(
+              userId: uid,
+              friendId: item['friend_id'],
+              status: item['status'],
+              friendProfile: prof != null
+                  ? UserProfile.fromMap(prof, prof['email'] ?? '')
+                  : null,
+            );
+          }).toList();
+        });
   }
 
   /// Returns an existing DM room between [uid] and [friendId], or null if none exists.
@@ -1719,100 +2305,198 @@ class ChatService {
     }
   }
 
-  Future<ChatRoom?> createChatRoom({required String creatorId, required String name, required bool isGroup, required List<String> members, bool isPublic = false, String? description}) async {
-    final res = await _supabase.from('chat_rooms').insert({'name': name, 'is_group': isGroup, 'is_public': isPublic, 'description': description, 'member_ids': members, 'created_by': creatorId}).select().single();
+  Future<ChatRoom?> createChatRoom({
+    required String creatorId,
+    required String name,
+    required bool isGroup,
+    required List<String> members,
+    bool isPublic = false,
+    String? description,
+  }) async {
+    final res = await _supabase
+        .from('chat_rooms')
+        .insert({
+          'name': name,
+          'is_group': isGroup,
+          'is_public': isPublic,
+          'description': description,
+          'member_ids': members,
+          'created_by': creatorId,
+        })
+        .select()
+        .single();
     return ChatRoom.fromMap(res);
   }
+
   Stream<List<ChatRoom>> getChatRoomsStream(String uid) {
-    return _supabase.from('chat_rooms').stream(primaryKey: ['id']).map((data) => data.where((item) => (item['member_ids'] as List).contains(uid)).map((item) => ChatRoom.fromMap(item)).toList());
+    return _supabase
+        .from('chat_rooms')
+        .stream(primaryKey: ['id'])
+        .map(
+          (data) => data
+              .where((item) => (item['member_ids'] as List).contains(uid))
+              .map((item) => ChatRoom.fromMap(item))
+              .toList(),
+        );
   }
 
   /// Streams DM (non-group) rooms where [uid] is a member.
   /// Uses Supabase realtime (chat_rooms is in the publication; RLS only
   /// exposes rooms the user belongs to). Replaces the old 5s-polling loop.
   Stream<List<ChatRoom>> getDmRoomsStream(String uid) {
+    return _supabase.from('chat_rooms').stream(primaryKey: ['id']).map((data) {
+      final allRooms = data
+          .map((item) => ChatRoom.fromMap(item))
+          .where((r) => !r.isGroup && r.memberIds.contains(uid))
+          .toList();
+
+      // Deduplicate: if multiple DM rooms exist for the same pair, keep the newest
+      final Map<String, ChatRoom> deduped = {};
+      for (final room in allRooms) {
+        final otherId = room.memberIds.firstWhere(
+          (id) => id != uid,
+          orElse: () => '',
+        );
+        if (otherId.isEmpty) continue;
+        final existing = deduped[otherId];
+        if (existing == null ||
+            (room.lastMessageTime != null &&
+                (existing.lastMessageTime == null ||
+                    room.lastMessageTime!.isAfter(
+                      existing.lastMessageTime!,
+                    )))) {
+          deduped[otherId] = room;
+        }
+      }
+      return deduped.values.toList();
+    });
+  }
+
+  Stream<ChatRoom> getRoomStream(String rid) {
     return _supabase
         .from('chat_rooms')
         .stream(primaryKey: ['id'])
-        .map((data) {
-          final allRooms = data
-              .map((item) => ChatRoom.fromMap(item))
-              .where((r) => !r.isGroup && r.memberIds.contains(uid))
-              .toList();
+        .eq('id', rid)
+        .map((data) => ChatRoom.fromMap(data.first));
+  }
 
-          // Deduplicate: if multiple DM rooms exist for the same pair, keep the newest
-          final Map<String, ChatRoom> deduped = {};
-          for (final room in allRooms) {
-            final otherId = room.memberIds.firstWhere((id) => id != uid, orElse: () => '');
-            if (otherId.isEmpty) continue;
-            final existing = deduped[otherId];
-            if (existing == null ||
-                (room.lastMessageTime != null &&
-                 (existing.lastMessageTime == null ||
-                  room.lastMessageTime!.isAfter(existing.lastMessageTime!)))) {
-              deduped[otherId] = room;
-            }
-          }
-          return deduped.values.toList();
-        });
-  }
-  Stream<ChatRoom> getRoomStream(String rid) {
-    return _supabase.from('chat_rooms').stream(primaryKey: ['id']).eq('id', rid).map((data) => ChatRoom.fromMap(data.first));
-  }
   Future<List<UserProfile>> getRoomMembers(List<String> uids) async {
-    final List<dynamic> data = await _supabase.from('profiles').select().inFilter('id', uids);
-    return data.map((item) => UserProfile.fromMap(item, item['email'] ?? '')).toList();
+    final List<dynamic> data = await _supabase
+        .from('profiles')
+        .select()
+        .inFilter('id', uids);
+    return data
+        .map((item) => UserProfile.fromMap(item, item['email'] ?? ''))
+        .toList();
   }
+
   Future<List<ChatRoom>> getPublicChatRooms(String uid) async {
-    final List<dynamic> data = await _supabase.from('chat_rooms').select().eq('is_public', true);
-    return data.map((item) => ChatRoom.fromMap(item)).where((r) => !r.memberIds.contains(uid)).toList();
+    final List<dynamic> data = await _supabase
+        .from('chat_rooms')
+        .select()
+        .eq('is_public', true);
+    return data
+        .map((item) => ChatRoom.fromMap(item))
+        .where((r) => !r.memberIds.contains(uid))
+        .toList();
   }
+
   Future<bool> joinChatRoom(String rid, String uid) async {
-    final room = await _supabase.from('chat_rooms').select().eq('id', rid).single();
+    final room = await _supabase
+        .from('chat_rooms')
+        .select()
+        .eq('id', rid)
+        .single();
     List<String> mems = List<String>.from(room['member_ids']);
-    if (!mems.contains(uid)) { mems.add(uid); await _supabase.from('chat_rooms').update({'member_ids': mems}).eq('id', rid); }
+    if (!mems.contains(uid)) {
+      mems.add(uid);
+      await _supabase
+          .from('chat_rooms')
+          .update({'member_ids': mems})
+          .eq('id', rid);
+    }
     return true;
   }
+
   Future<UserProfile?> getOtherMemberProfile(ChatRoom r, String uid) async {
     if (r.isGroup) return null;
     final oid = r.memberIds.firstWhere((id) => id != uid, orElse: () => '');
     if (oid.isEmpty) return null;
-    final data = await _supabase.from('profiles').select().eq('id', oid).single();
+    final data = await _supabase
+        .from('profiles')
+        .select()
+        .eq('id', oid)
+        .single();
     return UserProfile.fromMap(data, data['email'] ?? '');
   }
+
   Future<bool> sendMessage(String rid, String sid, String c, String n) async {
-    await _supabase.from('chat_messages').insert({'room_id': rid, 'sender_id': sid, 'content': c, 'sender_name': n});
+    await _supabase.from('chat_messages').insert({
+      'room_id': rid,
+      'sender_id': sid,
+      'content': c,
+      'sender_name': n,
+    });
     // Only sender has read the latest message — matches Firebase pattern
-    await _supabase.from('chat_rooms').update({
-      'last_message': c,
-      'last_message_time': DateTime.now().toIso8601String(),
-      'last_message_read_by': [sid],
-    }).eq('id', rid);
+    await _supabase
+        .from('chat_rooms')
+        .update({
+          'last_message': c,
+          'last_message_time': DateTime.now().toIso8601String(),
+          'last_message_read_by': [sid],
+        })
+        .eq('id', rid);
     return true;
   }
+
   Stream<List<ChatMessage>> getMessagesStream(String rid) {
-    return _supabase.from('chat_messages').stream(primaryKey: ['id']).eq('room_id', rid).order('created_at', ascending: true).map((data) => data.map((item) => ChatMessage.fromMap(item)).toList());
+    return _supabase
+        .from('chat_messages')
+        .stream(primaryKey: ['id'])
+        .eq('room_id', rid)
+        .order('created_at', ascending: true)
+        .map((data) => data.map((item) => ChatMessage.fromMap(item)).toList());
   }
+
   Future<int> bulkAddByCodes(String rid, List<String> codes) async {
     int added = 0;
-    final room = await _supabase.from('chat_rooms').select().eq('id', rid).single();
+    final room = await _supabase
+        .from('chat_rooms')
+        .select()
+        .eq('id', rid)
+        .single();
     List<String> mems = List<String>.from(room['member_ids']);
     for (var c in codes) {
       final u = await findUserByCode(c.trim());
-      if (u != null && !mems.contains(u.id)) { mems.add(u.id); added++; }
+      if (u != null && !mems.contains(u.id)) {
+        mems.add(u.id);
+        added++;
+      }
     }
-    await _supabase.from('chat_rooms').update({'member_ids': mems}).eq('id', rid);
+    await _supabase
+        .from('chat_rooms')
+        .update({'member_ids': mems})
+        .eq('id', rid);
     return added;
   }
 
   Future<void> updateLastRead(String rid, String uid) async {
     // Add uid to last_message_read_by — same pattern as Firebase's arrayUnion
     try {
-      final room = await _supabase.from('chat_rooms').select('last_message_read_by').eq('id', rid).single();
-      final List<String> readers = List<String>.from(room['last_message_read_by'] ?? []);
+      final room = await _supabase
+          .from('chat_rooms')
+          .select('last_message_read_by')
+          .eq('id', rid)
+          .single();
+      final List<String> readers = List<String>.from(
+        room['last_message_read_by'] ?? [],
+      );
       if (!readers.contains(uid)) {
         readers.add(uid);
-        await _supabase.from('chat_rooms').update({'last_message_read_by': readers}).eq('id', rid);
+        await _supabase
+            .from('chat_rooms')
+            .update({'last_message_read_by': readers})
+            .eq('id', rid);
       }
     } catch (e) {
       debugPrint('updateLastRead error: $e');
@@ -1821,9 +2505,15 @@ class ChatService {
 
   Future<int> getUnreadCount(String rid, String uid) async {
     try {
-      final room = await _supabase.from('chat_rooms').select('last_message_read_by, last_message').eq('id', rid).maybeSingle();
+      final room = await _supabase
+          .from('chat_rooms')
+          .select('last_message_read_by, last_message')
+          .eq('id', rid)
+          .maybeSingle();
       if (room == null || room['last_message'] == null) return 0;
-      final List<String> readers = List<String>.from(room['last_message_read_by'] ?? []);
+      final List<String> readers = List<String>.from(
+        room['last_message_read_by'] ?? [],
+      );
       // Unread = uid not in readers AND there is a last message
       return readers.contains(uid) ? 0 : 1;
     } catch (e) {
@@ -1867,7 +2557,8 @@ class ChatService {
           .select('id')
           .eq('room_id', roomId);
 
-      if (countResult.length <= _archiveThreshold) return; // Not enough to archive
+      if (countResult.length <= _archiveThreshold)
+        return; // Not enough to archive
 
       // Get messages to archive (oldest first, keep last 50)
       final messagesToArchive = await _supabase
@@ -1898,13 +2589,16 @@ class ChatService {
               .download(archivePath);
           final content = String.fromCharCodes(bytes);
           existingMessages = List<Map<String, dynamic>>.from(
-            (jsonDecode(content) as List).map((m) => Map<String, dynamic>.from(m))
+            (jsonDecode(content) as List).map(
+              (m) => Map<String, dynamic>.from(m),
+            ),
           );
         } catch (_) {
           // Archive file doesn't exist yet, start fresh
         }
       } else {
-        archivePath = '$roomId/archive_${DateTime.now().millisecondsSinceEpoch}.json';
+        archivePath =
+            '$roomId/archive_${DateTime.now().millisecondsSinceEpoch}.json';
       }
 
       // Merge with existing archived messages
@@ -1921,11 +2615,11 @@ class ChatService {
       // Delete archived messages from DB
       final idsToDelete = messagesToArchive.map((m) => m['id']).toList();
       for (var i = 0; i < idsToDelete.length; i += 50) {
-        final batch = idsToDelete.sublist(i, (i + 50).clamp(0, idsToDelete.length));
-        await _supabase
-            .from('chat_messages')
-            .delete()
-            .inFilter('id', batch);
+        final batch = idsToDelete.sublist(
+          i,
+          (i + 50).clamp(0, idsToDelete.length),
+        );
+        await _supabase.from('chat_messages').delete().inFilter('id', batch);
       }
 
       // Update or create archive record
@@ -1936,7 +2630,9 @@ class ChatService {
         'last_archived_at': DateTime.now().toIso8601String(),
       });
 
-      debugPrint('Archived ${messagesToArchive.length} messages for room $roomId');
+      debugPrint(
+        'Archived ${messagesToArchive.length} messages for room $roomId',
+      );
     } catch (e) {
       debugPrint('archiveOldMessages error: $e');
     }
@@ -1959,7 +2655,7 @@ class ChatService {
 
       final content = String.fromCharCodes(bytes);
       return List<Map<String, dynamic>>.from(
-        (jsonDecode(content) as List).map((m) => Map<String, dynamic>.from(m))
+        (jsonDecode(content) as List).map((m) => Map<String, dynamic>.from(m)),
       );
     } catch (e) {
       debugPrint('loadArchivedMessages error: $e');
@@ -2069,16 +2765,21 @@ class AiChatService {
     return [];
   }
 
-  Future<void> saveChatHistory(String userId, List<Map<String, String>> messages) async {
+  Future<void> saveChatHistory(
+    String userId,
+    List<Map<String, String>> messages,
+  ) async {
     // Keep only last N messages; strip images so base64 never bloats the DB.
-    final toSave = (messages.length > _maxHistoryMessages
-            ? messages.sublist(messages.length - _maxHistoryMessages)
-            : messages)
-        .map((m) {
-      final clean = Map<String, String>.from(m);
-      clean.remove('image');
-      return clean;
-    }).toList();
+    final toSave =
+        (messages.length > _maxHistoryMessages
+                ? messages.sublist(messages.length - _maxHistoryMessages)
+                : messages)
+            .map((m) {
+              final clean = Map<String, String>.from(m);
+              clean.remove('image');
+              return clean;
+            })
+            .toList();
 
     if (_isGuest(userId)) {
       final prefs = await SharedPreferences.getInstance();
@@ -2112,7 +2813,9 @@ class AiChatService {
   }
 
   /// Get last N messages for sending to Groq (context window)
-  List<Map<String, String>> getContextMessages(List<Map<String, String>> allMessages) {
+  List<Map<String, String>> getContextMessages(
+    List<Map<String, String>> allMessages,
+  ) {
     if (allMessages.length <= _contextMessages) return allMessages;
     return allMessages.sublist(allMessages.length - _contextMessages);
   }
@@ -2137,7 +2840,10 @@ class AiChatService {
   }
 
   /// Creates a conversation; returns its id, or null on failure.
-  Future<int?> createConversation(String userId, {String title = 'New chat'}) async {
+  Future<int?> createConversation(
+    String userId, {
+    String title = 'New chat',
+  }) async {
     try {
       final supabase = Supabase.instance.client;
       final res = await supabase
@@ -2157,7 +2863,10 @@ class AiChatService {
       final supabase = Supabase.instance.client;
       await supabase
           .from('ai_conversations')
-          .update({'title': title, 'updated_at': DateTime.now().toIso8601String()})
+          .update({
+            'title': title,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
           .eq('id', conversationId);
       return true;
     } catch (e) {
@@ -2171,7 +2880,10 @@ class AiChatService {
       final supabase = Supabase.instance.client;
       await supabase
           .from('ai_conversations')
-          .update({'pinned': pinned, 'updated_at': DateTime.now().toIso8601String()})
+          .update({
+            'pinned': pinned,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
           .eq('id', conversationId);
       return true;
     } catch (e) {
@@ -2192,7 +2904,9 @@ class AiChatService {
   }
 
   /// Messages of one conversation, oldest first.
-  Future<List<Map<String, String>>> loadConversationMessages(String conversationId) async {
+  Future<List<Map<String, String>>> loadConversationMessages(
+    String conversationId,
+  ) async {
     try {
       final supabase = Supabase.instance.client;
       final data = await supabase
@@ -2223,11 +2937,17 @@ class AiChatService {
   }
 
   /// Appends a message pair (user + assistant) to a conversation.
-  Future<void> appendConversationMessages(String userId, String conversationId, Map<String, String> userMsg, Map<String, String> assistantMsg) async {
+  Future<void> appendConversationMessages(
+    String userId,
+    String conversationId,
+    Map<String, String> userMsg,
+    Map<String, String> assistantMsg,
+  ) async {
     try {
       final supabase = Supabase.instance.client;
       final cleanUser = Map<String, String>.from(userMsg)..remove('image');
-      final cleanAssistant = Map<String, String>.from(assistantMsg)..remove('image');
+      final cleanAssistant = Map<String, String>.from(assistantMsg)
+        ..remove('image');
       await supabase.from('ai_messages').insert([
         {
           'conversation_id': int.parse(conversationId),
@@ -2257,17 +2977,34 @@ class AiChatService {
     final trimmed = content.trim();
     if (trimmed.isEmpty) return 'New chat';
     final singleLine = trimmed.replaceAll(RegExp(r'\s+'), ' ');
-    return singleLine.length > 40 ? '${singleLine.substring(0, 40)}…' : singleLine;
+    return singleLine.length > 40
+        ? '${singleLine.substring(0, 40)}…'
+        : singleLine;
   }
 
-  Future<String> getResponse(String msg, List<Map<String, String>> history, {String? imageBase64, List<String>? imageBase64s}) async {
-    final reply = await getResponseDetailed(msg, history, imageBase64: imageBase64, imageBase64s: imageBase64s);
+  Future<String> getResponse(
+    String msg,
+    List<Map<String, String>> history, {
+    String? imageBase64,
+    List<String>? imageBase64s,
+  }) async {
+    final reply = await getResponseDetailed(
+      msg,
+      history,
+      imageBase64: imageBase64,
+      imageBase64s: imageBase64s,
+    );
     return reply.content;
   }
 
   /// Same as [getResponse] but also returns the documents the answer was
   /// grounded in, so the UI can cite them. Only the chat screen needs this.
-  Future<AiReply> getResponseDetailed(String msg, List<Map<String, String>> history, {String? imageBase64, List<String>? imageBase64s}) async {
+  Future<AiReply> getResponseDetailed(
+    String msg,
+    List<Map<String, String>> history, {
+    String? imageBase64,
+    List<String>? imageBase64s,
+  }) async {
     final session = Supabase.instance.client.auth.currentSession;
     try {
       final response = await Supabase.instance.client.functions.invoke(
@@ -2279,7 +3016,8 @@ class AiChatService {
           'message': msg,
           'history': history,
           if (imageBase64 != null) 'imageBase64': imageBase64,
-          if (imageBase64s != null && imageBase64s.isNotEmpty) 'imageBase64s': imageBase64s,
+          if (imageBase64s != null && imageBase64s.isNotEmpty)
+            'imageBase64s': imageBase64s,
         },
       );
 
@@ -2348,8 +3086,9 @@ class AiChatService {
       var sourceIds = const <int>[];
       var toolsUsed = const <String>[];
 
-      final lines =
-          response.stream.transform(utf8.decoder).transform(const LineSplitter());
+      final lines = response.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
       await for (final line in lines) {
         final trimmed = line.trim();
         if (!trimmed.startsWith('data:')) continue;
@@ -2442,7 +3181,11 @@ class AiChatService {
   /// stay NULL instead of carrying useless empty arrays.
   List<String>? _sourcesForStorage(String? raw) {
     if (raw == null || raw.trim().isEmpty) return null;
-    final items = raw.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    final items = raw
+        .split('|')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
     return items.isEmpty ? null : items;
   }
 
@@ -2507,16 +3250,13 @@ class AiChatService {
         headers: {
           if (session != null) 'Authorization': 'Bearer ${session.accessToken}',
         },
-        body: {
-          'action': 'summarize',
-          'title': title,
-          'content': text,
-        },
+        body: {'action': 'summarize', 'title': title, 'content': text},
       );
 
       final rawData = response.data;
       final data = rawData is String ? jsonDecode(rawData) : rawData;
-      if (data is Map && data['content'] is String) return data['content'] as String;
+      if (data is Map && data['content'] is String)
+        return data['content'] as String;
       return '';
     } catch (e) {
       debugPrint('Notesy summary error: $e');
@@ -2546,7 +3286,9 @@ class AiChatService {
         _summaryFailures++;
       }
       if (_summaryFailures >= 5) {
-        debugPrint('Background summarizer backing off (5 consecutive failures).');
+        debugPrint(
+          'Background summarizer backing off (5 consecutive failures).',
+        );
       }
     });
   }
@@ -2557,16 +3299,45 @@ class AiChatService {
 class UpdateService {
   static const String _latestUrl =
       'https://api.github.com/repos/Error-code22/notes_cache/releases/latest';
+  static const String _manifestUrl =
+      'https://pub-1a97aa64b4cb45e4a2f3dce326417f35.r2.dev/latest/latest.json';
   static const String _prefsVersionKey = 'downloaded_update_version';
   static const String _shownWhatsNewKey = 'shown_whatsnew_version';
 
-  /// Fetches the newest version tag (e.g. "1.0.2") from GitHub. null on failure.
-  Future<String?> getLatestVersion() async {
+  Future<Map<String, dynamic>?> _fetchManifest() async {
     try {
-      final response = await http.get(Uri.parse(_latestUrl)).timeout(const Duration(seconds: 15));
+      final response = await http
+          .get(Uri.parse(_manifestUrl))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body);
+      return data is Map ? Map<String, dynamic>.from(data) : null;
+    } catch (e) {
+      debugPrint('UpdateService manifest error: $e');
+      return null;
+    }
+  }
+
+  /// Fetches the newest version tag from the R2 manifest, then GitHub.
+  Future<String?> getLatestVersion() async {
+    final manifest = await _fetchManifest();
+    final manifestVersion = manifest?['version']?.toString().replaceFirst(
+      RegExp(r'^v'),
+      '',
+    );
+    if (manifestVersion != null && manifestVersion.isNotEmpty)
+      return manifestVersion;
+
+    try {
+      final response = await http
+          .get(Uri.parse(_latestUrl))
+          .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return null;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final tag = (data['tag_name'] as String? ?? '').replaceFirst(RegExp(r'^v'), '');
+      final tag = (data['tag_name'] as String? ?? '').replaceFirst(
+        RegExp(r'^v'),
+        '',
+      );
       return tag.isEmpty ? null : tag;
     } catch (e) {
       debugPrint('UpdateService version check error: $e');
@@ -2574,10 +3345,16 @@ class UpdateService {
     }
   }
 
-  /// Fetches the release notes (body) of the latest release. null on failure.
+  /// Fetches the release notes from the R2 manifest, then GitHub.
   Future<String?> getLatestReleaseNotes() async {
+    final manifest = await _fetchManifest();
+    final manifestNotes = manifest?['notes']?.toString().trim();
+    if (manifestNotes != null && manifestNotes.isNotEmpty) return manifestNotes;
+
     try {
-      final response = await http.get(Uri.parse(_latestUrl)).timeout(const Duration(seconds: 15));
+      final response = await http
+          .get(Uri.parse(_latestUrl))
+          .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return null;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final body = data['body'] as String?;
@@ -2588,8 +3365,12 @@ class UpdateService {
     }
   }
 
-  /// Direct download URL for the arm64 APK of the latest release.
+  /// Primary download URL for the arm64 APK (Cloudflare R2).
   String get apkDownloadUrl =>
+      'https://pub-1a97aa64b4cb45e4a2f3dce326417f35.r2.dev/latest/NotesCache-arm64-v8a.apk';
+
+  /// GitHub is kept as a fallback if the R2 mirror is unavailable.
+  static const String _githubApkUrl =
       'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk';
 
   /// Compares "1.0.1" vs "1.0.2"; true when [installed] < [latest].
@@ -2606,7 +3387,7 @@ class UpdateService {
 
   Future<File> _apkFile() async {
     final appDir = await NoteService().getAppDirectory();
-    return File('$appDir\\notescache_update.apk');
+    return File(p.join(appDir, 'notescache_update.apk'));
   }
 
   /// Public path helper so the install dialog can open the downloaded APK.
@@ -2631,36 +3412,100 @@ class UpdateService {
     }
   }
 
-  /// Downloads the APK with real byte-progress reporting.
+  /// Downloads the APK with real byte-progress reporting and resume support.
+  /// Tries the R2 mirror first, then GitHub. A dropped connection keeps the
+  /// partial `.part` file and retries with an HTTP Range request.
   /// [onProgress] receives (receivedBytes, totalBytes).
-  Future<String?> downloadApk({void Function(int received, int total)? onProgress}) async {
+  Future<String?> downloadApk({
+    void Function(int received, int total)? onProgress,
+  }) async {
     final target = await _apkFile();
-    try {
-      final client = http.Client();
-      final request = http.Request('GET', Uri.parse(apkDownloadUrl));
-      final response = await client.send(request).timeout(const Duration(minutes: 5));
-      if (response.statusCode != 200) {
-        client.close();
-        return null;
+    final part = File('${target.path}.part');
+    final urls = <String>[apkDownloadUrl, _githubApkUrl];
+
+    for (final url in urls) {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        http.Client? client;
+        IOSink? sink;
+        try {
+          final existing = part.existsSync() ? part.lengthSync() : 0;
+          client = http.Client();
+          final request = http.Request('GET', Uri.parse(url));
+          request.headers['Accept'] = 'application/octet-stream';
+          if (existing > 0) request.headers['Range'] = 'bytes=$existing-';
+
+          final response = await client
+              .send(request)
+              .timeout(const Duration(minutes: 2));
+          if (response.statusCode == 416) {
+            // The partial file is already at/over the remote size; restart it.
+            try {
+              part.deleteSync();
+            } catch (_) {}
+            client.close();
+            continue;
+          }
+          if (response.statusCode != 200 && response.statusCode != 206) {
+            client.close();
+            throw Exception('HTTP ${response.statusCode}');
+          }
+
+          final append = existing > 0 && response.statusCode == 206;
+          final startAt = append ? existing : 0;
+          final total = response.contentLength == null
+              ? 0
+              : startAt + response.contentLength!;
+
+          sink = append
+              ? part.openWrite(mode: FileMode.append)
+              : part.openWrite(mode: FileMode.write);
+          var received = startAt;
+          if (total > 0) onProgress?.call(received, total);
+
+          await for (final chunk in response.stream.timeout(
+            const Duration(seconds: 45),
+          )) {
+            received += chunk.length;
+            sink.add(chunk);
+            if (total > 0) onProgress?.call(received, total);
+          }
+          await sink.flush();
+          await sink.close();
+          sink = null;
+
+          if (total > 0 && part.lengthSync() != total) {
+            throw Exception(
+              'Incomplete download (${part.lengthSync()} of $total bytes)',
+            );
+          }
+
+          if (target.existsSync()) target.deleteSync();
+          await part.rename(target.path);
+          onProgress?.call(
+            total > 0 ? total : received,
+            total > 0 ? total : received,
+          );
+          client.close();
+          return target.path;
+        } catch (e) {
+          debugPrint(
+            'UpdateService download attempt ${attempt + 1} failed ($url): $e',
+          );
+          try {
+            await sink?.close();
+          } catch (_) {}
+          client?.close();
+          if (attempt < 2) {
+            await Future.delayed(Duration(seconds: 2 + attempt * 2));
+          }
+        }
       }
-      final total = response.contentLength ?? 0;
-      var received = 0;
-      final sink = target.openWrite();
-      await for (final chunk in response.stream) {
-        received += chunk.length;
-        sink.add(chunk);
-        if (total > 0) onProgress?.call(received, total);
-      }
-      await sink.flush();
-      await sink.close();
-      client.close();
-      onProgress?.call(total > 0 ? total : received, total > 0 ? total : received);
-      return target.path;
-    } catch (e) {
-      debugPrint('UpdateService download error: $e');
-      try { if (target.existsSync()) target.deleteSync(); } catch (_) {}
-      return null;
+      // Keep any partial file for the fallback URL; it may still be resumable.
+      debugPrint('UpdateService falling back after failed URL: $url');
     }
+
+    debugPrint('UpdateService download failed for all mirrors');
+    return null;
   }
 
   /// Whether the user has seen the "What's New" notes for [version].
@@ -2700,8 +3545,9 @@ class ConnectivityService {
   Future<void> _check() async {
     bool online;
     try {
-      final result = await InternetAddress.lookup('google.com')
-          .timeout(const Duration(seconds: 3));
+      final result = await InternetAddress.lookup(
+        'google.com',
+      ).timeout(const Duration(seconds: 3));
       online = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
     } catch (_) {
       online = false;
@@ -2747,15 +3593,19 @@ class SupabaseKeepAliveService {
       final anonKey = dotenv.env['SUPABASE_ANON_KEY'];
       if (supabaseUrl == null || anonKey == null) return;
 
-      final response = await http.get(
-        Uri.parse('$supabaseUrl/rest/v1/'),
-        headers: {'apikey': anonKey, 'Authorization': 'Bearer $anonKey'},
-      ).timeout(const Duration(seconds: 15));
+      final response = await http
+          .get(
+            Uri.parse('$supabaseUrl/rest/v1/'),
+            headers: {'apikey': anonKey, 'Authorization': 'Bearer $anonKey'},
+          )
+          .timeout(const Duration(seconds: 15));
 
       // 2xx/3xx/401 all mean the API is awake; only hard failures matter.
       final ok = response.statusCode != 500;
       if (ok != lastPingOk.value) {
-        debugPrint('Supabase keep-alive: ${ok ? 'awake' : 'unreachable'} (HTTP ${response.statusCode})');
+        debugPrint(
+          'Supabase keep-alive: ${ok ? 'awake' : 'unreachable'} (HTTP ${response.statusCode})',
+        );
       }
       lastPingOk.value = ok;
     } catch (e) {
@@ -2766,27 +3616,33 @@ class SupabaseKeepAliveService {
 }
 
 class NotificationService {
-  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _notifications =
+      FlutterLocalNotificationsPlugin();
   bool _windowsReady = false;
   int _nextId = 0;
 
   // Channel constants — must match between init() and showNotification()
   static const String _channelId = 'notescache_main';
-  static const String _channelName = 'NotesCache Notifications';
+  static const String _channelName = 'Foluma Notifications';
 
   Future<void> init() async {
     if (Platform.isWindows) {
       try {
-        await localNotifier.setup(appName: 'NotesCache', shortcutPolicy: ShortcutPolicy.requireCreate);
+        await localNotifier.setup(
+          appName: 'Foluma',
+          shortcutPolicy: ShortcutPolicy.requireCreate,
+        );
         _windowsReady = true;
       } catch (e) {
         // Plugin not yet compiled into runner; requires a full `flutter run`, not hot restart.
-        debugPrint('local_notifier not ready yet: $e. Do a full stop + run to enable Windows notifications.');
+        debugPrint(
+          'local_notifier not ready yet: $e. Do a full stop + run to enable Windows notifications.',
+        );
       }
       return;
     }
     try {
-      const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const android = AndroidInitializationSettings('ic_stat_foluma');
       const ios = DarwinInitializationSettings(
         requestAlertPermission: true,
         requestBadgePermission: true,
@@ -2806,7 +3662,9 @@ class NotificationService {
           importance: Importance.max,
         );
         await _notifications
-            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >()
             ?.createNotificationChannel(channel);
         // NOTE: the permission request is NOT fired here — it used to block the
         // first frame behind the OS dialog. It's now deferred to requestPermission().
@@ -2834,7 +3692,8 @@ class NotificationService {
   }
 
   /// Global navigator key so notification taps can navigate from anywhere.
-  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   /// Asks for notification permission. Called AFTER the first frame renders
   /// (e.g. dashboard post-frame) so the OS dialog never delays startup.
@@ -2843,7 +3702,11 @@ class NotificationService {
   /// the old fire-and-forget behaviour so a caller can never be broken by it).
   Future<bool?> requestPermission() async {
     if (Platform.isIOS) {
-      final settings = await _notifications.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(alert: true, badge: true, sound: true);
+      final settings = await _notifications
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
       debugPrint('iOS notification permission: $settings');
       granted = settings;
       return granted;
@@ -2851,7 +3714,9 @@ class NotificationService {
     if (!Platform.isAndroid) return null;
     try {
       granted = await _notifications
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
           ?.requestNotificationsPermission();
     } catch (e) {
       debugPrint('requestNotificationsPermission failed: $e');
@@ -2873,7 +3738,11 @@ class NotificationService {
   /// Shows a local notification. Returns whether one was actually handed to
   /// the OS - every early exit below used to be a silent `void`, which is why
   /// a test button could appear to do nothing with no way to tell why.
-  Future<bool> showNotification({required String title, required String body, String? payload}) async {
+  Future<bool> showNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
     debugPrint('NOTIFICATION TRIGGERED: $title - $body');
     lastShowError = null;
     // Honor the Settings toggles
@@ -2887,12 +3756,18 @@ class NotificationService {
 
     if (Platform.isWindows) {
       if (!_windowsReady) {
-        debugPrint('Skipping notification; Windows notifier not ready (need full restart).');
-        lastShowError = 'Windows notifications are not initialised yet - fully quit and reopen the app, then try again.';
+        debugPrint(
+          'Skipping notification; Windows notifier not ready (need full restart).',
+        );
+        lastShowError =
+            'Windows notifications are not initialised yet - fully quit and reopen the app, then try again.';
         return false;
       }
       try {
-        LocalNotification notification = LocalNotification(title: title, body: body);
+        LocalNotification notification = LocalNotification(
+          title: title,
+          body: body,
+        );
         notification.show();
         return true;
       } catch (e) {
@@ -2916,7 +3791,13 @@ class NotificationService {
       const ios = DarwinNotificationDetails();
       // Incrementing ID so each notification stacks instead of replacing the last
       final id = _nextId++;
-      await _notifications.show(id, title, body, NotificationDetails(android: android, iOS: ios), payload: payload);
+      await _notifications.show(
+        id,
+        title,
+        body,
+        NotificationDetails(android: android, iOS: ios),
+        payload: payload,
+      );
       return true;
     } catch (e) {
       debugPrint('Notification show failed: $e');

@@ -169,7 +169,7 @@ class _SettingsPageState extends State<SettingsPage> {
     await notificationService.requestPermission();
     final granted = notificationService.granted;
     final shown = await notificationService.showNotification(
-      title: 'NotesCache Test',
+      title: 'Foluma Test',
       body: 'Notifications are working perfectly!',
     );
     if (!mounted) return;
@@ -186,7 +186,7 @@ class _SettingsPageState extends State<SettingsPage> {
     // directions - report the one we actually know, otherwise the reason.
     if (granted == false) {
       messenger.showSnackBar(const SnackBar(
-        content: Text('Permission denied. Allow NotesCache to send notifications in your phone\'s app settings, then try again.'),
+        content: Text('Permission denied. Allow Foluma to send notifications in your phone\'s app settings, then try again.'),
         backgroundColor: Colors.orange,
       ));
       return;
@@ -251,7 +251,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/notescache_export_${DateTime.now().millisecondsSinceEpoch}.json');
       await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
-      await Share.shareXFiles([XFile(file.path, mimeType: 'application/json')], text: 'NotesCache data export');
+      await Share.shareXFiles([XFile(file.path, mimeType: 'application/json')], text: 'Foluma data export');
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red));
     }
@@ -414,7 +414,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const Icon(Icons.favorite, color: Colors.red, size: 24),
             const SizedBox(width: 12),
             const Expanded(
-              child: Text('Support NotesCache', overflow: TextOverflow.ellipsis),
+              child: Text('Support Foluma', overflow: TextOverflow.ellipsis),
             ),
           ],
         ),
@@ -903,7 +903,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const Divider(height: 1),
             _buildActionTile(
-              'Support NotesCache',
+              'Support Foluma',
               'Contribute via M-Pesa',
               Icons.favorite_rounded,
               Colors.red,
@@ -918,8 +918,8 @@ class _SettingsPageState extends State<SettingsPage> {
               () => _showConfigDialog(
                 'Privacy Policy',
                 _appConfig['privacy_policy'] ??
-                    'NOTESCACHE PRIVACY POLICY\n\n'
-                    'We value your privacy. NotesCache collects only the '
+                    'FOLUMA PRIVACY POLICY\n\n'
+                    'We value your privacy. Foluma collects only the '
                     'information you provide — your name, email, academic year, '
                     'and uploaded notes — solely for the purpose of providing '
                     'our study companion service.\n\n'
@@ -933,15 +933,15 @@ class _SettingsPageState extends State<SettingsPage> {
             const Divider(height: 1),
             _buildActionTile(
               'Terms of Service',
-              'Rules and guidelines for using NotesCache',
+              'Rules and guidelines for using Foluma',
               Icons.description_outlined,
               Colors.brown,
               () => _showConfigDialog(
                 'Terms of Service',
                 _appConfig['terms_and_conditions'] ??
-                    'NOTESCACHE TERMS OF SERVICE\n\n'
+                    'FOLUMA TERMS OF SERVICE\n\n'
                     'Last Updated: June 2026\n\n'
-                    '1. By using NotesCache you agree to these terms.\n\n'
+                    '1. By using Foluma you agree to these terms.\n\n'
                     '2. You must be a currently enrolled student or staff '
                     'member at a recognized educational institution.\n\n'
                     '3. You are responsible for your account and its content.\n\n'
@@ -955,20 +955,33 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const Divider(height: 1),
             _buildActionTile(
-              'About NotesCache',
-              'Version 1.0.0+1 — Campus Study Companion',
+              'About Foluma',
+              'Version 1.0.6 — Open anything.',
               Icons.info_outline_rounded,
               Colors.grey,
               () => _showConfigDialog(
-                'About',
+                'About Foluma',
                 _appConfig['about_text'] ??
-                    'NotesCache v1.0.0\n\n'
-                    'Your campus study companion. Access lecture notes, chat '
-                    'with classmates, and get instant AI-powered help — all in '
-                    'one place.\n\n'
+                    'Foluma v1.0.6\n\n'
+                    'Foluma comes from folio + luma: a place for your pages, '
+                    'made bright and easy to read. Open anything — notes, PDFs, '
+                    'EPUB books, Office files and local documents — even offline.\n\n'
                     'Built for students, by students.\n\n'
-                    '© 2026 NotesCache. All rights reserved.\n\n'
+                    '© 2026 Foluma contributors. Licensed under AGPL-3.0.\n\n'
                     'Powered by Supabase, Groq AI, and Flutter.',
+              ),
+            ),
+            const Divider(height: 1),
+            _buildActionTile(
+              'Open source licences',
+              'Licences for Flutter and bundled libraries',
+              Icons.article_outlined,
+              Colors.blueGrey,
+              () => showLicensePage(
+                context: context,
+                applicationName: 'Foluma',
+                applicationVersion: '1.0.6',
+                applicationLegalese: 'AGPL-3.0',
               ),
             ),
           ]),
@@ -989,7 +1002,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
           Center(
             child: Text(
-              'NotesCache v1.0.0+1',
+              'Foluma v1.0.6+7',
               style: TextStyle(
                 color: theme.colorScheme.onSurface.withOpacity(0.4),
                 fontSize: 12,

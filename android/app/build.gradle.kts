@@ -52,7 +52,17 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
+    }
+
+    // Release lint is extremely slow on this dependency set and blocks local
+    // release builds for 30+ minutes. Static analysis runs separately.
+    lint {
+        checkReleaseBuilds = false
     }
 }
 

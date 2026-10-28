@@ -1,0 +1,80 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none';">
+  <title>Document</title>
+  <style>
+    :root { color-scheme: light; }
+    html, body { margin: 0; padding: 0; background: #f5f5f3; color: #17181a; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+    #status { padding: 32px 20px; text-align: center; color: #5f6368; font-size: 14px; }
+    #output { padding: 10px 8px 28px; }
+    .docx-wrapper { padding: 0 !important; background: transparent !important; }
+    .docx-wrapper > section.docx { box-shadow: 0 2px 14px rgba(0,0,0,.12); margin-bottom: 18px !important; }
+    .docx-wrapper img { max-width: 100% !important; height: auto !important; }
+    @media (max-width: 760px) {
+      #output { overflow-x: hidden; }
+      .docx-wrapper > section.docx {
+        width: auto !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        padding: 24px 16px !important;
+      }
+    }
+    .foluma-error { margin: 24px; padding: 18px; border-radius: 14px; background: #fff3f0; color: #9b2c1f; font-size: 14px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div id="status">Opening document...</div>
+  <div id="output"></div>
+
+  <script src="jszip3.min.js"></script>
+  <script src="docx-preview.min.js"></script>
+  <script src="data.js"></script>
+  <script>
+    (function () {
+      function notify(message) {
+        try { window.Foluma && window.Foluma.postMessage(message); } catch (_) {}
+      }
+      function fail(error) {
+        var status = document.getElementById('status');
+        if (status) status.remove();
+        var out = document.getElementById('output');
+        out.innerHTML = '<div class="foluma-error"><strong>Could not render this document.</strong><br><br>' +
+          String(error || 'Unknown error').replace(/[<>&]/g, function (c) {
+            return {'<': '&lt;', '>': '&gt;', '&': '&amp;'}[c];
+          }) + '<br><br>Use â€œOpen withâ€ or â€œBasic text editâ€ on the toolbar.</div>';
+        notify('error:' + String(error || 'Unknown error'));
+      }
+      window.addEventListener('error', function (event) {
+        if (event && event.message) fail(event.message);
+      });
+      try {
+        var bytes = folumaBytes();
+        var compact = window.innerWidth < 760;
+        docx.renderAsync(bytes.buffer, document.getElementById('output'), null, {
+          inWrapper: true,
+          breakPages: !compact,
+          ignoreWidth: compact,
+          ignoreHeight: compact,
+          ignoreLastRenderedPageBreak: false,
+          useBase64URL: true,
+          renderHeaders: !compact,
+          renderFooters: !compact,
+          renderFootnotes: true,
+          renderEndnotes: true
+        }).then(function () {
+          var status = document.getElementById('status');
+          if (status) status.remove();
+          notify('ready');
+        }).catch(fail);
+      } catch (e) {
+        fail(e && e.message ? e.message : e);
+      }
+    })();
+  </script>
+</body>
+</html>
+

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
@@ -7,10 +10,16 @@ import 'services.dart';
 import 'push_service.dart';
 import 'login_page.dart';
 import 'dashboard_page.dart';
+import 'file_viewer_page.dart';
+import 'share_intent_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Copy an Open-with document while Supabase starts, then pass it to the
+  // app as an initial route instead of pushing during the first frame.
+  final initialDocument = ShareIntentService.takeInitialDocument();
+
   // Load environment variables
   await dotenv.load(fileName: ".env");
 
@@ -23,22 +32,12 @@ void main() async {
     ),
   );
 
-  // Initialize Firebase (for FCM push notifications).
-  // Requires android/app/google-services.json — skip gracefully if absent.
-  try {
-    await Firebase.initializeApp();
-    await PushService.instance.init();
-  } catch (e) {
-    debugPrint('Firebase not configured (google-services.json missing?) — push disabled: $e');
-  }
-
-  // Initialize Notifications
+  // Local notifications and Firebase are both background work. The dashboard
+  // must draw without waiting for either, especially when offline.
   final notificationService = NotificationService();
-  await notificationService.init();
-  // Route foreground FCM messages through the local notification pipeline
-  PushService.instance.setOnPushReceived(
-    (title, body) => notificationService.showNotification(title: title, body: body, payload: 'route:/dashboard'),
-  );
+  unawaited(_initPush(notificationService));
+  unawaited(ShareIntentService.init());
+  final shared = await initialDocument;
 
   runApp(
     MultiProvider(
@@ -50,27 +49,76 @@ void main() async {
         Provider(create: (_) => notificationService),
       ],
       // Always open straight to the dashboard; guests are auto-created by AuthService.
-      child: const MyApp(initialRoute: '/dashboard'),
+      child: MyApp(
+        initialRoute: '/dashboard',
+        initialSharedPath: shared?.path,
+        initialSharedName: shared?.name,
+      ),
     ),
   );
 }
 
+Future<void> _initPush(NotificationService notificationService) async {
+  await notificationService.init();
+  try {
+    await Firebase.initializeApp();
+    // Route foreground FCM messages through the local notification pipeline.
+    PushService.instance.setOnPushReceived(
+      (title, body) => notificationService.showNotification(
+        title: title,
+        body: body,
+        payload: 'route:/dashboard',
+      ),
+    );
+    // Registration talks to FCM and Supabase. Run it in the background too:
+    // a failed token refresh must never block reading.
+    unawaited(PushService.instance.init());
+  } catch (e) {
+    debugPrint(
+      'Firebase not configured (google-services.json missing?) — push disabled: $e',
+    );
+  }
+}
+
 class MyApp extends StatelessWidget {
   final String initialRoute;
-  const MyApp({super.key, required this.initialRoute});
+  final String? initialSharedPath;
+  final String? initialSharedName;
+
+  const MyApp({
+    super.key,
+    required this.initialRoute,
+    this.initialSharedPath,
+    this.initialSharedName,
+  });
 
   @override
   Widget build(BuildContext context) {
     final themeProvider = context.watch<ThemeProvider>();
 
     return MaterialApp(
-      title: 'NotesCache',
+      title: 'Foluma',
       debugShowCheckedModeBanner: false,
       navigatorKey: NotificationService.navigatorKey,
       themeMode: themeProvider.themeMode,
       theme: themeProvider.getThemeData(Brightness.light),
       darkTheme: themeProvider.getThemeData(Brightness.dark),
       initialRoute: initialRoute,
+      onGenerateInitialRoutes: initialSharedPath == null
+          ? null
+          : (routeName) => [
+                MaterialPageRoute<void>(
+                  settings: const RouteSettings(name: '/dashboard'),
+                  builder: (_) => const DashboardPage(),
+                ),
+                MaterialPageRoute<void>(
+                  settings: const RouteSettings(name: '/shared-document'),
+                  builder: (_) => FileViewerPage(
+                    file: File(initialSharedPath!),
+                    title: initialSharedName ?? 'Shared document',
+                  ),
+                ),
+              ],
       routes: {
         '/login': (context) => const LoginPage(),
         '/dashboard': (context) => const DashboardPage(),

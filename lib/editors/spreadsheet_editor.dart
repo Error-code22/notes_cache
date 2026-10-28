@@ -100,7 +100,7 @@ class _SpreadsheetEditorPageState extends State<SpreadsheetEditorPage> {
     final bytes = excel.save();
     if (bytes == null) return;
     await widget.file.writeAsBytes(bytes);
-    _dirty = false;
+    if (mounted) setState(() => _dirty = false);
     await widget.onSave?.call(widget.file);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
