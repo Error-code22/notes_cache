@@ -17,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:local_notifier/local_notifier.dart';
 import 'models.dart';
+import 'policy_constants.dart';
 
 class ThemeProvider extends ChangeNotifier {
   static const String _themeKey = 'theme_mode';
@@ -215,13 +216,33 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<void> signUp(String e, String p, String n) async {
+  Future<void> signUp(
+    String e,
+    String p,
+    String n, {
+    String? course,
+    int? yearLevel,
+    String? schoolId,
+    String? programmeId,
+    int? stageSemester,
+    String? currentPeriodId,
+  }) async {
     _setLoading(true);
     try {
       final res = await _supabase.auth.signUp(
         email: e,
         password: p,
-        data: {'full_name': n, 'year_level': 1, 'role': 'student'},
+        data: {
+          'full_name': n,
+          'course': course ?? 'Computer Science',
+          // New accounts may claim an initial year (1-4) via sign-up metadata.
+          'year_level': yearLevel ?? 1,
+          'role': 'student',
+          if (schoolId != null) 'school_id': schoolId,
+          if (programmeId != null) 'programme_id': programmeId,
+          if (stageSemester != null) 'stage_semester': stageSemester,
+          if (currentPeriodId != null) 'current_period_id': currentPeriodId,
+        },
       );
       if (res.user != null) await _fetchUserProfile(res.user!);
     } finally {
@@ -502,12 +523,17 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<void> updateProfileDetails({String? fullName, String? bio}) async {
+  Future<void> updateProfileDetails({
+    String? fullName,
+    String? bio,
+    String? course,
+  }) async {
     if (_currentUser == null) return;
     try {
       final updates = {
         if (fullName != null) 'full_name': fullName,
         if (bio != null) 'bio': bio,
+        if (course != null) 'course': course,
       };
       await _supabase
           .from('profiles')
@@ -522,6 +548,40 @@ class AuthService extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('updateProfileDetails error: $e');
+    }
+  }
+
+  /// One-time course onboarding for accounts created before the taxonomy
+  /// existed (including Google sign-in). The database only allows moving a
+  /// profile from an unset programme to a chosen one; later changes stay
+  /// admin-only.
+  Future<bool> updateProfileTaxonomy({
+    required String schoolId,
+    required String programmeId,
+    required int yearLevel,
+    required int stageSemester,
+    required String currentPeriodId,
+  }) async {
+    if (_currentUser == null) return false;
+    try {
+      await _supabase.from('profiles').update({
+        'school_id': schoolId,
+        'programme_id': programmeId,
+        'year_level': yearLevel,
+        'stage_semester': stageSemester,
+        'current_period_id': currentPeriodId,
+      }).eq('id', _currentUser!.id);
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', _currentUser!.id)
+          .single();
+      _currentUser = UserProfile.fromMap(data, _currentUser!.email);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('updateProfileTaxonomy error: $e');
+      return false;
     }
   }
 
@@ -897,34 +957,44 @@ class NoteService {
     int? semester,
     String? searchQuery,
     bool myNotesOnly = false,
+    String? programmeId,
+    String? unitId,
+    int? stageYear,
+    int? stageSemester,
+    String? academicPeriodId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final cacheKey = 'notes_cache_${u.id}_${semester ?? "all"}';
+    final isFiltered = searchQuery != null ||
+        programmeId != null ||
+        unitId != null ||
+        stageYear != null ||
+        stageSemester != null ||
+        academicPeriodId != null;
 
     try {
       var q = _supabase.from('notes').select();
-      // Only restrict by yearLevel if they are strictly a student
-      final isStrictlyStudent =
-          u.hasRole(UserRole.student) &&
-          !u.hasRole(UserRole.admin) &&
-          !u.hasRole(UserRole.moderator) &&
-          !u.hasRole(UserRole.lecturer);
 
-      if (myNotesOnly) {
-        q = q.eq('user_id', u.id);
-      } else if (isStrictlyStudent && u.yearLevel != null) {
-        q = q.eq('target_year', u.yearLevel!);
+      // RLS now scopes this list by programme and ownership. Do not filter by
+      // target_year or free-text course: a Year 4 student must still be able
+      // to read Year 1 notes for revision and resits.
+      if (myNotesOnly) q = q.eq('user_id', u.id);
+      if (programmeId != null) q = q.eq('programme_id', programmeId);
+      if (unitId != null) q = q.eq('unit_id', unitId);
+      if (stageYear != null) q = q.eq('stage_year', stageYear);
+      if (stageSemester != null) q = q.eq('stage_semester', stageSemester);
+      if (academicPeriodId != null) {
+        q = q.eq('academic_period_id', academicPeriodId);
       }
       if (semester != null) q = q.eq('semester', semester);
       if (searchQuery != null) q = q.ilike('title', '%$searchQuery%');
 
       final List<dynamic> data = await q
           .order('created_at', ascending: false)
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 8));
 
-      // Save to cache
-      if (searchQuery == null) {
-        // Only cache full lists
+      // Only cache the unfiltered list; filtered results are slices of it.
+      if (!isFiltered) {
         await prefs.setString(cacheKey, jsonEncode(data));
       }
 
@@ -949,6 +1019,47 @@ class NoteService {
       return data.map((item) => Note.fromMap(item, isFromCache: true)).toList();
     }
     return [];
+  }
+
+  /// Writes a local JSON snapshot of a user's notes to the app documents
+  /// directory. Powers the Settings > Auto Backup toggle; the snapshot never
+  /// leaves the device.
+  Future<String?> createLocalBackup(String userId) async {
+    try {
+      final data = await _supabase
+          .from('notes')
+          .select()
+          .eq('user_id', userId)
+          .order('created_at', ascending: false);
+      final notes = (data as List)
+          .map((e) {
+            final m = Map<String, dynamic>.from(e as Map);
+            return {
+              'title': m['title'],
+              'lecturer_name': m['lecturer_name'],
+              'target_year': m['target_year'],
+              'semester': m['semester'],
+              'category': m['category'],
+              'summary': m['summary'],
+              'content': m['content'],
+            };
+          })
+          .toList();
+      final backup = {
+        'exported_at': DateTime.now().toIso8601String(),
+        'user_id': userId,
+        'notes': notes,
+      };
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File(
+        '${dir.path}/foluma_backup_${DateTime.now().millisecondsSinceEpoch}.json',
+      );
+      await file.writeAsString(jsonEncode(backup));
+      return file.path;
+    } catch (e) {
+      debugPrint('createLocalBackup error: $e');
+      return null;
+    }
   }
 
   Future<List<UserActivity>> getUserActivity(
@@ -1055,6 +1166,99 @@ class NoteService {
     }
   }
 
+  /// Removes a pending donation owned by the caller. Used when the file upload
+  /// fails after the row was created, so the review queue never shows a
+  /// submission with no file.
+  Future<bool> deletePendingDonation(String id) async {
+    final donationId = int.tryParse(id);
+    if (donationId == null) return false;
+    try {
+      await _supabase
+          .from('donated_notes')
+          .delete()
+          .eq('id', donationId);
+      return true;
+    } catch (e) {
+      debugPrint('deletePendingDonation error: $e');
+      return false;
+    }
+  }
+
+  /// Creates a note row and returns its id.
+  ///
+  /// The file is uploaded afterwards by [NoteStorageService]; [assetId] and
+  /// [gDriveId] are filled in by [updateNoteAfterUpload] once the upload
+  /// succeeds. AI indexing is only written when the caller has explicitly
+  /// collected consent, because the database rejects `ai_indexed = true`
+  /// without an `ai_consent_at` timestamp.
+  Future<String?> createNote({
+    required String title,
+    required String lecturerName,
+    required int targetYear,
+    required int semester,
+    String? gDriveId,
+    String? content,
+    String? category,
+    String? summary,
+    int? fileSize,
+    String? userId,
+    int? telegramMsgId,
+    String? telegramFileId,
+    String? pdfUrl,
+    String? programmeId,
+    String? unitId,
+    String? unitCode,
+    String? programmeUnitId,
+    String? academicPeriodId,
+    int? stageYear,
+    int? stageSemester,
+    String visibility = 'private',
+    bool aiIndexed = false,
+  }) async {
+    final now = DateTime.now();
+    try {
+      final inserted = await _supabase
+          .from('notes')
+          .insert({
+            'title': title,
+            'lecturer_name': lecturerName,
+            'target_year': targetYear,
+            'semester': semester,
+            'gdrive_id': gDriveId,
+            'content': content ?? '',
+            'category': category ?? 'Note',
+            'summary': summary,
+            'created_at': now.toIso8601String(),
+            'file_size': fileSize ?? 0,
+            'status': 'approved',
+            if (telegramMsgId != null) 'telegram_msg_id': telegramMsgId,
+            if (telegramFileId != null) 'telegram_file_id': telegramFileId,
+            if (userId != null) 'user_id': userId,
+            if (pdfUrl != null) 'pdf_url': pdfUrl,
+            if (programmeId != null) 'programme_id': programmeId,
+            if (unitId != null) 'unit_id': unitId,
+            if (unitCode != null) 'unit_code': unitCode,
+            if (programmeUnitId != null) 'programme_unit_id': programmeUnitId,
+            if (academicPeriodId != null)
+              'academic_period_id': academicPeriodId,
+            if (stageYear != null) 'stage_year': stageYear,
+            if (stageSemester != null) 'stage_semester': stageSemester,
+            'visibility': visibility == 'shared' ? 'shared' : 'private',
+            'ai_indexed': aiIndexed,
+            'ai_consent_at': aiIndexed ? now.toIso8601String() : null,
+            'consent_version': aiIndexed ? '2026-11-06' : null,
+            if (visibility == 'shared') 'shared_at': now.toIso8601String(),
+          })
+          .select('id')
+          .single();
+      return inserted['id']?.toString();
+    } catch (e) {
+      debugPrint('createNote error: $e');
+      return null;
+    }
+  }
+
+  /// Backwards-compatible wrapper used by older screens.
   Future<bool> saveNote({
     required String title,
     required String lecturerName,
@@ -1070,26 +1274,68 @@ class NoteService {
     String? telegramFileId,
     String? pdfUrl,
   }) async {
+    final id = await createNote(
+      title: title,
+      lecturerName: lecturerName,
+      targetYear: targetYear,
+      semester: semester,
+      gDriveId: gDriveId,
+      content: content,
+      category: category,
+      summary: summary,
+      fileSize: fileSize,
+      userId: userId,
+      telegramMsgId: telegramMsgId,
+      telegramFileId: telegramFileId,
+      pdfUrl: pdfUrl,
+    );
+    return id != null;
+  }
+
+  /// Links the uploaded primary asset back to the note row.
+  Future<bool> updateNoteAfterUpload(
+    String noteId, {
+    required String assetId,
+    required String gDriveId,
+  }) async {
     try {
-      await _supabase.from('notes').insert({
-        'title': title,
-        'lecturer_name': lecturerName,
-        'target_year': targetYear,
-        'semester': semester,
+      await _supabase.from('notes').update({
+        'asset_id': assetId,
         'gdrive_id': gDriveId,
-        'content': content ?? '',
-        'category': category ?? 'Note',
-        'summary': summary,
-        'created_at': DateTime.now().toIso8601String(),
-        'file_size': fileSize ?? 0,
-        if (telegramMsgId != null) 'telegram_msg_id': telegramMsgId,
-        if (telegramFileId != null) 'telegram_file_id': telegramFileId,
-        if (userId != null) 'user_id': userId,
-        if (pdfUrl != null) 'pdf_url': pdfUrl,
+      }).eq('id', noteId);
+      return true;
+    } catch (e) {
+      debugPrint('updateNoteAfterUpload error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> setNoteAiConsent(String noteId, bool enabled) async {
+    final id = int.tryParse(noteId);
+    if (id == null) return false;
+    try {
+      await _supabase.rpc('set_note_ai_consent', params: {
+        'p_note_id': id,
+        'p_enabled': enabled,
       });
       return true;
     } catch (e) {
-      debugPrint('saveNote error: $e');
+      debugPrint('setNoteAiConsent error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> setNoteVisibility(String noteId, bool shared) async {
+    final id = int.tryParse(noteId);
+    if (id == null) return false;
+    try {
+      await _supabase.rpc('set_note_visibility', params: {
+        'p_note_id': id,
+        'p_shared': shared,
+      });
+      return true;
+    } catch (e) {
+      debugPrint('setNoteVisibility error: $e');
       return false;
     }
   }
@@ -1502,35 +1748,79 @@ class NoteService {
   /// Submits a donation for admin review — it is NOT public until approved.
   /// Writes both `gdrive_id` (what Note.fromMap reads) and `file_url`
   /// (legacy column) so the file opens either way.
-  Future<bool> saveDonatedNote({
+  Future<String?> saveDonatedNote({
     required String title,
     required String lecturerName,
     required int targetYear,
     required int semester,
+    required String programmeId,
+    required String unitId,
+    required String unitCode,
+    required String programmeUnitId,
+    required String academicPeriodId,
+    required int stageYear,
+    required int stageSemester,
+    required DateTime shareConsentAt,
+    required bool aiConsent,
     String? gDriveId,
     String? content,
     String? category,
     int? fileSize,
     String? userId,
   }) async {
+    final now = DateTime.now();
     try {
-      await _supabase.from('donated_notes').insert({
-        'title': title,
-        'lecturer_name': lecturerName,
-        'target_year': targetYear,
-        'semester': semester,
-        'gdrive_id': gDriveId,
-        'file_url': gDriveId,
-        'content': content ?? '',
-        'category': category ?? 'Donation',
-        'file_size': fileSize ?? 0,
-        'status': 'pending',
-        'created_at': DateTime.now().toIso8601String(),
-        if (userId != null) 'user_id': userId,
-      });
-      return true;
+      final inserted = await _supabase
+          .from('donated_notes')
+          .insert({
+            'title': title,
+            'lecturer_name': lecturerName,
+            'target_year': targetYear,
+            'semester': semester,
+            'gdrive_id': gDriveId,
+            'file_url': gDriveId,
+            'content': content ?? '',
+            'category': category ?? 'Donation',
+            'file_size': fileSize ?? 0,
+            'status': 'pending',
+            'created_at': now.toIso8601String(),
+            if (userId != null) 'user_id': userId,
+            'programme_id': programmeId,
+            'unit_id': unitId,
+            'unit_code': unitCode,
+            'programme_unit_id': programmeUnitId,
+            'academic_period_id': academicPeriodId,
+            'stage_year': stageYear,
+            'stage_semester': stageSemester,
+            'share_consent_at': shareConsentAt.toIso8601String(),
+            'ai_consent_at': aiConsent ? now.toIso8601String() : null,
+            'consent_version': '2026-11-06',
+          })
+          .select('id')
+          .single();
+      return inserted['id']?.toString();
     } catch (e) {
       debugPrint('saveDonatedNote error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> updateDonationAfterUpload(
+    String donationId, {
+    required String assetId,
+    required String gDriveId,
+  }) async {
+    final id = int.tryParse(donationId);
+    if (id == null) return false;
+    try {
+      await _supabase.from('donated_notes').update({
+        'asset_id': assetId,
+        'gdrive_id': gDriveId,
+        'file_url': gDriveId,
+      }).eq('id', id);
+      return true;
+    } catch (e) {
+      debugPrint('updateDonationAfterUpload error: $e');
       return false;
     }
   }
@@ -2084,10 +2374,10 @@ class NoteService {
       return _configCache!;
     } catch (e) {
       debugPrint('getAppConfig error, using defaults: $e');
-      return _configCache ??
-          {
+      if (_configCache != null) return _configCache!;
+      final defaults = <String, String>{
             'about_text':
-                'Foluma v1.0.6\n\nFoluma comes from folio + luma: a place for your pages, made bright and easy to read. Open anything — notes, PDFs, EPUB books, Office files and local documents — even offline.\n\nBuilt for students, by students.\n\n© 2026 Foluma contributors. Licensed under AGPL-3.0.',
+                'Foluma v1.0.7\n\nFoluma comes from folio + luma: a place for your pages, made bright and easy to read. Open anything — notes, PDFs, EPUB books, Office files and local documents — even offline.\n\nBuilt for students, by students.\n\n© 2026 Foluma contributors. Licensed under AGPL-3.0.',
             'terms_and_conditions':
                 'FOLUMA TERMS OF SERVICE\n\nLast Updated: June 2026\n\n1. ACCEPTANCE OF TERMS\nBy accessing or using Foluma ("the App"), you agree to be bound by these Terms of Service. If you do not agree, do not use the App.\n\n2. ELIGIBILITY\nYou must be a currently enrolled student or staff member at a recognized educational institution. You must provide accurate registration information.\n\n3. ACCOUNT RESPONSIBILITY\nYou are responsible for maintaining the confidentiality of your account. You agree to notify us immediately of any unauthorized use. One account per person.\n\n4. USER CONTENT\n4.1 By uploading notes, documents, or other materials ("User Content"), you grant Foluma a non-exclusive, royalty-free license to store, display, and distribute such content within the App for educational purposes.\n4.2 You retain ownership of your User Content.\n4.3 You must not upload content that infringes copyright, contains malware, or violates any law.\n4.4 Foluma reserves the right to remove any User Content at its discretion.\n\n5. AI SERVICES\n5.1 The App provides AI-powered assistance ("Notesy") for educational purposes only.\n5.2 AI responses may contain errors. Always verify information with official course materials.\n5.3 AI usage is subject to daily limits based on your subscription tier.\n5.4 Do not attempt to manipulate, reverse-engineer, or abuse the AI system.\n\n6. PROHIBITED USES\n- Sharing account credentials\n- Scraping or automated data collection\n- Harassment, spam, or abusive behavior in chat rooms\n- Uploading copyrighted material without authorization\n- Attempting to bypass security measures or rate limits\n- Using the App for commercial purposes without a Campus License\n\n7. SUBSCRIPTION & PAYMENTS\n7.1 Free tier is available at no cost with limited features.\n7.2 Paid subscriptions (Student Pro, Campus License) are billed via M-Pesa.\n7.3 Subscriptions auto-renew unless cancelled before the billing date.\n7.4 Refunds are available within 7 days of purchase if less than 10 AI queries were made.\n\n8. TERMINATION\nWe may suspend or terminate your account for violations of these Terms. Upon termination, your right to use the App ceases immediately.\n\n9. LIMITATION OF LIABILITY\nFoluma is provided "as is" without warranties. We are not liable for any damages arising from use of the App, including but not limited to academic consequences from relying on AI-generated content.\n\n10. GOVERNING LAW\nThese Terms are governed by the laws of the Republic of Kenya.\n\n11. CONTACT\nFor questions about these Terms, contact: ryanmuhia22@gmail.com',
             'privacy_policy':
@@ -2096,7 +2386,10 @@ class NoteService {
             'support_phone': '+254700000000',
             'support_whatsapp': '254700000000',
             'mpesa_no': '123456',
-          };
+      };
+      defaults['terms_and_conditions'] = AppPolicies.termsAndConditions;
+      defaults['privacy_policy'] = AppPolicies.privacyPolicy;
+      return defaults;
     }
   }
 

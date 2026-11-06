@@ -2,10 +2,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
-import 'r2_service.dart';
+import 'donate_notes_page.dart';
+import 'note_storage_service.dart';
 import 'services.dart';
 import 'models.dart';
-import 'editors/pptx_to_pdf.dart';
+import 'taxonomy_service.dart';
+import 'widgets/unit_picker.dart';
 
 class UploadNotePage extends StatefulWidget {
   const UploadNotePage({super.key});
@@ -21,8 +23,12 @@ class _UploadNotePageState extends State<UploadNotePage> {
   List<File> _selectedFiles = [];
   final Map<String, double> _uploadProgress = {};
   final Map<String, String> _uploadStatus = {};
-  int _selectedYear = 1;
-  int _selectedSemester = 1;
+  ProgrammeUnit? _selectedUnit;
+  AcademicPeriod? _selectedPeriod;
+  Programme? _programme;
+  String _visibility = 'shared';
+  bool _shareConsent = false;
+  bool _aiConsent = false;
   bool _isUploading = false;
   bool _isCancelled = false;
   int _uploadedCount = 0;
@@ -39,18 +45,20 @@ class _UploadNotePageState extends State<UploadNotePage> {
     super.dispose();
   }
 
-  @override
-  void initState() {
-    super.initState();
-    // Default to student's year if available
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final user = context.read<AuthService>().currentUser;
-      if (user != null && user.hasRole(UserRole.student) && user.yearLevel != null) {
-        setState(() {
-          _selectedYear = user.yearLevel!;
-        });
-      }
-    });
+  bool _isStaff(UserProfile? user) {
+    return user != null &&
+        (user.hasRole(UserRole.admin) ||
+            user.hasRole(UserRole.lecturer) ||
+            user.hasRole(UserRole.classRep));
+  }
+
+  bool get _canSubmit {
+    final consentOk = _visibility == 'private' || _shareConsent;
+    return _selectedFiles.isNotEmpty &&
+        !_isUploading &&
+        _selectedUnit != null &&
+        _selectedPeriod != null &&
+        consentOk;
   }
 
   Future<void> _pickFiles() async {
@@ -105,9 +113,52 @@ class _UploadNotePageState extends State<UploadNotePage> {
     }
   }
 
+  String _categoryForExtension(String ext) {
+    if (ext == 'pdf') return 'PDF';
+    if (ext == 'pptx' || ext == 'ppt') return 'Slides';
+    if (ext == 'pub') return 'Publisher';
+    if (ext == 'docx' || ext == 'doc') return 'Document';
+    if (['jpg', 'jpeg', 'png'].contains(ext)) return 'Image';
+    if (ext == 'txt' || ext == 'md') return 'Text';
+    if (['mp4', 'mov', 'mkv'].contains(ext)) return 'Video';
+    if (['mp3', 'wav', 'm4a'].contains(ext)) return 'Audio';
+    if (['csv', 'xls', 'xlsx'].contains(ext)) return 'Spreadsheet';
+    if (['py', 'java', 'cpp', 'dart', 'html', 'json'].contains(ext)) return 'Code';
+    return 'Note';
+  }
+
+  Future<void> _discardNote(NoteService noteService, String noteId, String userId) async {
+    final deleted = await noteService.deleteNote(noteId, userId: userId);
+    if (!deleted) {
+      debugPrint('UploadNotePage: could not delete orphaned note $noteId');
+    }
+  }
+
   Future<void> _handleBatchUpload() async {
+    final user = context.read<AuthService>().currentUser;
+    final unit = _selectedUnit;
+    final period = _selectedPeriod;
+
     if (_selectedFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one file!')));
+      return;
+    }
+    if (user == null || user.isGuest || !_isStaff(user)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only class reps, lecturers and admins can upload here.')),
+      );
+      return;
+    }
+    if (unit == null || period == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose the unit and academic period first.')),
+      );
+      return;
+    }
+    if (_visibility == 'shared' && !_shareConsent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Confirm the sharing notice before publishing.')),
+      );
       return;
     }
 
@@ -124,15 +175,13 @@ class _UploadNotePageState extends State<UploadNotePage> {
       }
     });
 
-    final authService = context.read<AuthService>();
-    final cloudinaryService = CloudinaryService();
-    final noteService = NoteService();
+    final noteService = context.read<NoteService>();
+    final storageService = NoteStorageService();
 
     try {
-
       for (var file in _selectedFiles) {
         if (!mounted || _isCancelled) break;
-        
+
         setState(() {
           _uploadStatus[file.path] = 'Checking...';
         });
@@ -140,23 +189,12 @@ class _UploadNotePageState extends State<UploadNotePage> {
         final fileName = file.path.split(Platform.pathSeparator).last;
         final fileSize = await file.length();
         final ext = fileName.split('.').last.toLowerCase();
-        
-        // Auto-determine category
-        String category = 'Note';
-        if (ext == 'pdf') category = 'PDF';
-        else if (ext == 'pptx' || ext == 'ppt') category = 'Slides';
-        else if (ext == 'pub') category = 'Publisher';
-        else if (ext == 'docx' || ext == 'doc') category = 'Document';
-        else if (['jpg', 'jpeg', 'png'].contains(ext)) category = 'Image';
-        else if (ext == 'txt' || ext == 'md') category = 'Text';
-        else if (['mp4', 'mov', 'mkv'].contains(ext)) category = 'Video';
-        else if (['mp3', 'wav', 'm4a'].contains(ext)) category = 'Audio';
-        else if (['csv', 'xls', 'xlsx'].contains(ext)) category = 'Spreadsheet';
-        else if (['py', 'java', 'cpp', 'dart', 'html', 'json'].contains(ext)) category = 'Code';
+        final category = _categoryForExtension(ext);
 
         final extension = fileName.contains('.') ? '.${fileName.split('.').last}' : '';
         String finalTitle = _selectedFiles.length > 1 ? fileName.split('.').first : _titleController.text;
-        
+        if (finalTitle.trim().isEmpty) finalTitle = fileName.split('.').first;
+
         // Ensure title has the extension for smart detection
         if (!finalTitle.toLowerCase().endsWith(extension.toLowerCase())) {
           finalTitle = "$finalTitle$extension";
@@ -165,8 +203,8 @@ class _UploadNotePageState extends State<UploadNotePage> {
         // Smart Duplicate Check
         final duplicate = await noteService.findDuplicateNote(
           title: finalTitle,
-          year: _selectedYear,
-          semester: _selectedSemester,
+          year: unit.stageYear,
+          semester: unit.stageSemester,
           fileSize: fileSize,
         );
 
@@ -194,113 +232,114 @@ class _UploadNotePageState extends State<UploadNotePage> {
         }
 
         setState(() {
-          _uploadStatus[file.path] = 'Uploading...';
+          _uploadStatus[file.path] = 'Creating note...';
         });
 
-        final uploadResult = await cloudinaryService.uploadFileWithBackup(
-          file: file,
-          userId: authService.currentUser?.id ?? 'guest',
-          folder: 'notes',
-          onProgress: (p) {
-            if (mounted && !_isCancelled) {
-              setState(() => _uploadProgress[file.path] = p);
-            }
-          },
+        // Create the row first so the upload function can verify ownership.
+        final noteId = await noteService.createNote(
+          title: finalTitle,
+          lecturerName: user.fullName ?? 'Staff Upload',
+          targetYear: unit.stageYear,
+          semester: unit.stageSemester,
+          content: _contentController.text,
+          category: category,
+          fileSize: fileSize,
+          userId: user.id,
+          programmeId: unit.programmeId,
+          unitId: unit.unitId,
+          unitCode: unit.unitCode,
+          programmeUnitId: unit.id,
+          academicPeriodId: period.id,
+          stageYear: unit.stageYear,
+          stageSemester: unit.stageSemester,
+          visibility: _visibility,
+          aiIndexed: _aiConsent,
         );
 
-        if (_isCancelled || !mounted) break;
-
-        if (!uploadResult.success) {
+        if (noteId == null) {
           setState(() {
-            _uploadStatus[file.path] = '❌ Upload Failed';
+            _uploadStatus[file.path] = '❌ Could not create note';
             _failedCount++;
           });
           continue;
         }
 
         setState(() {
-          _uploadStatus[file.path] = 'Syncing...';
-          _uploadProgress[file.path] = 0.95;
+          _uploadStatus[file.path] = 'Uploading...';
         });
 
-        final dbSuccess = await noteService.saveNote(
-          title: finalTitle,
-          lecturerName: (authService.currentUser?.isGuest ?? false) 
-              ? 'Guest Contributor' 
-              : (authService.currentUser?.fullName ?? 'Student Upload'),
-          targetYear: _selectedYear,
-          semester: _selectedSemester,
-          gDriveId: uploadResult.url,
-          content: _contentController.text,
-          summary: _summaryController.text,
-          fileSize: fileSize,
-          category: category,
-          telegramMsgId: uploadResult.telegramMsgId,
-          telegramFileId: uploadResult.telegramFileId,
-          userId: authService.currentUser?.isGuest == true ? null : authService.currentUser?.id,
+        final asset = await storageService.uploadFile(
+          file: file,
+          userId: user.id,
+          noteId: noteId,
+          telegramBackup: _visibility == 'shared',
+          onProgress: (p) {
+            if (mounted && !_isCancelled) {
+              setState(() => _uploadProgress[file.path] = p * 0.9);
+            }
+          },
         );
 
-        if (dbSuccess && mounted && !_isCancelled) {
+        if (_isCancelled || !mounted) {
+          await _discardNote(noteService, noteId, user.id);
+          break;
+        }
+
+        if (asset == null) {
+          await _discardNote(noteService, noteId, user.id);
           setState(() {
-            _uploadStatus[file.path] = 'Indexing for AI...';
-            _uploadProgress[file.path] = 0.97;
+            _uploadStatus[file.path] = '❌ Upload failed';
+            _uploadProgress[file.path] = 0;
+            _failedCount++;
           });
-          await noteService.indexForAi(file, finalTitle);
-
-          // Background AI summary (queued, rate-limited, never blocks upload)
-          if (_summaryController.text.trim().isEmpty) {
-            final noteId = await noteService.getNoteIdByTitle(finalTitle);
-            if (noteId != null) {
-              AiChatService.queueSummarize(() async {
-                final text = await noteService.extractNoteText(file);
-                if (text.length < 20) return null;
-                final summary = await AiChatService().summarizeNote(finalTitle, text);
-                if (summary.isEmpty) return null;
-                await noteService.updateNoteSummary(noteId, summary);
-                return summary;
-              });
-            }
-          }
-
-          // Background PDF conversion for presentations (client-side, no server needed)
-          if (['pptx', 'ppt'].contains(ext) && uploadResult.url != null) {
-            final noteId = await noteService.getNoteIdByTitle(finalTitle);
-            if (noteId != null) {
-              try {
-                final pdfBytes = await PptxToPdf.convert(file, title: finalTitle);
-                // Write PDF to temp file for upload
-                final tempDir = Directory.systemTemp;
-                final pdfFile = File('${tempDir.path}${Platform.pathSeparator}${noteId}_converted.pdf');
-                await pdfFile.writeAsBytes(pdfBytes);
-                // Upload PDF to Cloudinary
-                final pdfUrl = await CloudinaryService().uploadFile(
-                  file: pdfFile,
-                  userId: authService.currentUser?.id ?? 'guest',
-                  folder: 'notes',
-                );
-                if (pdfUrl != null) {
-                  await noteService.updateNotePdfUrl(noteId, pdfUrl);
-                  debugPrint('PDF conversion succeeded: $pdfUrl');
-                }
-                // Cleanup temp file
-                await pdfFile.delete();
-              } catch (e) {
-                debugPrint('PDF conversion failed (non-blocking): $e');
-              }
-            }
-          }
+          continue;
         }
 
         setState(() {
-          if (dbSuccess) {
+          _uploadStatus[file.path] = 'Attaching file...';
+          _uploadProgress[file.path] = 0.95;
+        });
+
+        var linked = await noteService.updateNoteAfterUpload(
+          noteId,
+          assetId: asset.assetId,
+          gDriveId: asset.url,
+        );
+        if (!linked) {
+          // One retry: the asset row may not be visible at the instant the
+          // upload response returns.
+          linked = await noteService.updateNoteAfterUpload(
+            noteId,
+            assetId: asset.assetId,
+            gDriveId: asset.url,
+          );
+        }
+
+        if (!linked) {
+          await _discardNote(noteService, noteId, user.id);
+          setState(() {
+            _uploadStatus[file.path] = '❌ Could not attach file';
+            _uploadProgress[file.path] = 0;
+            _failedCount++;
+          });
+          continue;
+        }
+
+        if (_aiConsent) {
+          await noteService.indexForAi(file, finalTitle);
+        }
+
+        if (_summaryController.text.trim().isNotEmpty) {
+          await noteService.updateNoteSummary(noteId, _summaryController.text.trim());
+        }
+
+        if (mounted && !_isCancelled) {
+          setState(() {
             _uploadStatus[file.path] = '✅ Success';
             _uploadProgress[file.path] = 1.0;
             _uploadedCount++;
-          } else {
-            _uploadStatus[file.path] = '⚠️ DB Failed';
-            _failedCount++;
-          }
-        });
+          });
+        }
       }
 
       // Check if all succeeded
@@ -322,7 +361,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'), 
+            content: Text('Error: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           )
@@ -337,7 +376,6 @@ class _UploadNotePageState extends State<UploadNotePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final user = context.watch<AuthService>().currentUser;
-    final isStudent = user?.hasRole(UserRole.student) ?? true;
 
     // Guests can't upload to the main library (use Donate instead).
     if (user?.isGuest == true) {
@@ -378,6 +416,53 @@ class _UploadNotePageState extends State<UploadNotePage> {
       );
     }
 
+    // Only class reps, lecturers and admins may publish here. Students (and
+    // anyone without a staff assignment) are sent to the donation flow.
+    if (!_isStaff(user)) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Lecturer Tools', style: TextStyle(fontWeight: FontWeight.bold)),
+          centerTitle: true,
+          elevation: 0,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.volunteer_activism_outlined, size: 64, color: theme.colorScheme.primary.withOpacity(0.35)),
+                const SizedBox(height: 20),
+                const Text(
+                  'Students can donate notes',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Direct uploads are for class reps, lecturers and admins. Donated notes are reviewed by an admin before they are shared with your programme.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6), fontSize: 14, height: 1.5),
+                ),
+                const SizedBox(height: 28),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const DonateNotesPage()),
+                  ),
+                  icon: const Icon(Icons.favorite_outline),
+                  label: const Text('DONATE NOTES'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Lecturer Tools', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -405,9 +490,18 @@ class _UploadNotePageState extends State<UploadNotePage> {
               ] else ...[
                 _buildFileTypeChips(theme),
                 const SizedBox(height: 20),
+                _buildSectionHeader(context, 'Course & Unit'),
+                const SizedBox(height: 12),
+                UnitPicker(
+                  enabled: !_isUploading,
+                  onUnitChanged: (unit) => setState(() => _selectedUnit = unit),
+                  onPeriodChanged: (period) => setState(() => _selectedPeriod = period),
+                  onProgrammeChanged: (programme) => setState(() => _programme = programme),
+                ),
+                const SizedBox(height: 24),
                 _buildSectionHeader(context, 'General Information'),
                 const SizedBox(height: 16),
-                if (!isStudent && _selectedFiles.length == 1)
+                if (_selectedFiles.length == 1)
                   _buildTextField(
                     theme,
                     controller: _titleController,
@@ -419,7 +513,7 @@ class _UploadNotePageState extends State<UploadNotePage> {
                 _buildTextField(
                   theme,
                   controller: _contentController,
-                  label: isStudent ? 'Description (Optional)' : 'Batch Description (Optional)',
+                  label: 'Batch Description (Optional)',
                   hint: 'Add some context...',
                   icon: Icons.description,
                   maxLines: 2,
@@ -433,22 +527,10 @@ class _UploadNotePageState extends State<UploadNotePage> {
                   icon: Icons.summarize,
                   maxLines: 3,
                 ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDropdown(theme, 'Target Year', _selectedYear, [1, 2, 3, 4], (val) {
-                        setState(() => _selectedYear = val!);
-                      }),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _buildDropdown(theme, 'Semester', _selectedSemester, [1, 2], (val) {
-                        setState(() => _selectedSemester = val!);
-                      }),
-                    ),
-                  ],
-                ),
+                const SizedBox(height: 24),
+                _buildSectionHeader(context, 'Visibility & AI'),
+                const SizedBox(height: 12),
+                _buildVisibilityCard(theme),
                 const SizedBox(height: 24),
                 _buildSectionHeader(context, 'Files to Upload'),
                 const SizedBox(height: 12),
@@ -473,6 +555,93 @@ class _UploadNotePageState extends State<UploadNotePage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildVisibilityCard(ThemeData theme) {
+    final shared = _visibility == 'shared';
+    final programmeName = _programme?.name;
+
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: theme.dividerColor.withOpacity(0.12)),
+      ),
+      child: Column(
+        children: [
+          SwitchListTile.adaptive(
+            value: shared,
+            onChanged: _isUploading
+                ? null
+                : (value) {
+                    setState(() {
+                      _visibility = value ? 'shared' : 'private';
+                      // Visibility is a fresh consent decision each time the
+                      // uploader changes it; never keep AI access silently on.
+                      _shareConsent = false;
+                      _aiConsent = false;
+                    });
+                  },
+            title: Text(
+              shared ? 'Shared with my programme' : 'Private (only me)',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              shared
+                  ? 'Students in your programme can read this note across all stages and periods.'
+                  : 'Only you can read this note. You can still let Foluma AI search it.',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+            ),
+            secondary: Icon(
+              shared ? Icons.people_outline : Icons.lock_outline,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          if (shared)
+            CheckboxListTile(
+              value: _shareConsent,
+              onChanged: _isUploading
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _shareConsent = value ?? false;
+                        // AI defaults on only after the uploader actively
+                        // confirms sharing; it is never enabled silently.
+                        _aiConsent = _shareConsent;
+                      });
+                    },
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text(
+                'I understand this note will be shared with students in '
+                '${programmeName ?? 'my programme'}, stored in the cloud, and '
+                'indexed so AI can search it.',
+                style: const TextStyle(fontSize: 12.5, height: 1.4),
+              ),
+            ),
+          const Divider(height: 1),
+          CheckboxListTile(
+            value: _aiConsent,
+            onChanged: (_isUploading || (shared && !_shareConsent))
+                ? null
+                : (value) => setState(() => _aiConsent = value ?? false),
+            controlAffinity: ListTileControlAffinity.leading,
+            title: const Text(
+              'Let Foluma AI search this note',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: const Text(
+              'Foluma AI is cloud-hosted (Groq / Google Gemini). When this is on, '
+              'the text of this note is extracted and stored as searchable chunks '
+              'in the cloud so AI can answer questions about it. Turning it off '
+              'deletes those chunks. Shared files are stored in Cloudflare R2 with '
+              'a Telegram backup; private files are not copied to Telegram.',
+              style: TextStyle(fontSize: 12, height: 1.4),
+            ),
+          ),
+        ],
       ),
     );
   }

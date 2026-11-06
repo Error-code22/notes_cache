@@ -26,7 +26,7 @@ class AdminDashboardPage extends StatelessWidget {
     {'name': 'Feedback Central', 'desc': 'Bug reports & ideas', 'icon': Icons.forum_rounded, 'color': Color(0xFF42A5F5), 'page': 2},
     {'name': 'Content Vault', 'desc': 'Notes & backups', 'icon': Icons.library_books_rounded, 'color': Color(0xFF66BB6A), 'page': 3},
     {'name': 'AI Control Room', 'desc': 'Model & limits', 'icon': Icons.psychology_rounded, 'color': Color(0xFFAB47BC), 'page': 4},
-    {'name': 'Cloud Status', 'desc': 'Cloudinary + R2 usage', 'icon': Icons.cloud_rounded, 'color': Color(0xFFEF5350), 'page': 5},
+    {'name': 'Cloud Status', 'desc': 'Supabase + Cloudinary + R2 usage', 'icon': Icons.cloud_rounded, 'color': Color(0xFFEF5350), 'page': 5},
     {'name': 'System Health', 'desc': 'Feature toggles & charts', 'icon': Icons.monitor_heart_rounded, 'color': Color(0xFFEC407A), 'page': 6},
     {'name': 'Help & Support', 'desc': 'Contact & channels', 'icon': Icons.headset_mic_rounded, 'color': Color(0xFFFFA726), 'page': 7},
     {'name': 'App Updates', 'desc': 'Announcements', 'icon': Icons.campaign_rounded, 'color': Color(0xFF7E57C2), 'page': 8},
@@ -1200,64 +1200,209 @@ class _CloudStatusPage extends StatefulWidget {
 }
 
 class _CloudStatusPageState extends State<_CloudStatusPage> {
-  Map<String, dynamic>? _data;
+  // Supabase free-tier limits used for the usage bars. Postgres reports bytes,
+  // and Supabase's dashboard uses binary MB/GB, so use 1024-based constants.
+  static const int _supabaseDbFreeBytes = 500 * 1024 * 1024;
+  static const int _supabaseStorageFreeBytes = 1024 * 1024 * 1024;
+  static const int _cloudinaryCreditsLimit = 25;
+  static const Duration _cloudinaryStaleAfter = Duration(minutes: 10);
+
+  Map<String, dynamic>? _cloudinary;
   Map<String, dynamic>? _r2;
+  Map<String, dynamic>? _supabaseStats;
+  String? _cloudinaryError;
   String? _r2Error;
+  String? _supabaseError;
   bool _loading = true;
+  bool _cloudinaryLoading = false;
+  bool _r2Loading = false;
+  bool _supabaseLoading = false;
+
+  bool get _anyLoading => _cloudinaryLoading || _r2Loading || _supabaseLoading;
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() { super.initState(); _loadAll(); }
 
-  Future<void> _load() async {
-    setState(() { _loading = true; _r2Error = null; });
+  Future<void> _loadAll() async {
+    await Future.wait([
+      _loadCloudinary(),
+      _loadR2(),
+      _loadSupabaseStats(),
+    ]);
+    if (mounted) setState(() => _loading = false);
+  }
 
+  Future<void> _loadCloudinary() async {
+    if (mounted) setState(() => _cloudinaryLoading = true);
     try {
       final r = await Supabase.instance.client.functions.invoke('cloudinary-usage');
       final d = r.data;
-      _data = d is Map ? Map<String, dynamic>.from(d) : null;
-    } catch (_) {
-      _data = null;
+      if (!mounted) return;
+      if (d is Map && d['error'] == null) {
+        setState(() {
+          _cloudinary = Map<String, dynamic>.from(d);
+          _cloudinaryError = null;
+        });
+      } else {
+        setState(() {
+          _cloudinary = null;
+          _cloudinaryError = d is Map
+              ? (d['error'] ?? 'Cloudinary usage is unavailable.').toString()
+              : 'Cloudinary usage is unavailable.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cloudinary = null;
+        _cloudinaryError = _functionError(e, 'Cloudinary usage is unavailable.');
+      });
+    } finally {
+      if (mounted) setState(() => _cloudinaryLoading = false);
     }
+  }
 
+  Future<void> _loadR2() async {
+    if (mounted) setState(() => _r2Loading = true);
     try {
       final r = await Supabase.instance.client.functions.invoke('r2-usage');
       final d = r.data;
+      if (!mounted) return;
       if (d is Map && d['error'] == null) {
-        _r2 = Map<String, dynamic>.from(d);
+        setState(() {
+          _r2 = Map<String, dynamic>.from(d);
+          _r2Error = null;
+        });
       } else {
-        _r2 = null;
-        _r2Error = d is Map ? (d['error'] ?? d['hint'] ?? 'Could not load R2 usage').toString() : 'Could not load R2 usage';
+        setState(() {
+          _r2 = null;
+          _r2Error = d is Map
+              ? (d['error'] ?? d['hint'] ?? 'Could not load R2 usage').toString()
+              : 'Could not load R2 usage';
+        });
       }
     } catch (e) {
-      _r2 = null;
-      _r2Error = 'R2 usage is unavailable. Add CLOUDFLARE_API_TOKEN to Supabase secrets.';
+      if (!mounted) return;
+      setState(() {
+        _r2 = null;
+        _r2Error = _functionError(
+          e,
+          'R2 usage is unavailable. Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to Supabase secrets.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _r2Loading = false);
     }
+  }
 
-    if (mounted) setState(() => _loading = false);
+  Future<void> _loadSupabaseStats() async {
+    if (mounted) setState(() => _supabaseLoading = true);
+    try {
+      final data = await Supabase.instance.client.rpc('admin_cloud_stats');
+      if (!mounted) return;
+      if (data is Map) {
+        setState(() {
+          _supabaseStats = Map<String, dynamic>.from(data);
+          _supabaseError = null;
+        });
+      } else {
+        setState(() {
+          _supabaseStats = null;
+          _supabaseError = 'admin_cloud_stats returned an unexpected response.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _supabaseStats = null;
+        _supabaseError = _rpcError(e);
+      });
+    } finally {
+      if (mounted) setState(() => _supabaseLoading = false);
+    }
+  }
+
+  String _functionError(Object error, String fallback) {
+    if (error is FunctionException) {
+      final details = error.details;
+      if (details is Map && details['error'] != null) {
+        return details['error'].toString();
+      }
+      final reason = (error.reasonPhrase ?? '').trim();
+      if (reason.isNotEmpty) return reason;
+    }
+    final text = error.toString().trim();
+    return text.isEmpty ? fallback : '$fallback ($text)';
+  }
+
+  String _rpcError(Object error) {
+    if (error is PostgrestException) {
+      if (error.code == '42501') return 'Admin access required.';
+      if (error.message.trim().isNotEmpty) {
+        return '${error.message} Apply supabase/migrations/20261106020000_admin_cloud_stats.sql if it is missing.';
+      }
+    }
+    return 'Supabase stats are unavailable. Apply supabase/migrations/20261106020000_admin_cloud_stats.sql. ($error)';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Cloud Status')),
+      appBar: AppBar(
+        title: const Text('Cloud Status'),
+        actions: [
+          TextButton.icon(
+            onPressed: _anyLoading ? null : _loadAll,
+            icon: _anyLoading
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.refresh, size: 18),
+            label: const Text('Refresh all'),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _load,
+              onRefresh: _loadAll,
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  _supabaseSection(context),
+                  const SizedBox(height: 16),
                   _cloudinarySection(context),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
                   _r2Section(context),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Each card is fetched directly from its source. Pull down, use a card refresh icon, '
+                    'or tap "Refresh all" to fetch new numbers.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  ),
                 ],
               ),
             ),
     );
   }
 
-  Widget _cloudinarySection(BuildContext context) {
-    final d = _data;
+  Widget _supabaseSection(BuildContext context) {
+    final d = _supabaseStats;
+    final dbBytes = _asDouble(d?['dbBytes']);
+    final storageBytes = _asDouble(d?['storageBytes']);
+    final storageObjects = _asInt(d?['storageObjects']);
+    final notesBytes = _asDouble(d?['notesBytes']);
+    final notesCount = _asInt(d?['notesCount']);
+    final assetsBytes = _asDouble(d?['assetsBytes']);
+    final assetsCount = _asInt(d?['assetsCount']);
+    final rawReplicas = d?['replicasByProvider'];
+    final replicas = rawReplicas is Map ? Map<String, dynamic>.from(rawReplicas) : const <String, dynamic>{};
+    final pendingJobs = _asInt(d?['pendingJobs']);
+    final failedJobs = _asInt(d?['failedJobs']);
+    final dbFraction = dbBytes / _supabaseDbFreeBytes;
+    final storageFraction = storageBytes / _supabaseStorageFreeBytes;
+    final dbColor = dbFraction >= 0.9 ? Colors.red : dbFraction >= 0.75 ? Colors.orange : Colors.teal;
+    final storageColor = storageFraction >= 0.9 ? Colors.red : storageFraction >= 0.75 ? Colors.orange : Colors.blue;
+
     return Card(
       elevation: 0,
       child: Padding(
@@ -1265,33 +1410,154 @@ class _CloudStatusPageState extends State<_CloudStatusPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              const Icon(Icons.cloud_outlined, size: 20),
-              const SizedBox(width: 8),
-              Text('Cloudinary', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            ]),
-            const SizedBox(height: 14),
-            if (d == null || d['error'] != null)
-              Text(d?['error']?.toString() ?? 'Cloudinary usage is unavailable.', style: const TextStyle(color: Colors.red, fontSize: 12))
+            _cardHeader(
+              context,
+              Icons.storage_rounded,
+              'Supabase',
+              loading: _supabaseLoading,
+              onRefresh: _loadSupabaseStats,
+            ),
+            const SizedBox(height: 8),
+            if (d == null)
+              Text(_supabaseError ?? 'Supabase stats are unavailable.', style: const TextStyle(color: Colors.red, fontSize: 12))
             else ...[
-              _usageBar('Credits Used', '${(d['creditsUsedPercent'] ?? 0).toStringAsFixed(2)}%',
-                  (d['creditsUsedPercent'] ?? 0).toDouble() / 100, Colors.indigo),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _statusPill('Live', Icons.bolt_rounded, Colors.green),
+                  _pill(Icons.schedule, 'Updated ${_formatTimestamp(d['updatedAt'])}'),
+                ],
+              ),
               const SizedBox(height: 14),
-              _usageBar('Storage', '${((d['storageBytes'] ?? 0) / 1e9).toStringAsFixed(2)} GB',
-                  (d['storageCreditsPercent'] ?? 0).toDouble() / 100, Colors.blue),
+              _usageBar('Database', '${_formatBytes(dbBytes)} / 500 MB', dbFraction, dbColor,
+                  caption: 'Postgres database size (free tier: 500 MB)'),
               const SizedBox(height: 14),
-              _usageBar('Bandwidth (this month)', '${((d['bandwidthBytes'] ?? 0) / 1e9).toStringAsFixed(2)} GB',
-                  (d['bandwidthCreditsPercent'] ?? 0).toDouble() / 100, Colors.green),
+              _usageBar('Storage', '${_formatBytes(storageBytes)} / 1 GB', storageFraction, storageColor,
+                  caption: 'Supabase Storage (free tier: 1 GB)'),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _pill(Icons.description_outlined, '$notesCount notes · ${_formatBytes(notesBytes)}'),
+                  _pill(Icons.attachment_outlined, '$assetsCount assets · ${_formatBytes(assetsBytes)}'),
+                  _pill(Icons.inventory_2_outlined, '$storageObjects objects'),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text('Replicas by provider', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[700])),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _pill(Icons.cloud_queue_rounded, 'R2 ${_asInt(replicas['r2'])}'),
+                  _pill(Icons.send_outlined, 'Telegram ${_asInt(replicas['telegram'])}'),
+                  _pill(Icons.cloud_outlined, 'Cloudinary ${_asInt(replicas['cloudinary'])}'),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _statusPill('$pendingJobs pending jobs', Icons.schedule,
+                      pendingJobs > 0 ? Colors.orange : Colors.green),
+                  _statusPill('$failedJobs failed jobs', Icons.error_outline,
+                      failedJobs > 0 ? Colors.red : Colors.green),
+                ],
+              ),
               const SizedBox(height: 10),
-              Text('Free tier = 25 credits/month. Each credit = 1GB storage OR 1GB bandwidth.',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+              Text(
+                'Read live from Postgres. Pending = queued or running storage jobs.',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cloudinarySection(BuildContext context) {
+    final d = _cloudinary;
+    final lastUpdated = _parseTimestamp(d?['lastUpdated']);
+    final stale = lastUpdated != null && DateTime.now().difference(lastUpdated) > _cloudinaryStaleAfter;
+    final creditsUsed = _asDouble(d?['creditsUsed']);
+    final creditsLimit = _asDouble(d?['creditsLimit'], _cloudinaryCreditsLimit.toDouble());
+    final limit = creditsLimit <= 0 ? _cloudinaryCreditsLimit.toDouble() : creditsLimit;
+    final storageBytes = _asDouble(d?['storageBytes']);
+    final bandwidthBytes = _asDouble(d?['bandwidthBytes']);
+    final storageCredits = _asDouble(d?['storageCredits']);
+    final bandwidthCredits = _asDouble(d?['bandwidthCredits']);
+    final transformationCredits = _asDouble(d?['transformationCredits']);
+    final mediaRequests = _asInt(d?['mediaRequests']);
+    final plan = (d?['plan'] ?? 'unknown').toString();
+    final usageDate = (d?['usageDate'] ?? '').toString();
+
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _cardHeader(
+              context,
+              Icons.cloud_outlined,
+              'Cloudinary',
+              loading: _cloudinaryLoading,
+              onRefresh: _loadCloudinary,
+            ),
+            const SizedBox(height: 8),
+            if (d == null)
+              Text(_cloudinaryError ?? 'Cloudinary usage is unavailable.', style: const TextStyle(color: Colors.red, fontSize: 12))
+            else ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _statusPill('Live', Icons.bolt_rounded, Colors.green),
+                  _pill(Icons.workspace_premium_outlined, 'Plan: $plan'),
+                  stale
+                      ? _statusPill('Stale — older than 10 min', Icons.warning_amber_rounded, Colors.orange)
+                      : _pill(Icons.schedule, 'Updated ${_formatTimestamp(d['lastUpdated'])}'),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _usageBar('Credits used', '${creditsUsed.toStringAsFixed(2)} / ${limit.toStringAsFixed(0)}',
+                  creditsUsed / limit, Colors.indigo,
+                  caption: 'Cloudinary free tier = ${limit.toStringAsFixed(0)} credits/month'),
+              const SizedBox(height: 14),
+              _usageBar('Storage', '${(storageBytes / 1e9).toStringAsFixed(2)} GB',
+                  storageCredits / limit, Colors.blue,
+                  caption: '${storageCredits.toStringAsFixed(2)} storage credits'),
+              const SizedBox(height: 14),
+              _usageBar('Bandwidth (this month)', '${(bandwidthBytes / 1e9).toStringAsFixed(2)} GB',
+                  bandwidthCredits / limit, Colors.green,
+                  caption: '${bandwidthCredits.toStringAsFixed(2)} bandwidth credits'),
               const SizedBox(height: 10),
-              Row(children: [
-                Icon(Icons.workspace_premium_outlined, size: 16, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 6),
-                Text('Plan: ${d['plan'] ?? 'Free'}',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.primary)),
-              ]),
+              Text(
+                'Transformations: ${transformationCredits.toStringAsFixed(2)} credits · '
+                'Media requests: $mediaRequests',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+              if (usageDate.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Cloudinary usage date: $usageDate (fetched live just now)',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+              ],
+              if (stale) ...[
+                const SizedBox(height: 10),
+                _notice(
+                  'Cloudinary has not updated this usage in over 10 minutes. '
+                  'The numbers may be delayed; refresh to check again.',
+                  Colors.orange[800]!,
+                ),
+              ],
             ],
           ],
         ),
@@ -1301,14 +1567,20 @@ class _CloudStatusPageState extends State<_CloudStatusPage> {
 
   Widget _r2Section(BuildContext context) {
     final d = _r2;
-    final usedBytes = (d?['usedBytes'] ?? 0).toDouble();
-    final freeBytes = (d?['freeBytes'] ?? 10000000000).toDouble();
-    final remainingBytes = (d?['remainingBytes'] ?? 0).toDouble();
-    final fraction = (d?['usedFraction'] ?? 0).toDouble().clamp(0.0, 1.0);
+    final usedBytes = _asDouble(d?['usedBytes']);
+    final freeBytes = _asDouble(d?['freeBytes'], 10000000000);
+    final remainingBytes = _asDouble(d?['remainingBytes']);
+    final fraction = _asDouble(d?['usedFraction']).clamp(0.0, 1.0);
     final usedGb = usedBytes / 1e9;
     final freeGb = freeBytes / 1e9;
     final remainingGb = remainingBytes / 1e9;
     final color = fraction >= 0.9 ? Colors.red : fraction >= 0.8 ? Colors.orange : Colors.teal;
+    final source = (d?['source'] ?? '').toString();
+    final sourceLabel = source == 'bucket-list'
+        ? 'Bucket list'
+        : source == 'account-metrics'
+            ? 'Account metrics'
+            : 'Unknown';
 
     return Card(
       elevation: 0,
@@ -1317,22 +1589,28 @@ class _CloudStatusPageState extends State<_CloudStatusPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              const Icon(Icons.cloud_queue_rounded, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text('Cloudflare R2', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-              ),
-              IconButton(
-                onPressed: _loading ? null : _load,
-                icon: const Icon(Icons.refresh, size: 20),
-                tooltip: 'Refresh R2 usage',
-              ),
-            ]),
+            _cardHeader(
+              context,
+              Icons.cloud_queue_rounded,
+              'Cloudflare R2',
+              loading: _r2Loading,
+              onRefresh: _loadR2,
+            ),
             const SizedBox(height: 6),
             if (d == null)
               Text(_r2Error ?? 'R2 usage is unavailable.', style: const TextStyle(color: Colors.red, fontSize: 12))
             else ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _statusPill('Live', Icons.bolt_rounded, Colors.green),
+                  _pill(Icons.dns_outlined, 'Source: $sourceLabel'),
+                  _pill(Icons.schedule, 'Updated ${_formatTimestamp(d['updatedAt'])}'),
+                  _pill(Icons.storage, 'Storage only'),
+                ],
+              ),
+              const SizedBox(height: 14),
               _usageBar('Storage used', '${usedGb.toStringAsFixed(2)} / ${freeGb.toStringAsFixed(0)} GB',
                   fraction, color, caption: '${remainingGb.toStringAsFixed(2)} GB left on the 10 GB free tier'),
               const SizedBox(height: 14),
@@ -1347,24 +1625,17 @@ class _CloudStatusPageState extends State<_CloudStatusPage> {
               ),
               const SizedBox(height: 12),
               if (fraction >= 0.8)
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    fraction >= 1
-                        ? 'Storage is over the 10 GB free tier. Delete old releases or upgrade to avoid charges.'
-                        : 'You are close to the 10 GB free tier. Delete old releases or upgrade before it fills up.',
-                    style: TextStyle(fontSize: 12, color: fraction >= 1 ? Colors.red : Colors.orange[800]),
-                  ),
+                _notice(
+                  fraction >= 1
+                      ? 'Storage is over the 10 GB free tier. Delete old releases or upgrade to avoid charges.'
+                      : 'You are close to the 10 GB free tier. Delete old releases or upgrade before it fills up.',
+                  fraction >= 1 ? Colors.red : Colors.orange[800]!,
                 ),
               const SizedBox(height: 10),
               Text(
                 'Free tier: 10 GB-month storage. Downloads/egress are free. '
-                'Class A/B operations are not shown here — this card tracks storage only. '
-                'Cloudflare metrics can lag a few minutes.',
+                'This card tracks storage only — Class A/B operations are not shown. '
+                '${source == 'account-metrics' ? 'Account metrics can lag a few minutes.' : 'Bucket listing reflects the current object list.'}',
                 style: TextStyle(fontSize: 11, color: Colors.grey[500]),
               ),
             ],
@@ -1377,6 +1648,33 @@ class _CloudStatusPageState extends State<_CloudStatusPage> {
         ),
       ),
     );
+  }
+
+  Widget _cardHeader(
+    BuildContext context,
+    IconData icon,
+    String title, {
+    required bool loading,
+    required VoidCallback onRefresh,
+  }) {
+    return Row(children: [
+      Icon(icon, size: 20),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+      ),
+      if (loading)
+        const Padding(
+          padding: EdgeInsets.only(right: 6),
+          child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        ),
+      IconButton(
+        onPressed: loading ? null : onRefresh,
+        icon: const Icon(Icons.refresh, size: 20),
+        tooltip: 'Refresh $title',
+        visualDensity: VisualDensity.compact,
+      ),
+    ]);
   }
 
   Widget _pill(IconData icon, String text) {
@@ -1392,6 +1690,73 @@ class _CloudStatusPageState extends State<_CloudStatusPage> {
         Text(text, style: TextStyle(fontSize: 11, color: Colors.grey[700])),
       ]),
     );
+  }
+
+  Widget _statusPill(String text, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 4),
+        Text(text, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+      ]),
+    );
+  }
+
+  Widget _notice(String text, Color color) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(text, style: TextStyle(fontSize: 12, color: color)),
+    );
+  }
+
+  double _asDouble(dynamic value, [double fallback = 0]) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  int _asInt(dynamic value, [int fallback = 0]) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  DateTime? _parseTimestamp(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
+  }
+
+  String _formatTimestamp(dynamic value) {
+    final parsed = _parseTimestamp(value);
+    if (parsed == null) return 'unknown';
+    final local = parsed.toLocal();
+    final now = DateTime.now();
+    final time = '${_two(local.hour)}:${_two(local.minute)}:${_two(local.second)}';
+    final sameDay = local.year == now.year && local.month == now.month && local.day == now.day;
+    return sameDay ? time : '${local.year}-${_two(local.month)}-${_two(local.day)} $time';
+  }
+
+  String _two(int value) => value.toString().padLeft(2, '0');
+
+  String _formatBytes(double bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    }
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${bytes.toStringAsFixed(0)} B';
   }
 }
 
@@ -2019,7 +2384,7 @@ class _DocsAndLegalPageState extends State<_DocsAndLegalPage> {
     final c = await ns.getAppConfig();
     if (!mounted) return;
     setState(() {
-      _about.text = c['about_text'] ?? 'Foluma v1.0.6';
+      _about.text = c['about_text'] ?? 'Foluma v1.0.7';
       _terms.text = c['terms_and_conditions'] ?? '';
       _privacy.text = c['privacy_policy'] ?? '';
       _loading = false;

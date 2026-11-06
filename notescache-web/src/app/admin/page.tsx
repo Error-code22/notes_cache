@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAuth, supabase } from '../../lib/auth'
 import AppShell from '../../components/AppShell'
 import {
@@ -636,7 +636,10 @@ function renderSection(section: string, p: SecProps) {
       </div>
     )
   }
-  if (section === 'vault' || section === 'cloud') {
+  if (section === 'cloud') {
+    return <CloudStatus />
+  }
+  if (section === 'vault') {
     return (
       <div className="text-sm text-gray-500 space-y-3">
         <p>Notes in library: {p.stats.notes}</p>
@@ -659,6 +662,149 @@ function renderSection(section: string, p: SecProps) {
     )
   }
   return <div className="text-sm text-gray-400">Coming soon on web.</div>
+}
+
+type CloudStats = {
+  dbBytes?: number
+  storageBytes?: number
+  notesBytes?: number
+  notesCount?: number
+  assetsCount?: number
+  pendingJobs?: number
+  failedJobs?: number
+  updatedAt?: string
+}
+
+type CloudinaryUsage = {
+  error?: string
+  plan?: string
+  creditsUsed?: number
+  creditsLimit?: number
+  storageBytes?: number
+  bandwidthBytes?: number
+  lastUpdated?: string
+  usageDate?: string
+}
+
+type R2Usage = {
+  error?: string
+  usedBytes?: number
+  freeBytes?: number
+  objectCount?: number
+  bucketCount?: number
+  source?: string
+  updatedAt?: string
+}
+
+function formatBytes(value: unknown): string {
+  const n = Number(value || 0)
+  if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${n.toFixed(0)} B`
+}
+
+function formatTime(value?: string): string {
+  if (!value) return 'unknown'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString()
+}
+
+function CloudCard({
+  title,
+  live,
+  error,
+  children,
+}: {
+  title: string
+  live: boolean
+  error?: string
+  children: ReactNode
+}) {
+  return (
+    <div className="bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-2xl p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="font-bold text-sm text-gray-900 dark:text-white">{title}</h4>
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${live ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'}`}>
+          {live ? 'LIVE FROM SOURCE' : 'UNAVAILABLE'}
+        </span>
+      </div>
+      {error ? <p className="text-xs text-red-500 break-words">{error}</p> : <div className="space-y-1.5 text-xs text-gray-600 dark:text-gray-300">{children}</div>}
+    </div>
+  )
+}
+
+function CloudStatus() {
+  const [stats, setStats] = useState<CloudStats | null>(null)
+  const [cloudinary, setCloudinary] = useState<CloudinaryUsage | null>(null)
+  const [r2, setR2] = useState<R2Usage | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  async function load() {
+    setLoading(true)
+    setError('')
+    const [sb, cl, rr] = await Promise.all([
+      supabase.rpc('admin_cloud_stats'),
+      supabase.functions.invoke('cloudinary-usage'),
+      supabase.functions.invoke('r2-usage'),
+    ])
+    if (sb.error) setError(sb.error.message)
+    setStats((sb.data as CloudStats | null) ?? null)
+    setCloudinary((cl.data as CloudinaryUsage | null) ?? null)
+    setR2((rr.data as R2Usage | null) ?? null)
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-gray-500">
+          Each card is fetched directly from its source. Cloudinary usage refreshes live on every load.
+        </p>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="shrink-0 px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold disabled:opacity-50"
+        >
+          {loading ? 'Refreshing…' : 'Refresh all'}
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-500">{error}</p>}
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <CloudCard title="Supabase" live={!!stats} error={stats ? undefined : 'Stats unavailable.'}>
+          <p>Database: {formatBytes(stats?.dbBytes)} / 500 MB</p>
+          <p>Storage: {formatBytes(stats?.storageBytes)} / 1 GB</p>
+          <p>Notes: {Number(stats?.notesCount || 0)} · Assets: {Number(stats?.assetsCount || 0)}</p>
+          <p>Pending jobs: {Number(stats?.pendingJobs || 0)} · Failed: {Number(stats?.failedJobs || 0)}</p>
+          <p className="text-[10px] text-gray-400">Updated {formatTime(stats?.updatedAt)}</p>
+        </CloudCard>
+
+        <CloudCard title="Cloudinary" live={!cloudinary?.error && !!cloudinary} error={cloudinary?.error}>
+          <p>Plan: {cloudinary?.plan || 'unknown'}</p>
+          <p>Credits: {Number(cloudinary?.creditsUsed || 0).toFixed(2)} / {Number(cloudinary?.creditsLimit || 25)}</p>
+          <p>Storage: {(Number(cloudinary?.storageBytes || 0) / 1e9).toFixed(2)} GB</p>
+          <p>Bandwidth: {(Number(cloudinary?.bandwidthBytes || 0) / 1e9).toFixed(2)} GB</p>
+          <p className="text-[10px] text-gray-400">Fetched {formatTime(cloudinary?.lastUpdated)}</p>
+          {cloudinary?.usageDate && <p className="text-[10px] text-gray-400">Cloudinary usage date: {cloudinary.usageDate}</p>}
+        </CloudCard>
+
+        <CloudCard title="Cloudflare R2" live={!r2?.error && !!r2} error={r2?.error}>
+          <p>Used: {(Number(r2?.usedBytes || 0) / 1e9).toFixed(2)} / {(Number(r2?.freeBytes || 0) / 1e9).toFixed(0)} GB</p>
+          <p>Objects: {Number(r2?.objectCount || 0)} · Buckets: {Number(r2?.bucketCount || 0)}</p>
+          <p>Source: {r2?.source || 'unknown'}</p>
+          <p className="text-[10px] text-gray-400">Updated {formatTime(r2?.updatedAt)}</p>
+        </CloudCard>
+      </div>
+
+      <p className="text-[10px] text-gray-400">
+        Supabase is read from Postgres. Cloudinary is the live usage API. R2 lists the account buckets, falling back to account metrics if listing is unavailable.
+      </p>
+    </div>
+  )
 }
 
 function Kpi({ label, value }: { label: string; value: number }) {

@@ -39,7 +39,7 @@ export default function WhatsComingPage() {
       <main className="max-w-3xl mx-auto px-4 py-6">
         <div className="bg-indigo-600/5 border border-indigo-200 dark:border-indigo-500/30 rounded-xl px-4 py-3 text-[13px] text-indigo-700 dark:text-indigo-300 mb-5 flex items-center gap-2">
           <ConstructionIcon size={18} />
-          <span>NotesCache is in active development. Here&apos;s what we&apos;re building — and you can suggest what&apos;s next!</span>
+          <span>Foluma is in active development. Here&apos;s what we&apos;re building - and you can suggest what&apos;s next!</span>
         </div>
 
         {loading ? (
@@ -60,7 +60,7 @@ export default function WhatsComingPage() {
           </div>
         )}
 
-        <a href="https://wa.me/254703300084?text=Feature%20request%20for%20NotesCache%3A" target="_blank" rel="noopener noreferrer" className="mt-6 block text-center px-5 py-3 bg-white dark:bg-[#1C1C1E] border border-gray-300 dark:border-white/15 rounded-2xl text-sm font-medium text-gray-700 dark:text-gray-200 hover:border-indigo-400 hover:text-indigo-600 transition">
+        <a href="https://wa.me/254703300084?text=Feature%20request%20for%20Foluma%3A" target="_blank" rel="noopener noreferrer" className="mt-6 block text-center px-5 py-3 bg-white dark:bg-[#1C1C1E] border border-gray-300 dark:border-white/15 rounded-2xl text-sm font-medium text-gray-700 dark:text-gray-200 hover:border-indigo-400 hover:text-indigo-600 transition">
           Request a feature
         </a>
       </main>

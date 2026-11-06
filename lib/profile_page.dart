@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:io';
 import 'services.dart';
 import 'models.dart';
+import 'taxonomy_service.dart';
 import 'admin_dashboard_page.dart';
 import 'feedback_page.dart';
 
@@ -25,6 +26,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
   Map<String, String> _appConfig = {};
   List<UserIdentity> _linkedIdentities = [];
   bool _loadingIdentities = true;
+  final TaxonomyService _taxonomy = TaxonomyService();
 
   @override
   void initState() {
@@ -195,9 +197,66 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
 
   // ==================== EDIT PROFILE DIALOG ====================
 
-  void _showEditProfileDialog() {
+  Future<void> _showEditProfileDialog() async {
     final authService = context.read<AuthService>();
     final user = authService.currentUser!;
+
+    // Resolve the taxonomy labels up front. The IDs are stable, but students
+    // should never have to read a raw UUID. When the profile has no programme
+    // yet (legacy or Google account), the same catalogue powers a one-time
+    // onboarding picker.
+    List<School> schools = const [];
+    List<Programme> programmes = const [];
+    List<AcademicPeriod> periods = const [];
+    String? schoolName;
+    String? programmeName;
+    String? periodLabel;
+    String? editSchoolId = user.schoolId;
+    String? editProgrammeId = user.programmeId;
+    var editYear = (user.yearLevel ?? 1).clamp(1, 6).toInt();
+    var editSemester = (user.stageSemester ?? 1).clamp(1, 3).toInt();
+    String? editPeriodId = user.currentPeriodId;
+    var loadingProgrammes = false;
+
+    try {
+      schools = await _taxonomy.getSchools();
+      periods = await _taxonomy.getPeriods();
+      for (final school in schools) {
+        if (school.id == user.schoolId) {
+          schoolName = school.name;
+          break;
+        }
+      }
+      if (editPeriodId == null && periods.isNotEmpty) {
+        AcademicPeriod? current;
+        for (final period in periods) {
+          if (period.isCurrent) {
+            current = period;
+            break;
+          }
+        }
+        editPeriodId = (current ?? periods.first).id;
+      }
+      for (final period in periods) {
+        if (period.id == user.currentPeriodId) {
+          periodLabel = period.label;
+          break;
+        }
+      }
+      if (user.schoolId != null) {
+        programmes = await _taxonomy.getProgrammes(user.schoolId!);
+        for (final programme in programmes) {
+          if (programme.id == user.programmeId) {
+            programmeName = '${programme.code} — ${programme.name}';
+            break;
+          }
+        }
+      }
+    } catch (_) {
+      // Keep the dialog usable offline; fall back to the stored course name.
+    }
+    if (!mounted) return;
+
     final nameController = TextEditingController(text: user.fullName);
     final bioController = TextEditingController(text: user.bio);
     var saving = false;
@@ -348,25 +407,189 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                 const SizedBox(height: 14),
                 _buildInputField(dialogCtx, 'Bio', bioController, Icons.edit_note_outlined, maxLines: 3),
                 const SizedBox(height: 14),
-                Text('Year Level', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    border: Border.all(color: theme.dividerColor),
+                    color: theme.colorScheme.surfaceVariant.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: theme.dividerColor.withOpacity(0.3)),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.school_outlined, size: 20, color: primaryColor),
-                      const SizedBox(width: 10),
-                      Text('Year ${user.yearLevel ?? 1}'),
-                      const Spacer(),
-                      Text(
-                        'Set by your university',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      Row(
+                        children: [
+                          Icon(Icons.verified_outlined, size: 18, color: primaryColor),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Course details',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const Spacer(),
+                          Text(
+                            user.programmeId == null
+                                ? 'Choose once'
+                                : 'Set by your university',
+                            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 12),
+                      if (user.programmeId == null) ...[
+                        Text(
+                          'Select your school and programme. This can only be set once — ask an admin if you choose the wrong one.',
+                          style: TextStyle(fontSize: 11, height: 1.4, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          value: editSchoolId,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: 'School',
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          items: schools
+                              .map((school) => DropdownMenuItem(
+                                    value: school.id,
+                                    child: Text(school.name, overflow: TextOverflow.ellipsis),
+                                  ))
+                              .toList(),
+                          onChanged: saving
+                              ? null
+                              : (value) async {
+                                  setDialogState(() {
+                                    editSchoolId = value;
+                                    editProgrammeId = null;
+                                    programmes = const [];
+                                    loadingProgrammes = value != null;
+                                  });
+                                  if (value == null) return;
+                                  final loaded = await _taxonomy.getProgrammes(value);
+                                  if (!dialogCtx.mounted) return;
+                                  setDialogState(() {
+                                    programmes = loaded;
+                                    loadingProgrammes = false;
+                                  });
+                                },
+                        ),
+                        const SizedBox(height: 10),
+                        if (loadingProgrammes)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: LinearProgressIndicator(minHeight: 3),
+                          )
+                        else
+                          DropdownButtonFormField<String>(
+                            value: editProgrammeId,
+                            isExpanded: true,
+                            decoration: InputDecoration(
+                              labelText: 'Programme / course',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            ),
+                            items: programmes
+                                .map((programme) => DropdownMenuItem(
+                                      value: programme.id,
+                                      child: Text(
+                                        '${programme.code} — ${programme.name}',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ))
+                                .toList(),
+                            onChanged: saving || programmes.isEmpty
+                                ? null
+                                : (value) => setDialogState(() => editProgrammeId = value),
+                          ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<int>(
+                                value: editYear,
+                                decoration: InputDecoration(
+                                  labelText: 'Year',
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                ),
+                                items: const [1, 2, 3, 4]
+                                    .map((year) => DropdownMenuItem(
+                                          value: year,
+                                          child: Text('Year $year'),
+                                        ))
+                                    .toList(),
+                                onChanged: saving
+                                    ? null
+                                    : (value) => setDialogState(() => editYear = value ?? 1),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonFormField<int>(
+                                value: editSemester,
+                                decoration: InputDecoration(
+                                  labelText: 'Semester',
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                ),
+                                items: const [1, 2, 3]
+                                    .map((semester) => DropdownMenuItem(
+                                          value: semester,
+                                          child: Text('Semester $semester'),
+                                        ))
+                                    .toList(),
+                                onChanged: saving
+                                    ? null
+                                    : (value) => setDialogState(() => editSemester = value ?? 1),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String>(
+                          value: editPeriodId,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: 'Academic period',
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          items: periods
+                              .map((period) => DropdownMenuItem(
+                                    value: period.id,
+                                    child: Text(period.label, overflow: TextOverflow.ellipsis),
+                                  ))
+                              .toList(),
+                          onChanged: saving || periods.isEmpty
+                              ? null
+                              : (value) => setDialogState(() => editPeriodId = value),
+                        ),
+                      ] else ...[
+                        _buildReadOnlyProfileRow(
+                          Icons.account_balance_outlined,
+                          'School',
+                          schoolName ?? 'Not set',
+                        ),
+                        const SizedBox(height: 8),
+                        _buildReadOnlyProfileRow(
+                          Icons.workspaces_outline,
+                          'Programme',
+                          programmeName ?? (user.course ?? 'Not set'),
+                        ),
+                        const SizedBox(height: 8),
+                        _buildReadOnlyProfileRow(
+                          Icons.school_outlined,
+                          'Stage',
+                          'Year ${user.yearLevel ?? 1}, Semester ${user.stageSemester ?? 1}',
+                        ),
+                        const SizedBox(height: 8),
+                        _buildReadOnlyProfileRow(
+                          Icons.event_outlined,
+                          'Academic period',
+                          periodLabel ?? 'Not set',
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -383,6 +606,39 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
                   ? null
                   : () async {
                       setDialogState(() => saving = true);
+                      if (user.programmeId == null) {
+                        if (editSchoolId == null ||
+                            editProgrammeId == null ||
+                            editPeriodId == null) {
+                          setDialogState(() => saving = false);
+                          ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                            const SnackBar(
+                              content: Text('Choose your school, programme and academic period first.'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                          return;
+                        }
+                        final saved = await authService.updateProfileTaxonomy(
+                          schoolId: editSchoolId!,
+                          programmeId: editProgrammeId!,
+                          yearLevel: editYear,
+                          stageSemester: editSemester,
+                          currentPeriodId: editPeriodId!,
+                        );
+                        if (!saved) {
+                          if (dialogCtx.mounted) {
+                            setDialogState(() => saving = false);
+                            ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                              const SnackBar(
+                                content: Text('Could not save your course details. Try again.'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                          return;
+                        }
+                      }
                       await authService.updateProfileDetails(
                         fullName: nameController.text,
                         bio: bioController.text,
@@ -662,7 +918,7 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
 
           // About
           _sectionHeader('About'),
-          _settingsTile(Icons.info_outline, 'About Foluma', _appConfig['about_text'] ?? 'Foluma v1.0.6', () => _showInfoDialog(context, 'About Foluma', _appConfig['about_text'] ?? 'Foluma v1.0.6\n\nFoluma comes from folio + luma: a place for your pages, made bright and easy to read. Open anything — notes, PDFs, EPUB books, Office files and local documents — even offline.' )),
+          _settingsTile(Icons.info_outline, 'About Foluma', _appConfig['about_text'] ?? 'Foluma v1.0.7', () => _showInfoDialog(context, 'About Foluma', _appConfig['about_text'] ?? 'Foluma v1.0.6\n\nFoluma comes from folio + luma: a place for your pages, made bright and easy to read. Open anything — notes, PDFs, EPUB books, Office files and local documents — even offline.' )),
           _settingsTile(Icons.description_outlined, 'Terms & Conditions', 'View our terms of service', () => _showInfoDialog(context, 'Terms & Conditions', _appConfig['terms_and_conditions'] ?? 'No terms available.')),
           _settingsTile(Icons.privacy_tip_outlined, 'Privacy Policy', 'How we handle your data', () => _showInfoDialog(context, 'Privacy Policy', _appConfig['privacy_policy'] ?? 'No policy available.')),
           const Divider(height: 32),
@@ -806,6 +1062,29 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildReadOnlyProfileRow(IconData icon, String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: Colors.grey[600]),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 104,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+          ),
+        ),
+      ],
     );
   }
 

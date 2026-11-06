@@ -288,113 +288,24 @@ export default function DonatePage() {
       </div>
 
       {tab === 'donate' ? (
-        <>
-          <div className="bg-pink-50 dark:bg-pink-500/10 border border-pink-200 dark:border-pink-500/30 rounded-xl px-4 py-3 text-[13px] text-pink-800 dark:text-pink-200 mb-5">
-            Share notes with everyone in the shared library. Submissions are
-            reviewed by an admin before they are published. Sign-in required.
-            {!user && (
-              <> <a href="/login" className="font-bold underline">Sign in</a> to donate.</>
-            )}
-          </div>
-
-          {files.length === 0 ? (
-            <div className="text-center py-12 bg-white dark:bg-[#1C1C1E] border border-dashed border-gray-300 dark:border-white/15 rounded-2xl">
-              <p className="text-sm text-gray-500 mb-4">PDF, DOC, PPT, Excel, images, text…</p>
-              <label className="inline-block px-5 py-3 bg-pink-600 text-white rounded-xl text-sm font-bold cursor-pointer">
-                Select Files
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.jpg,.jpeg,.png,.txt,.md"
-                  className="hidden"
-                  onChange={(e) => onPick(e.target.files)}
-                />
-              </label>
-            </div>
-          ) : (
-            <div className="bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-2xl p-5 space-y-4">
-              <div>
-                <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">Title</label>
-                <input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Thermodynamics Lecture 4.pdf"
-                  className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">Description</label>
-                <input
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">Year</label>
-                  <select
-                    value={year ?? 1}
-                    onChange={(e) => setYear(Number(e.target.value))}
-                    className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white"
-                  >
-                    {[1, 2, 3, 4].map((y) => (
-                      <option key={y} value={y}>Year {y}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">Semester</label>
-                  <select
-                    value={semester}
-                    onChange={(e) => setSemester(Number(e.target.value))}
-                    className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-300 dark:border-white/15 bg-transparent text-sm text-gray-900 dark:text-white"
-                  >
-                    <option value={1}>Semester 1</option>
-                    <option value={2}>Semester 2</option>
-                  </select>
-                </div>
-              </div>
-              <ul className="text-xs text-gray-500 space-y-1">
-                {files.map((f, i) => (
-                  <li key={i} className="flex justify-between gap-2">
-                    <span className="truncate">{f.name}</span>
-                    <button onClick={() => setFiles((p) => p.filter((_, j) => j !== i))} className="text-red-500 shrink-0">
-                      remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
-          {progress && <p className="text-sm text-indigo-600 mt-3">{progress}</p>}
-          {done && (
-            <div className="mt-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
-              <p className="font-semibold mb-1">Submitted for review.</p>
-              <p className="text-xs mb-2">An admin will publish them to the shared library.</p>
-              {lastTitles.length > 0 && (
-                <ul className="text-xs mb-2 list-disc pl-4">
-                  {lastTitles.map((t) => <li key={t}>{t}</li>)}
-                </ul>
-              )}
-              <a href="/notes?mine=1" className="font-bold underline">View in My Notes</a>
-              {' · '}
-              <a href="/notes" className="font-bold underline">Academic Notes</a>
-            </div>
-          )}
-
-          {files.length > 0 && (
-            <button
-              onClick={donate}
-              disabled={busy || !user}
-              className="w-full mt-4 py-3 bg-pink-600 text-white rounded-xl text-sm font-bold disabled:opacity-50"
-            >
-              {busy ? 'Uploading…' : !user ? 'Sign in to donate' : `DONATE ${files.length} FILE(S)`}
-            </button>
-          )}
-        </>
+        <div className="bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-2xl p-6 text-center">
+          <p className="font-semibold text-gray-900 dark:text-white mb-2">Donate from the Foluma app</p>
+          <p className="text-sm text-gray-500 leading-relaxed max-w-md mx-auto">
+            Note donations are temporarily available in the Android app while we move the
+            library to the new school → programme → unit structure. The app asks you to
+            choose the unit and confirm the cloud-storage and AI notice before uploading.
+          </p>
+          <a
+            href="/downloads"
+            className="inline-block mt-5 px-5 py-3 bg-pink-600 text-white rounded-xl text-sm font-bold"
+          >
+            Get the Android app
+          </a>
+          <p className="text-xs text-gray-400 mt-4">
+            Class reps, lecturers and admins can also upload from the app. You can still
+            browse the shared library here.
+          </p>
+        </div>
       ) : (
         <>
           <input

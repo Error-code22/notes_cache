@@ -38,7 +38,7 @@ export default function ResetPage() {
     const linkedEmail = new URLSearchParams(window.location.search).get('email')?.trim() ?? ''
     let saved = ''
     try {
-      saved = window.localStorage.getItem('notescache_reset_email') ?? ''
+      saved = window.localStorage.getItem('foluma_reset_email') ?? ''
     } catch {
       // Private mode can block localStorage; the field still accepts an email.
     }
@@ -46,7 +46,7 @@ export default function ResetPage() {
     if (!initial) return
     setRequestEmail(initial)
     try {
-      window.localStorage.setItem('notescache_reset_email', initial.toLowerCase())
+      window.localStorage.setItem('foluma_reset_email', initial.toLowerCase())
     } catch {
       // Prefill is best-effort; the field still works.
     }
@@ -151,8 +151,8 @@ export default function ResetPage() {
 
   const requestEmailValue = requestEmail.trim()
   const whatsappMessage = requestEmailValue
-    ? `Hi, my NotesCache password reset link is invalid or has expired. My account email is ${requestEmailValue}. Please send me a fresh link.`
-    : 'Hi, my NotesCache password reset link is invalid or has expired. My account email is (please type it). Please send me a fresh link.'
+    ? `Hi, my Foluma password reset link is invalid or has expired. My account email is ${requestEmailValue}. Please send me a fresh link.`
+    : 'Hi, my Foluma password reset link is invalid or has expired. My account email is (please type it). Please send me a fresh link.'
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-600 flex items-center justify-center px-4 py-8">
@@ -161,7 +161,7 @@ export default function ResetPage() {
           <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-indigo-600/10 flex items-center justify-center text-2xl font-bold text-indigo-600">N</div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Set a new password</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {email ? `For ${email}` : 'Finish resetting your NotesCache password'}
+            {email ? `For ${email}` : 'Finish resetting your Foluma password'}
           </p>
         </div>
 
@@ -179,7 +179,7 @@ export default function ResetPage() {
             </p>
             <label className="block text-left">
               <span className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                Your NotesCache email
+                Your Foluma email
               </span>
               <input
                 id="reset-email"

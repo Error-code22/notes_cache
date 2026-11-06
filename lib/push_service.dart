@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'services.dart';
 
 /// Handles Firebase Cloud Messaging: token registration, foreground
 /// messages, and token refresh. Works even when the app is killed —
@@ -39,6 +40,10 @@ class PushService {
 
       // Foreground messages — show as local notification
       FirebaseMessaging.onMessage.listen(_onForegroundMessage);
+
+      // Background → foreground: a tray tap that launches the app should route
+      // into the app (chat room / dashboard) instead of doing nothing.
+      FirebaseMessaging.onMessageOpenedApp.listen(_onOpenedApp);
 
       // Token refresh — re-register so server always has current token
       _fcm.onTokenRefresh.listen(_onTokenRefresh);
@@ -105,6 +110,28 @@ class PushService {
       // is a singleton, so we fire a platform channel directly.)
       // Simplest: use flutter_local_notifications through a static hook.
       _onPushReceived?.call(title ?? '', body ?? '');
+    }
+  }
+
+  /// Handles the app being opened from a notification (tray tap on a killed
+  /// app, or background → foreground). Routes into the app via the shared
+  /// navigator key so it works from any page.
+  void _onOpenedApp(RemoteMessage message) {
+    final data = message.data;
+    final kind = data['kind'];
+    String? route;
+    if (kind == 'chat') {
+      final roomId = data['room_id'];
+      // Deep-link into the chat list for now; room routing lives with chat.
+      route = '/dashboard';
+      debugPrint('Push opened-app: chat ${roomId ?? ''} -> dashboard');
+    } else {
+      route = '/dashboard';
+    }
+    try {
+      NotificationService.navigatorKey.currentState?.pushNamed(route);
+    } catch (e) {
+      debugPrint('Push opened-app navigation error: $e');
     }
   }
 

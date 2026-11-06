@@ -1,6 +1,6 @@
 {
-  "name": "NotesCache",
-  "short_name": "NotesCache",
+  "name": "Foluma",
+  "short_name": "Foluma",
   "description": "Your campus study companion — browse notes, read documents, and get AI study help.",
   "start_url": "/",
   "display": "standalone",

@@ -4,10 +4,9 @@ const GITHUB_REPO = 'https://github.com/Error-code22/notes_cache'
 const RELEASE_PAGE = 'https://github.com/Error-code22/notes_cache/releases'
 const APK_ARM64 = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-arm64-v8a.apk'
 const APK_V7A = 'https://github.com/Error-code22/notes_cache/releases/latest/download/NotesCache-armeabi-v7a.apk'
-const WIN_ZIP = 'https://github.com/Error-code22/notes_cache/releases/download/v1.0.4/NotesCache-Windows.zip'
 
-const CURRENT_VERSION = '1.0.5'
-const WHATS_NEW = 'Admin reset links, smoother password recovery, support-contact cleanup'
+const CURRENT_VERSION = '1.0.7'
+const WHATS_NEW = 'School → programme → unit library, private notes, R2 + Telegram storage, live cloud status'
 
 export default function DownloadsPage() {
   return (
@@ -25,7 +24,7 @@ export default function DownloadsPage() {
 
       <header className="border-b bg-white/80 backdrop-blur-sm">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-indigo-600">NotesCache</h1>
+          <h1 className="text-xl font-bold text-indigo-600">Foluma</h1>
           <div className="flex items-center gap-4">
             <a href="/" className="text-sm text-gray-500 hover:text-indigo-600 transition hidden sm:inline">Back to the app</a>
             <a href={RELEASE_PAGE} target="_blank" rel="noopener noreferrer" className="text-sm text-gray-500 hover:text-indigo-600 transition hidden sm:inline">Changelog</a>
@@ -43,18 +42,17 @@ export default function DownloadsPage() {
 
           <div className="bg-white rounded-2xl shadow-sm border p-8 max-w-lg mx-auto">
             <h3 className="text-xl font-semibold mb-2">Download the App</h3>
-            <p className="text-sm text-gray-500 mb-6">Works on <span className="font-semibold">Android 7+</span> and <span className="font-semibold">Windows</span>.</p>
+            <p className="text-sm text-gray-500 mb-6">Works on <span className="font-semibold">Android 7+</span>. iPhone, Mac and PC users can use the web app.</p>
             <div className="flex flex-col gap-3">
               <a href={APK_ARM64} className="px-6 py-4 bg-indigo-600 text-white rounded-xl text-lg font-medium hover:bg-indigo-700 transition flex items-center justify-center gap-2">Download for most phones (64-bit)</a>
               <a href={APK_V7A} className="px-6 py-4 border border-indigo-600 text-indigo-600 rounded-xl text-lg font-medium hover:bg-indigo-50 transition flex items-center justify-center gap-2">Download for older 32-bit phones</a>
-              <a href={WIN_ZIP} className="px-6 py-4 border border-gray-300 text-gray-700 rounded-xl text-lg font-medium hover:bg-gray-50 transition flex items-center justify-center gap-2">Download for Windows (v1.0.4)</a>
               <a href={RELEASE_PAGE} target="_blank" rel="noopener noreferrer" className="text-sm text-gray-500 hover:text-indigo-600 transition">All releases on GitHub</a>
             </div>
             <p className="text-xs text-gray-400 mt-4">Not sure which one? Try the 64-bit version first. If your phone says "not compatible," use the 32-bit one.</p>
           </div>
 
           <div className="mt-6 text-sm text-gray-500">
-            On iPhone or Mac? The website works as an app — <a href="/" className="text-indigo-600 font-medium hover:underline">open NotesCache</a> and add it to your Home Screen.
+            On iPhone or Mac? The website works as an app — <a href="/" className="text-indigo-600 font-medium hover:underline">open Foluma</a> and add it to your Home Screen.
           </div>
 
           <div className="mt-10 grid sm:grid-cols-2 gap-4 max-w-lg mx-auto">
@@ -65,7 +63,7 @@ export default function DownloadsPage() {
       </main>
 
       <footer className="border-t bg-white mt-16">
-        <div className="max-w-4xl mx-auto px-4 py-8 text-center text-gray-500 text-sm">NotesCache — built for students, by students.</div>
+        <div className="max-w-4xl mx-auto px-4 py-8 text-center text-gray-500 text-sm">Foluma — Open anything. Built for students, by students.</div>
       </footer>
     </div>
   )

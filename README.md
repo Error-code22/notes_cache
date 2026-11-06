@@ -20,6 +20,7 @@ Foluma (formerly NotesCache) opens PDF, EPUB, DOCX, PPTX, XLSX, CSV, code, image
 
 ## Releases
 
+- **v1.0.7** — JOOUST school → programme → unit library, private notes with per-note AI consent, R2 primary storage with Telegram backup, live admin cloud status
 - **v1.0.6** — Foluma branding, universal document reader, PDF tools, EPUB and Office viewing, Android Open with / Share
 - **v1.0.5** — Admin-generated password reset links, reset-flow fixes, support-contact cleanup
 - **v1.0.4** — Notesy overhaul: 3-image vision, chat history sidebar, vault mode with decoys, pill input, speed optimizations, security hardening

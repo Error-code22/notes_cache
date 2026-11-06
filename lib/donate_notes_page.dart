@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
-import 'r2_service.dart';
 import 'services.dart';
 import 'models.dart';
 import 'note_detail_page.dart';
+import 'note_storage_service.dart';
+import 'taxonomy_service.dart';
+import 'widgets/unit_picker.dart';
 
 class DonateNotesPage extends StatefulWidget {
   const DonateNotesPage({super.key});
@@ -23,8 +25,9 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
   int _failedCount = 0;
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
-  int _selectedYear = 1;
-  int _selectedSemester = 1;
+  ProgrammeUnit? _selectedUnit;
+  AcademicPeriod? _selectedPeriod;
+  bool _shareConsent = false;
   String _searchQuery = '';
   Future<List<Note>>? _donatedNotesFuture;
   Future<List<DonationSubmission>>? _myDonationsFuture;
@@ -116,10 +119,29 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
     }
 
     final authService = context.read<AuthService>();
-    if (authService.currentUser == null || authService.currentUser!.isGuest) {
+    final user = authService.currentUser;
+    if (user == null || user.isGuest) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Sign in to donate notes.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    if (_selectedUnit == null || _selectedPeriod == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Choose the unit and academic period first.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    if (!_shareConsent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Confirm the sharing and cloud-storage notice first.'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -132,8 +154,10 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
       _failedCount = 0;
     });
 
-    final cloudinaryService = CloudinaryService();
-    final noteService = NoteService();
+    final noteService = context.read<NoteService>();
+    final storageService = NoteStorageService();
+    final unit = _selectedUnit!;
+    final period = _selectedPeriod!;
 
     try {
       for (var file in _selectedFiles) {
@@ -142,6 +166,9 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
         final fileName = file.path.split(Platform.pathSeparator).last;
         final fileSize = await file.length();
         final ext = fileName.split('.').last.toLowerCase();
+        final title = _titleController.text.isNotEmpty
+            ? _titleController.text
+            : fileName.split('.').first;
 
         String category = 'Donation';
         if (ext == 'pdf') category = 'PDF';
@@ -149,50 +176,71 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
         else if (ext == 'docx' || ext == 'doc') category = 'Document';
         else if (['jpg', 'jpeg', 'png'].contains(ext)) category = 'Image';
 
-        final uploadResult = await cloudinaryService.uploadFileWithBackup(
+        // Create the pending row first so note-upload can verify ownership,
+        // then upload once to R2 (Cloudinary is automatic overflow only).
+        final donationId = await noteService.saveDonatedNote(
+          title: title,
+          lecturerName: user.fullName ?? 'Student Donation',
+          targetYear: unit.stageYear,
+          semester: unit.stageSemester,
+          programmeId: unit.programmeId,
+          unitId: unit.unitId,
+          unitCode: unit.unitCode,
+          programmeUnitId: unit.id,
+          academicPeriodId: period.id,
+          stageYear: unit.stageYear,
+          stageSemester: unit.stageSemester,
+          shareConsentAt: DateTime.now(),
+          aiConsent: true,
+          content: _descController.text,
+          category: category,
+          fileSize: fileSize,
+          userId: user.id,
+        );
+
+        if (donationId == null) {
+          if (mounted) setState(() => _failedCount++);
+          continue;
+        }
+
+        final asset = await storageService.uploadFile(
           file: file,
-          userId: authService.currentUser?.id ?? 'guest',
-          folder: 'donations',
+          userId: user.id,
+          donationId: donationId,
+          telegramBackup: true,
         );
 
         if (!mounted) break;
 
-        if (!uploadResult.success) {
-          setState(() => _failedCount++);
+        if (asset == null) {
+          await noteService.deletePendingDonation(donationId);
+          if (mounted) setState(() => _failedCount++);
           continue;
         }
 
-        final dbSuccess = await noteService.saveDonatedNote(
-          title: _titleController.text.isNotEmpty ? _titleController.text : fileName.split('.').first,
-          lecturerName: authService.currentUser?.fullName ?? 'Student Donation',
-          targetYear: _selectedYear,
-          semester: _selectedSemester,
-          gDriveId: uploadResult.url,
-          content: _descController.text,
-          category: category,
-          fileSize: fileSize,
-          // Guests have no real user id (UUID column would reject 'guest_user')
-          userId: authService.currentUser?.isGuest == true ? null : authService.currentUser?.id,
+        final linked = await noteService.updateDonationAfterUpload(
+          donationId,
+          assetId: asset.assetId,
+          gDriveId: asset.url,
         );
-
-        if (dbSuccess) {
-          await noteService.indexForAi(file, _titleController.text.isNotEmpty ? _titleController.text : fileName.split('.').first);
+        if (!linked) {
+          await noteService.deletePendingDonation(donationId);
+          if (mounted) setState(() => _failedCount++);
+          continue;
         }
 
-        if (mounted) {
-          setState(() => dbSuccess ? _uploadedCount++ : _failedCount++);
-        }
+        // Best-effort text extraction: publish_donation links these chunks to
+        // the note when an admin approves the submission.
+        await noteService.indexForAi(file, title);
+
+        if (mounted) setState(() => _uploadedCount++);
       }
 
       if (mounted) {
-        final isRep = authService.currentUser?.hasRole(UserRole.classRep) == true ||
-            authService.currentUser?.hasRole(UserRole.admin) == true;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(_failedCount == 0
-                ? (isRep
-                    ? '$_uploadedCount file(s) published to the library.'
-                    : '$_uploadedCount file(s) submitted for review — an admin will publish them to the library.')
+                ? '$_uploadedCount file(s) submitted for review — an admin will publish them to the library.'
                 : '$_uploadedCount submitted, $_failedCount failed'),
             backgroundColor: _failedCount == 0 ? Colors.green : Colors.orange,
           ),
@@ -322,35 +370,37 @@ class _DonateNotesPageState extends State<DonateNotesPage> with SingleTickerProv
                 filled: true,
               ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    value: _selectedYear,
-                    decoration: InputDecoration(
-                      labelText: 'Year',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                    ),
-                    items: [1, 2, 3, 4].map((y) => DropdownMenuItem(value: y, child: Text('Year $y'))).toList(),
-                    onChanged: (v) => setState(() => _selectedYear = v!),
+            const SizedBox(height: 16),
+            UnitPicker(
+              enabled: !_isUploading,
+              onUnitChanged: (unit) => setState(() => _selectedUnit = unit),
+              onPeriodChanged: (period) => setState(() => _selectedPeriod = period),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer.withOpacity(0.18),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: theme.dividerColor.withOpacity(0.2)),
+              ),
+              child: CheckboxListTile(
+                value: _shareConsent,
+                onChanged: _isUploading
+                    ? null
+                    : (value) => setState(() => _shareConsent = value ?? false),
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text(
+                  'I understand this note will be reviewed and shared with students in my programme.',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Text(
+                    'It will be stored in the cloud (Cloudflare R2, with a Telegram backup) and indexed so Foluma AI can answer questions about it. I won\'t upload confidential material.',
+                    style: TextStyle(fontSize: 12, height: 1.4),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    value: _selectedSemester,
-                    decoration: InputDecoration(
-                      labelText: 'Semester',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                    ),
-                    items: [1, 2].map((s) => DropdownMenuItem(value: s, child: Text('Semester $s'))).toList(),
-                    onChanged: (v) => setState(() => _selectedSemester = v!),
-                  ),
-                ),
-              ],
+              ),
             ),
             const SizedBox(height: 20),
             ..._selectedFiles.map((file) {

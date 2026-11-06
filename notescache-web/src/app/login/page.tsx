@@ -78,7 +78,7 @@ export default function LoginPage() {
           : err.message)
       } else {
         try {
-          window.localStorage.setItem('notescache_reset_email', email.trim().toLowerCase())
+          window.localStorage.setItem('foluma_reset_email', email.trim().toLowerCase())
         } catch {
           // Private mode can block localStorage; the reset page asks for it again.
         }
@@ -118,7 +118,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-8">
         <div className="text-center mb-6">
           <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-indigo-600/10 flex items-center justify-center text-2xl font-bold text-indigo-600">N</div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">NotesCache</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Foluma</h1>
           <p className="text-sm text-gray-500 mt-1">
             {mode === 'signin' ? 'Welcome back!' : mode === 'signup' ? 'Create your account' : 'Reset your password'}
           </p>
@@ -176,7 +176,7 @@ export default function LoginPage() {
 
         {mode === 'forgot' && showContactAdmin && (
           <a
-            href={whatsappUrl(supportWhatsapp, `Hi, I requested a NotesCache password reset but I did not get the email. My email is ${email}. Please help.`)}
+            href={whatsappUrl(supportWhatsapp, `Hi, I requested a Foluma password reset but I did not get the email. My email is ${email}. Please help.`)}
             target="_blank"
             rel="noopener noreferrer"
             className="block w-full mt-3 py-3 text-center border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm font-semibold hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition"
@@ -225,10 +225,10 @@ export default function LoginPage() {
             <h3 className="font-bold text-lg text-gray-900 dark:text-white mb-3">
               {showPolicy === 'terms' ? 'Terms & Conditions' : 'Privacy Policy'}
             </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+            <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed whitespace-pre-line">
               {showPolicy === 'terms'
-                ? 'By using NotesCache you agree to use the platform for lawful educational purposes only. Do not upload copyrighted material you do not have rights to share. The service is provided as-is for student collaboration and study support.'
-                : 'We store your account email, profile, notes you upload, and AI chat history needed to run the service. Guest usage is limited and local. We do not sell your data. Contact support to request account deletion.'}
+                ? 'By using Foluma you agree to use the platform for lawful educational purposes only. Do not upload copyrighted material you do not have rights to share.\n\nShared notes are stored in Cloudflare R2, backed up to Telegram, and may be indexed for Foluma AI only after the sharing/AI notice is accepted. Private notes stay owner-only, are never copied to the Telegram backup, and are not AI-indexed unless you enable AI access for that note.\n\nThe AI features are online-only and use Groq and Google Gemini. You can withdraw AI consent at any time. The service is provided as-is for student collaboration and study support.'
+                : 'We store your account email, profile, school/programme, notes you upload, extracted note text, and AI chat metadata needed to run the service.\n\nStorage: Supabase (database/auth), Cloudflare R2 (primary private note storage), Telegram (backup of shared notes only), Cloudinary (automatic overflow), and Netlify (website/reset pages). AI queries and consented note text are processed by Groq and Google Gemini. Private notes are never copied to Telegram and are not AI-indexed by default.\n\nWe do not sell your data. Contact support to request account deletion. See the in-app Privacy Policy for the full details.'}
             </p>
             <button onClick={() => setShowPolicy(null)} className="mt-4 w-full py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold">Close</button>
           </div>

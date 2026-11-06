@@ -12,14 +12,27 @@ import 'package:local_auth/local_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, rootBundle;
 
 import 'models.dart';
 import 'note_detail_page.dart';
+import 'notesy/notesy_style.dart';
+import 'notesy/study_generator_page.dart';
+import 'notesy/study_lab_page.dart';
+import 'notesy/study_models.dart';
 import 'services.dart';
 
 class AiChatPage extends StatefulWidget {
-  const AiChatPage({super.key});
+  const AiChatPage({
+    super.key,
+    this.initialPrompt,
+    this.autoSend = false,
+  });
+
+  /// A prompt handed over by the Notesy hub. When [autoSend] is false the
+  /// text is placed in the composer so the student can finish the thought.
+  final String? initialPrompt;
+  final bool autoSend;
 
   @override
   State<AiChatPage> createState() => _AiChatPageState();
@@ -83,8 +96,36 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _currentUserId = context.read<AuthService>().currentUser?.id;
     _loadDailyCount();
-    _loadConversations(autoOpen: true);
+    // A hub prompt starts a fresh turn; don't let a previously recent chat
+    // replace the screen underneath it.
+    _loadConversations(
+      autoOpen: !(widget.initialPrompt != null && widget.autoSend),
+    );
     _maybeShowBetaNotice();
+    _handleInitialPrompt();
+  }
+
+  /// Consume a prompt passed by the hub. Auto-send waits briefly so the
+  /// conversation list has settled; otherwise the prompt is only staged in
+  /// the composer, which is what prefix-style prompts need.
+  Future<void> _handleInitialPrompt() async {
+    final prompt = widget.initialPrompt?.trim();
+    if (prompt == null || prompt.isEmpty) return;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+
+    if (!widget.autoSend) {
+      _controller.text = prompt;
+      _controller.selection = TextSelection.collapsed(offset: prompt.length);
+      _focusNode.requestFocus();
+      return;
+    }
+
+    await _newConversation();
+    if (!mounted) return;
+    _controller.text = prompt;
+    _controller.selection = TextSelection.collapsed(offset: prompt.length);
+    await _sendMessage();
   }
 
   /// One-time "beta" disclaimer popup on first Notesy open.
@@ -1099,30 +1140,58 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
       children: [
-        Icon(Icons.auto_awesome_rounded, size: 64, color: theme.colorScheme.primary),
-        const SizedBox(height: 24),
-        const Center(
-          child: Text('Hi, I\'m Notesy!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+        Center(
+          child: Container(
+            width: 74,
+            height: 74,
+            decoration: BoxDecoration(
+              color: kNotesyLuma.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: const Icon(Icons.auto_awesome_rounded, size: 40, color: kNotesyInk),
+          ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 22),
+        Center(
+          child: Text(
+            isEnabled ? 'What are we studying?' : 'Daily limit reached',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+          ),
+        ),
+        const SizedBox(height: 10),
         Text(
-          'Ask me anything about your notes, homework, or study topics.',
+          'Ask about your notes, get a clearer explanation, or turn this conversation into flashcards.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.65)),
+          style: TextStyle(
+            height: 1.45,
+            color: theme.colorScheme.onSurface.withOpacity(0.65),
+          ),
         ),
         const SizedBox(height: 20),
         Center(
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.deepPurple.withValues(alpha: 0.08),
+              color: kNotesyLuma.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               '⚠ Beta — answers can be imperfect. Double-check important info.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: Colors.deepPurple[400]),
+              style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
             ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Center(
+          child: OutlinedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const StudyLabPage()),
+            ),
+            icon: const Icon(Icons.style_outlined, size: 18),
+            label: const Text('Open Study Lab'),
           ),
         ),
       ],
@@ -1196,10 +1265,76 @@ class _AiChatPageState extends State<AiChatPage> with WidgetsBindingObserver {
                 padding: const EdgeInsets.only(top: 10),
                 child: _buildCitationChips(msg, theme),
               ),
+            if (!isUser && msg['content']!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _messageAction(
+                      icon: Icons.copy_rounded,
+                      label: 'Copy',
+                      onTap: () => _copyAnswer(msg['content']!),
+                    ),
+                    const SizedBox(width: 4),
+                    _messageAction(
+                      icon: Icons.style_outlined,
+                      label: 'Flashcards',
+                      onTap: () => _makeFlashcards(msg['content']!),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _messageAction({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return TextButton.icon(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
+        foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        minimumSize: const Size(0, 30),
+      ),
+      icon: Icon(icon, size: 14),
+      label: Text(label, style: const TextStyle(fontSize: 10.5)),
+    );
+  }
+
+  Future<void> _copyAnswer(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Answer copied.'), duration: Duration(seconds: 1)),
+    );
+  }
+
+  Future<void> _makeFlashcards(String answer) async {
+    final deck = await Navigator.push<StudyDeck>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StudyGeneratorPage(
+          initialTitle: 'Notesy answer',
+          initialContent: answer,
+        ),
+      ),
+    );
+    if (deck != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Saved “${deck.title}” to Study Lab.'),
+          backgroundColor: kNotesyInk,
+        ),
+      );
+    }
   }
 
   /// "from: [note title]" chips so an answer is traceable to a document

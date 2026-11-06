@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { useAuth, supabase } from '../../lib/auth'
 import { hasStaffVisibility, noteType, TYPE_META, viewUrl, isSlideExt, extFromName } from '../../lib/utils'
 import { pptxFileToPdf, pdfViewerUrl, type ConvertProgress } from '../../lib/pptx-to-pdf'
+import { resolveNoteAssetUrl } from '../../lib/note-file'
 import AppShell from '../../components/AppShell'
 import ConvertOverlay from '../../components/ConvertOverlay'
 
@@ -22,6 +23,11 @@ type Note = {
   summary?: string | null
   file_size?: number
   pdf_url?: string | null
+  asset_id?: string | null
+  visibility?: string
+  unit_code?: string | null
+  stage_year?: number | null
+  stage_semester?: number | null
 }
 
 function NoteDetail() {
@@ -30,6 +36,7 @@ function NoteDetail() {
   const { user, profile } = useAuth()
   const [note, setNote] = useState<Note | null>(null)
   const [loading, setLoading] = useState(true)
+  const [resolvedFileUrl, setResolvedFileUrl] = useState('')
   const [summary, setSummary] = useState('')
   const [sumBusy, setSumBusy] = useState(false)
   const [openBusy, setOpenBusy] = useState(false)
@@ -45,6 +52,15 @@ function NoteDetail() {
       setNote(data as Note | null)
       setSummary(data?.summary || '')
       setLoading(false)
+
+      if (data?.asset_id) {
+        const session = await supabase.auth.getSession()
+        const token = session.data.session?.access_token
+        if (token) {
+          const url = await resolveNoteAssetUrl(String(data.id), token)
+          if (url) setResolvedFileUrl(url)
+        }
+      }
     })()
   }, [id])
 
@@ -81,7 +97,12 @@ function NoteDetail() {
 
   async function openNote() {
     if (isGuest) { window.location.href = '/login'; return }
-    if (!note?.gdrive_id) { setMsg('File URL missing.'); return }
+    if (!note) { setMsg('Note is still loading.'); return }
+    const fileUrl = resolvedFileUrl || note.gdrive_id || ''
+    if (!fileUrl) {
+      setMsg(note.asset_id ? 'Preparing the file… try again in a moment.' : 'File URL missing.')
+      return
+    }
 
     try {
       await supabase.rpc('log_download', { p_note_id: note.id, p_file_size: note.file_size || 0 })
@@ -101,7 +122,7 @@ function NoteDetail() {
       setOpenBusy(true)
       setConvert({ label: 'Preparing PDF from slides…', detail: 'Downloading presentation', percent: 5 })
       try {
-        const res = await fetch(note.gdrive_id!)
+        const res = await fetch(fileUrl)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const blob = await res.blob()
         setConvert({ label: 'Preparing PDF from slides…', detail: 'Reading slide content', percent: 20 })
@@ -161,14 +182,14 @@ function NoteDetail() {
       } catch {
         setConvert(null)
         setMsg('Could not build PDF — opening slide preview instead.')
-        window.open(viewUrl(note), '_blank')
+        window.open(viewUrl({ ...note, gdrive_id: fileUrl }), '_blank')
       } finally {
         setOpenBusy(false)
       }
       return
     }
 
-    window.open(viewUrl(note), '_blank')
+    window.open(viewUrl({ ...note, gdrive_id: fileUrl }), '_blank')
   }
 
   async function removeNote() {

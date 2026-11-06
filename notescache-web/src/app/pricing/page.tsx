@@ -71,7 +71,7 @@ export default function PricingPage() {
     <AppShell title="Plans & Pricing">
       <div className="text-center mb-8">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Choose Your Plan</h1>
-        <p className="text-sm text-gray-500">Unlock the full power of NotesCache for your studies</p>
+        <p className="text-sm text-gray-500">Unlock the full power of Foluma for your studies</p>
       </div>
 
       <div className="space-y-4 mb-8">

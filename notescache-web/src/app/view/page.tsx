@@ -243,7 +243,7 @@ function ViewerContent() {
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <button onClick={goBack} className="text-gray-400 hover:text-indigo-600 p-1 shrink-0" aria-label="Back">←</button>
-            <a href="/" className="font-bold text-indigo-600 shrink-0">NotesCache</a>
+            <a href="/" className="font-bold text-indigo-600 shrink-0">Foluma</a>
           </div>
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-xs text-gray-500 truncate">
@@ -356,7 +356,7 @@ function ViewerContent() {
             <p className="text-gray-700 dark:text-gray-200 mb-1">
               Legacy <b>.doc</b> can&apos;t be previewed in the browser.
             </p>
-            <p className="text-gray-500 text-sm mb-4">Download it and open in Word or the NotesCache app.</p>
+            <p className="text-gray-500 text-sm mb-4">Download it and open in Word or the Foluma app.</p>
             <a href={inlineUrl(url)} target="_blank" rel="noopener noreferrer" className="inline-block px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-medium">
               Download file
             </a>

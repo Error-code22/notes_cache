@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'services.dart';
+import 'taxonomy_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -19,10 +20,82 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _taxonomy = TaxonomyService();
   bool _isSignUp = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _acceptedPolicies = false;
+  int _selectedSignupYear = 1;
+  int _selectedSignupSemester = 1;
+
+  List<School> _schools = const [];
+  List<Programme> _programmes = const [];
+  List<AcademicPeriod> _periods = const [];
+  String? _selectedSchoolId;
+  String? _selectedProgrammeId;
+  String? _selectedPeriodId;
+  bool _loadingCatalogue = true;
+  bool _loadingProgrammes = false;
+  String? _catalogueError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCatalogue();
+  }
+
+  Future<void> _loadCatalogue() async {
+    setState(() {
+      _loadingCatalogue = true;
+      _catalogueError = null;
+    });
+    final schools = await _taxonomy.getSchools();
+    final periods = await _taxonomy.getPeriods();
+    if (!mounted) return;
+    setState(() {
+      _schools = schools;
+      _periods = periods;
+      _loadingCatalogue = false;
+      if (periods.isNotEmpty) {
+        AcademicPeriod? current;
+        for (final period in periods) {
+          if (period.isCurrent) {
+            current = period;
+            break;
+          }
+        }
+        _selectedPeriodId = (current ?? periods.first).id;
+      }
+      if (schools.isEmpty) {
+        _catalogueError =
+            'The school catalogue could not be loaded. Check your connection and try again.';
+      }
+    });
+  }
+
+  Future<void> _selectSchool(String? schoolId) async {
+    setState(() {
+      _selectedSchoolId = schoolId;
+      _selectedProgrammeId = null;
+      _programmes = const [];
+      _loadingProgrammes = schoolId != null;
+    });
+    if (schoolId == null) return;
+    final programmes = await _taxonomy.getProgrammes(schoolId);
+    if (!mounted || _selectedSchoolId != schoolId) return;
+    setState(() {
+      _programmes = programmes;
+      _loadingProgrammes = false;
+      if (programmes.length == 1) _selectedProgrammeId = programmes.first.id;
+    });
+  }
+
+  Programme? get _selectedProgramme {
+    for (final programme in _programmes) {
+      if (programme.id == _selectedProgrammeId) return programme;
+    }
+    return null;
+  }
 
   @override
   void dispose() {
@@ -44,6 +117,17 @@ class _LoginPageState extends State<LoginPage> {
       if (!_acceptedPolicies) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please accept the User Agreement and Privacy Policy'), backgroundColor: Colors.red),
+        );
+        return;
+      }
+      if (_selectedSchoolId == null ||
+          _selectedProgrammeId == null ||
+          _selectedPeriodId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Choose your school, programme and academic period first.'),
+            backgroundColor: Colors.red,
+          ),
         );
         return;
       }
@@ -71,6 +155,12 @@ class _LoginPageState extends State<LoginPage> {
           _emailController.text.trim(),
           _passwordController.text.trim(),
           _nameController.text.trim(),
+          course: _selectedProgramme?.name,
+          yearLevel: _selectedSignupYear,
+          schoolId: _selectedSchoolId,
+          programmeId: _selectedProgrammeId,
+          stageSemester: _selectedSignupSemester,
+          currentPeriodId: _selectedPeriodId,
         );
       } else {
         await authService.signIn(
@@ -82,7 +172,7 @@ class _LoginPageState extends State<LoginPage> {
         if (_isSignUp) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Account created! Please complete your profile (year, etc.) from the Profile page.'),
+              content: Text('Account created! Your course and year were saved. You can edit them anytime from the Profile page.'),
               backgroundColor: Colors.green,
               duration: Duration(seconds: 4),
             ),
@@ -368,6 +458,104 @@ class _LoginPageState extends State<LoginPage> {
           onSubmitted: (_) => _handleAuth(),
         ),
         const SizedBox(height: 16),
+        if (_loadingCatalogue)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(minHeight: 3),
+          )
+        else if (_catalogueError != null) ...[
+          Text(
+            _catalogueError!,
+            style: const TextStyle(fontSize: 12, color: Colors.orange),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: _loadCatalogue,
+              child: const Text('Retry catalogue'),
+            ),
+          ),
+        ] else ...[
+          _buildSignupDropdown<String>(
+            label: 'School',
+            value: _selectedSchoolId,
+            items: _schools.map((school) => school.id).toList(),
+            labelFor: (id) {
+              for (final school in _schools) {
+                if (school.id == id) return school.name;
+              }
+              return id;
+            },
+            onChanged: _isSignUp ? _selectSchool : null,
+          ),
+          const SizedBox(height: 16),
+          if (_loadingProgrammes)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: LinearProgressIndicator(minHeight: 3),
+            )
+          else
+            _buildSignupDropdown<String>(
+              label: 'Programme / course',
+              value: _selectedProgrammeId,
+              items: _programmes.map((programme) => programme.id).toList(),
+              labelFor: (id) {
+                for (final programme in _programmes) {
+                  if (programme.id == id) {
+                    return '${programme.code} — ${programme.name}';
+                  }
+                }
+                return id;
+              },
+              onChanged: _isSignUp && _programmes.isNotEmpty
+                  ? (id) => setState(() => _selectedProgrammeId = id)
+                  : null,
+            ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSignupDropdown<int>(
+                  label: 'Year',
+                  value: _selectedSignupYear,
+                  items: const [1, 2, 3, 4],
+                  labelFor: (year) => 'Year $year',
+                  onChanged: _isSignUp
+                      ? (value) => setState(() => _selectedSignupYear = value ?? 1)
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildSignupDropdown<int>(
+                  label: 'Semester',
+                  value: _selectedSignupSemester,
+                  items: const [1, 2, 3],
+                  labelFor: (semester) => 'Semester $semester',
+                  onChanged: _isSignUp
+                      ? (value) => setState(() => _selectedSignupSemester = value ?? 1)
+                      : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildSignupDropdown<String>(
+            label: 'Academic period',
+            value: _selectedPeriodId,
+            items: _periods.map((period) => period.id).toList(),
+            labelFor: (id) {
+              for (final period in _periods) {
+                if (period.id == id) return period.label;
+              }
+              return id;
+            },
+            onChanged: _isSignUp
+                ? (id) => setState(() => _selectedPeriodId = id)
+                : null,
+          ),
+          const SizedBox(height: 16),
+        ],
       ],
       _buildTextField(
         _emailController,
@@ -473,6 +661,33 @@ class _LoginPageState extends State<LoginPage> {
         ),
       ),
     ];
+  }
+
+  Widget _buildSignupDropdown<T>({
+    required String label,
+    required T? value,
+    required List<T> items,
+    required String Function(T) labelFor,
+    required ValueChanged<T?>? onChanged,
+  }) {
+    return DropdownButtonFormField<T>(
+      value: value,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+      items: items
+          .map(
+            (item) => DropdownMenuItem<T>(
+              value: item,
+              child: Text(labelFor(item), overflow: TextOverflow.ellipsis),
+            ),
+          )
+          .toList(),
+      onChanged: onChanged,
+    );
   }
 
   Widget _buildPolicyLink(String title, String configKey) {

@@ -4,10 +4,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'donate_notes_page.dart';
 import 'file_viewer_page.dart';
-import 'r2_service.dart';
 import 'services.dart';
 
 /// Local documents from the device's own storage.
@@ -402,94 +401,15 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
     await _saveIndex();
   }
 
-  /// Explicit per-file donation: user picks year/semester, then the doc is
-  /// uploaded to the shared library. Never automatic.
-  Future<void> _donateDoc(File file) async {
-    int year = 1;
-    int semester = 1;
-    final picked = await showDialog<(int, int)>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          title: const Text('Share to library'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('This submits the document for admin review. Once approved it appears in the shared Foluma library, visible to everyone. This action is covered by the app\'s Terms of Service.', style: TextStyle(fontSize: 12)),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<int>(
-                initialValue: year,
-                decoration: const InputDecoration(labelText: 'Year level', border: OutlineInputBorder()),
-                items: [for (var y = 1; y <= 4; y++) DropdownMenuItem(value: y, child: Text('Year $y'))],
-                onChanged: (v) => setState(() => year = v ?? 1),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                initialValue: semester,
-                decoration: const InputDecoration(labelText: 'Semester', border: OutlineInputBorder()),
-                items: const [
-                  DropdownMenuItem(value: 1, child: Text('Semester 1')),
-                  DropdownMenuItem(value: 2, child: Text('Semester 2')),
-                ],
-                onChanged: (v) => setState(() => semester = v ?? 1),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, (year, semester)),
-              child: const Text('Share'),
-            ),
-          ],
-        ),
-      ),
+  /// Explicit per-file donation. The donation screen owns unit, period and
+  /// consent collection, so hand off there instead of submitting an
+  /// incomplete (taxonomy-less) donation from this page.
+  Future<void> _donateDoc() async {
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const DonateNotesPage()),
     );
-    if (picked == null || !mounted) return;
-
-    final authService = context.read<AuthService>();
-    final noteService = context.read<NoteService>();
-    final messenger = ScaffoldMessenger.of(context);
-
-    if (authService.currentUser == null || authService.currentUser!.isGuest) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('Sign in to donate notes.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    messenger.showSnackBar(const SnackBar(content: Text('Uploading to library...'), backgroundColor: Colors.blue));
-
-    final url = await CloudinaryService().uploadFile(
-      file: file,
-      userId: authService.currentUser?.id ?? 'guest',
-      folder: 'donations',
-    );
-    if (url == null) {
-      if (mounted) {
-        messenger.showSnackBar(const SnackBar(content: Text('Upload failed. Check your connection.'), backgroundColor: Colors.red));
-      }
-      return;
-    }
-    final ok = await noteService.saveDonatedNote(
-      title: p.basename(file.path),
-      lecturerName: authService.currentUser?.fullName ?? 'Student Donation',
-      targetYear: picked.$1,
-      semester: picked.$2,
-      gDriveId: url,
-      content: '',
-      category: 'Donation',
-      fileSize: await file.length(),
-      userId: authService.currentUser?.isGuest == true ? null : authService.currentUser?.id,
-    );
-    if (mounted) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(ok ? '✅ Submitted for review — an admin will publish it to the library.' : 'Submit failed'), backgroundColor: ok ? Colors.green : Colors.red),
-      );
-    }
   }
 
   String _fmtSize(int bytes) {
@@ -726,7 +646,7 @@ class _LocalDocsPageState extends State<LocalDocsPage> {
         trailing: PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert_rounded, size: 20),
           onSelected: (v) {
-            if (v == 'donate') _donateDoc(file);
+            if (v == 'donate') _donateDoc();
             if (v == 'copy') _copyScanned(file);
           },
           itemBuilder: (_) => const [

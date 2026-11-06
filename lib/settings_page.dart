@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services.dart';
 import 'feedback_page.dart';
 import 'profile_page.dart';
+import 'policy_constants.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -149,6 +150,32 @@ class _SettingsPageState extends State<SettingsPage> {
           SnackBar(content: Text('Error clearing cache: $e')),
         );
       }
+    }
+  }
+
+  /// Writes a local JSON snapshot of the signed-in user's notes via the
+  //  Auto Backup toggle. Local only - nothing leaves the device.
+  Future<void> _backupNow() async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sign in to back up your notes.'), backgroundColor: Colors.orange),
+        );
+      }
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final path = await _noteService.createLocalBackup(user.id);
+      if (path != null && mounted) {
+        setState(() => _autoBackup = true);
+        messenger.showSnackBar(SnackBar(content: Text('Local backup saved: $path'), backgroundColor: Colors.green));
+      } else if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('Backup failed - check your connection.'), backgroundColor: Colors.red));
+      }
+    } catch (e) {
+      if (mounted) messenger.showSnackBar(SnackBar(content: Text('Backup failed: $e'), backgroundColor: Colors.red));
     }
   }
 
@@ -799,6 +826,23 @@ class _SettingsPageState extends State<SettingsPage> {
             const Divider(height: 1),
             SwitchListTile(
               title: const Text(
+                'Email Updates',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
+              subtitle: const Text(
+                'Product news and new-note alerts by email',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: _emailUpdates,
+              activeColor: themeProvider.seedColor,
+              onChanged: (val) {
+                setState(() => _emailUpdates = val);
+                _setBoolPref(_prefEmailUpdates, val);
+              },
+            ),
+            const Divider(height: 1),
+            SwitchListTile(
+              title: const Text(
                 'Notification Sound',
                 style: TextStyle(fontWeight: FontWeight.w500),
               ),
@@ -862,6 +906,24 @@ class _SettingsPageState extends State<SettingsPage> {
               Colors.blueGrey,
             ),
             const Divider(height: 1),
+            SwitchListTile(
+              title: const Text(
+                'Auto Backup',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
+              subtitle: const Text(
+                'Keep a local backup of your notes on this device',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: _autoBackup,
+              activeColor: themeProvider.seedColor,
+              onChanged: (val) {
+                setState(() => _autoBackup = val);
+                _setBoolPref(_prefAutoBackup, val);
+                if (val) _backupNow();
+              },
+            ),
+            const Divider(height: 1),
             _buildActionTile(
               'Clear Cache',
               'Free up local storage space',
@@ -917,17 +979,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Colors.indigo,
               () => _showConfigDialog(
                 'Privacy Policy',
-                _appConfig['privacy_policy'] ??
-                    'FOLUMA PRIVACY POLICY\n\n'
-                    'We value your privacy. Foluma collects only the '
-                    'information you provide — your name, email, academic year, '
-                    'and uploaded notes — solely for the purpose of providing '
-                    'our study companion service.\n\n'
-                    'Your data is stored securely on Supabase with encryption '
-                    'at rest. We never share your personal information with '
-                    'third parties.\n\n'
-                    'You may request data deletion at any time via the '
-                    'Delete Account option in Settings.',
+                _appConfig['privacy_policy'] ?? AppPolicies.privacyPolicy,
               ),
             ),
             const Divider(height: 1),
@@ -938,31 +990,19 @@ class _SettingsPageState extends State<SettingsPage> {
               Colors.brown,
               () => _showConfigDialog(
                 'Terms of Service',
-                _appConfig['terms_and_conditions'] ??
-                    'FOLUMA TERMS OF SERVICE\n\n'
-                    'Last Updated: June 2026\n\n'
-                    '1. By using Foluma you agree to these terms.\n\n'
-                    '2. You must be a currently enrolled student or staff '
-                    'member at a recognized educational institution.\n\n'
-                    '3. You are responsible for your account and its content.\n\n'
-                    '4. Notes uploaded remain your property but are shared '
-                    'within the app for educational purposes.\n\n'
-                    '5. AI responses (Notesy) are for guidance only — always '
-                    'verify with official course materials.\n\n'
-                    '6. We reserve the right to remove content that violates '
-                    'these terms.',
+                _appConfig['terms_and_conditions'] ?? AppPolicies.termsAndConditions,
               ),
             ),
             const Divider(height: 1),
             _buildActionTile(
               'About Foluma',
-              'Version 1.0.6 — Open anything.',
+              'Version 1.0.7 - Open anything.',
               Icons.info_outline_rounded,
               Colors.grey,
               () => _showConfigDialog(
                 'About Foluma',
                 _appConfig['about_text'] ??
-                    'Foluma v1.0.6\n\n'
+                    'Foluma v1.0.7\n\n'
                     'Foluma comes from folio + luma: a place for your pages, '
                     'made bright and easy to read. Open anything — notes, PDFs, '
                     'EPUB books, Office files and local documents — even offline.\n\n'
@@ -980,7 +1020,7 @@ class _SettingsPageState extends State<SettingsPage> {
               () => showLicensePage(
                 context: context,
                 applicationName: 'Foluma',
-                applicationVersion: '1.0.6',
+                applicationVersion: '1.0.7',
                 applicationLegalese: 'AGPL-3.0',
               ),
             ),
@@ -1002,7 +1042,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
           Center(
             child: Text(
-              'Foluma v1.0.6+7',
+              'Foluma v1.0.7+8',
               style: TextStyle(
                 color: theme.colorScheme.onSurface.withOpacity(0.4),
                 fontSize: 12,

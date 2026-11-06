@@ -3,13 +3,13 @@ import './globals.css'
 import { ThemeProvider } from '../lib/theme'
 
 export const metadata: Metadata = {
-  title: 'NotesCache — Many notes. One place.',
+  title: 'Foluma — Open anything.',
   description: 'Your campus study companion. Browse notes, read documents, and get AI study help. Download the app or use the website.',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'NotesCache',
+    title: 'Foluma',
   },
   icons: {
     apple: '/icon-192.png',

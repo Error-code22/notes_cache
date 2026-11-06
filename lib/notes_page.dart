@@ -7,6 +7,7 @@ import 'models.dart';
 import 'note_detail_page.dart';
 import 'upload_note_page.dart';
 import 'local_docs_page.dart';
+import 'taxonomy_service.dart';
 
 enum NoteViewMode { list, details, compact }
 
@@ -33,6 +34,37 @@ const List<_TypeFilter> _typeFilters = [
   _TypeFilter('other', 'OTHER', Icons.description_rounded, Colors.blueGrey),
 ];
 
+const String _allUnitsValue = '__all_units__';
+
+/// A stage or unit heading in the grouped notes list.
+class _NoteSectionHeader {
+  final String title;
+  final bool isStage;
+  final int noteCount;
+
+  const _NoteSectionHeader({
+    required this.title,
+    this.isStage = false,
+    this.noteCount = 0,
+  });
+}
+
+/// Notes sharing a stage/semester/unit section.
+class _NoteUnitGroup {
+  final int stageYear;
+  final int semester;
+  final String? unitKey;
+  final String label;
+  final List<Note> notes = [];
+
+  _NoteUnitGroup({
+    required this.stageYear,
+    required this.semester,
+    required this.unitKey,
+    required this.label,
+  });
+}
+
 class NotesPage extends StatefulWidget {
   final ConnectivityService? connectivity;
 
@@ -54,14 +86,41 @@ class _NotesPageState extends State<NotesPage> {
   Timer? _searchDebounce;
   final Set<String> _offlineAvailable = {};
   bool _offlineCheckDone = false;
+  int? _selectedStage;
+  String? _selectedUnitId;
+  List<ProgrammeUnit> _programmeUnits = const [];
+  bool _programmeUnitsLoading = false;
 
   @override
   void initState() {
     super.initState();
     _loadViewMode();
+    _loadProgrammeUnits();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshNotes();
     });
+  }
+
+  /// Loads the viewer's programme basket once so the Unit dropdown and
+  /// unit titles are available without another round-trip per note.
+  Future<void> _loadProgrammeUnits() async {
+    final programmeId = context.read<AuthService>().currentUser?.programmeId;
+    if (programmeId == null || programmeId.trim().isEmpty) {
+      return;
+    }
+    _programmeUnitsLoading = true;
+    try {
+      final units = await TaxonomyService().getProgrammeUnits(programmeId);
+      if (!mounted) return;
+      setState(() {
+        _programmeUnits = units;
+        _programmeUnitsLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Failed to load programme units: $e');
+      if (!mounted) return;
+      setState(() => _programmeUnitsLoading = false);
+    }
   }
 
   @override
@@ -73,26 +132,164 @@ class _NotesPageState extends State<NotesPage> {
   void _refreshNotes({bool? forceOffline}) {
     final noteService = context.read<NoteService>();
     final user = context.read<AuthService>().currentUser!;
-    final semester = _selectedFilter.startsWith('Semester')
-        ? int.tryParse(_selectedFilter.split(' ').last)
-        : null;
     final isOffline = forceOffline ?? !(widget.connectivity?.isOnline.value ?? true);
     if (isOffline) {
+      // No semester/unit filters here: the cached list always holds the full
+      // programme library, and the grouped view filters it client-side.
       setState(() {
-        _notesFuture = noteService.getCachedNotes(user.id, semester: semester);
+        _notesFuture = noteService.getCachedNotes(user.id);
       });
     } else {
       setState(() {
         _notesFuture = noteService.getNotesForUser(
           user,
           searchQuery: _searchQuery.isEmpty ? null : _searchQuery,
-          semester: semester,
           myNotesOnly: _myNotesOnly,
         );
       });
     }
   }
 
+  int? get _selectedSemester {
+    if (!_selectedFilter.startsWith('Semester')) return null;
+    return int.tryParse(_selectedFilter.split(' ').last);
+  }
+
+  /// The taxonomy unit id on a note, with a code-only fallback for notes
+  /// imported before unit ids were stored.
+  String? _unitIdOf(Note note) {
+    final unitId = note.unitId?.trim();
+    return (unitId == null || unitId.isEmpty) ? null : unitId;
+  }
+
+  String? _unitCodeOf(Note note) {
+    final code = note.unitCode?.trim();
+    if (code != null && code.isNotEmpty) return code;
+    final unitCode = _programmeUnitFor(_unitIdOf(note))?.unitCode.trim();
+    return (unitCode == null || unitCode.isEmpty) ? null : unitCode;
+  }
+
+  String? _unitTitleOf(Note note) {
+    final title = _programmeUnitFor(_unitIdOf(note))?.unitTitle.trim();
+    return (title == null || title.isEmpty) ? null : title;
+  }
+
+  ProgrammeUnit? _programmeUnitFor(String? unitId) {
+    if (unitId == null) return null;
+    for (final unit in _programmeUnits) {
+      // notes.unit_id points at units.id; also tolerate callers storing the
+      // programme_units row id.
+      if (unit.unitId == unitId || unit.id == unitId) return unit;
+    }
+    return null;
+  }
+
+  /// Unit heading/card label, e.g. "IGB3405 IT and Society".
+  String _unitLabelFor(Note note) {
+    final code = _unitCodeOf(note);
+    final title = _unitTitleOf(note);
+    if (code != null && title != null) return '$code $title';
+    if (code != null) return code;
+    if (title != null) return title;
+    return 'Unassigned (legacy)';
+  }
+
+  /// Stable grouping key; null means the note predates unit taxonomy.
+  String? _unitGroupKey(Note note) {
+    final unitId = _unitIdOf(note);
+    if (unitId != null) return 'id:$unitId';
+    final code = note.unitCode?.trim();
+    if (code != null && code.isNotEmpty) return 'code:$code';
+    return null;
+  }
+
+  bool _matchesUnitFilter(Note note) {
+    final selected = _selectedUnitId;
+    if (selected == null) return true;
+    if (_unitIdOf(note) == selected) return true;
+    // A selected programme unit should also catch notes that only carry the
+    // unit code (legacy rows).
+    final unit = _programmeUnitFor(selected);
+    final code = note.unitCode?.trim();
+    return unit != null &&
+        _unitIdOf(note) == null &&
+        code != null &&
+        code.isNotEmpty &&
+        code == unit.unitCode;
+  }
+
+  bool _matchesFilters(Note note) {
+    final semester = _selectedSemester;
+    if (semester != null && (note.stageSemester ?? note.semester) != semester) {
+      return false;
+    }
+    if (_selectedStage != null && (note.stageYear ?? note.targetYear) != _selectedStage) {
+      return false;
+    }
+    if (!_matchesUnitFilter(note)) return false;
+    if (_typeFilter != null && _typeOf(note) != _typeFilter) return false;
+    return true;
+  }
+
+  /// Flattens filtered notes into stage headers, unit headers and note cards.
+  /// Ordering is Stage -> Semester -> Unit (unassigned sections last).
+  List<Object> _buildGroupedEntries(List<Note> notes) {
+    final groups = <String, _NoteUnitGroup>{};
+    for (final note in notes) {
+      final stageYear = note.stageYear ?? note.targetYear;
+      final semester = note.stageSemester ?? note.semester;
+      final unitKey = _unitGroupKey(note);
+      final groupKey = '$stageYear|$semester|${unitKey ?? 'legacy'}';
+      groups
+          .putIfAbsent(
+            groupKey,
+            () => _NoteUnitGroup(
+              stageYear: stageYear,
+              semester: semester,
+              unitKey: unitKey,
+              label: _unitLabelFor(note),
+            ),
+          )
+          .notes
+          .add(note);
+    }
+
+    final ordered = groups.values.toList()
+      ..sort((a, b) {
+        final byStage = a.stageYear.compareTo(b.stageYear);
+        if (byStage != 0) return byStage;
+        final bySemester = a.semester.compareTo(b.semester);
+        if (bySemester != 0) return bySemester;
+        if (a.unitKey == null && b.unitKey != null) return 1;
+        if (a.unitKey != null && b.unitKey == null) return -1;
+        return a.label.toLowerCase().compareTo(b.label.toLowerCase());
+      });
+
+    final stageCounts = <int, int>{};
+    for (final note in notes) {
+      final stage = note.stageYear ?? note.targetYear;
+      stageCounts[stage] = (stageCounts[stage] ?? 0) + 1;
+    }
+
+    final entries = <Object>[];
+    int? currentStage;
+    for (final group in ordered) {
+      if (group.stageYear != currentStage) {
+        currentStage = group.stageYear;
+        entries.add(_NoteSectionHeader(
+          title: 'YEAR ${group.stageYear}',
+          isStage: true,
+          noteCount: stageCounts[group.stageYear] ?? group.notes.length,
+        ));
+      }
+      entries.add(_NoteSectionHeader(
+        title: 'Y${group.stageYear}S${group.semester} • ${group.label}',
+        noteCount: group.notes.length,
+      ));
+      entries.addAll(group.notes);
+    }
+    return entries;
+  }
 
   /// File-type of a note, matching the card icon logic.
   String _typeOf(Note n) {
@@ -287,6 +484,8 @@ class _NotesPageState extends State<NotesPage> {
                     _buildMyNotesChip(context),
                   _buildLocalDocsChip(context),
                   _buildSemesterDropdown(context),
+                  _buildStageDropdown(context),
+                  _buildUnitDropdown(context),
                   _buildFilterChip(context, 'Past Papers'),
                   _buildFilterChip(context, 'Exam Solutions'),
                 ],
@@ -350,14 +549,13 @@ class _NotesPageState extends State<NotesPage> {
                       );
                     }
 
-                    final filtered = _typeFilter == null
-                        ? notes
-                        : notes.where((n) => _typeOf(n) == _typeFilter).toList();
+                    final filtered = notes.where(_matchesFilters).toList();
+                    final entries = _buildGroupedEntries(filtered);
 
                     // Mark which notes are available offline (once per session)
                     unawaited(_checkOfflineAvailability(notes));
 
-                    if (filtered.isEmpty) {
+                    if (entries.isEmpty) {
                       return Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -365,17 +563,23 @@ class _NotesPageState extends State<NotesPage> {
                             Icon(Icons.notes_rounded, size: 60, color: theme.colorScheme.onSurface.withOpacity(0.1)),
                             const SizedBox(height: 16),
                             Text(
-                              notes.isEmpty ? 'No matching notes found.' : 'No ${_typeFilter?.toUpperCase()} files in this view.',
+                              notes.isEmpty ? 'No matching notes found.' : 'No ${_typeFilter?.toUpperCase() ?? 'notes'} in this view.',
                               style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4)),
                             ),
                           ],
                         ),
                       );
                     }
-  
+   
                     return ListView.builder(
-                      itemCount: filtered.length,
-                      itemBuilder: (context, index) => _buildNoteCard(context, filtered[index]),
+                      itemCount: entries.length,
+                      itemBuilder: (context, index) {
+                        final entry = entries[index];
+                        if (entry is _NoteSectionHeader) {
+                          return _buildSectionHeader(context, entry);
+                        }
+                        return _buildNoteCard(context, entry as Note);
+                      },
                     );
                   },
                 ),
@@ -474,6 +678,121 @@ class _NotesPageState extends State<NotesPage> {
     );
   }
 
+  /// Stage filter (all years / 1–4).
+  Widget _buildStageDropdown(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    final isFiltered = _selectedStage != null;
+
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: isFiltered ? primaryColor.withOpacity(0.1) : theme.cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: isFiltered ? primaryColor.withOpacity(0.2) : Colors.transparent),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.stairs_rounded, size: 16, color: isFiltered ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7)),
+          const SizedBox(width: 6),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _selectedStage ?? 0,
+              dropdownColor: theme.cardColor,
+              icon: Icon(Icons.arrow_drop_down_rounded, color: isFiltered ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7)),
+              style: TextStyle(
+                fontSize: 13,
+                color: isFiltered ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7),
+                fontWeight: isFiltered ? FontWeight.bold : FontWeight.normal,
+              ),
+              items: const [
+                DropdownMenuItem(value: 0, child: Text('Stage: All')),
+                DropdownMenuItem(value: 1, child: Text('Stage 1')),
+                DropdownMenuItem(value: 2, child: Text('Stage 2')),
+                DropdownMenuItem(value: 3, child: Text('Stage 3')),
+                DropdownMenuItem(value: 4, child: Text('Stage 4')),
+              ],
+              onChanged: (value) {
+                setState(() => _selectedStage = value == 0 ? null : value);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Unit filter built from the viewer's programme basket. Gracefully falls
+  /// back to "All units" when no programme / units are available.
+  Widget _buildUnitDropdown(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    final isFiltered = _selectedUnitId != null;
+
+    final unitsById = <String, ProgrammeUnit>{};
+    for (final unit in _programmeUnits) {
+      unitsById.putIfAbsent(unit.unitId, () => unit);
+    }
+    final units = unitsById.values.toList()
+      ..sort((a, b) => a.unitCode.toLowerCase().compareTo(b.unitCode.toLowerCase()));
+    final hasSelection = _selectedUnitId != null && unitsById.containsKey(_selectedUnitId);
+    final selectedValue = hasSelection ? _selectedUnitId! : _allUnitsValue;
+
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: isFiltered ? primaryColor.withOpacity(0.1) : theme.cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: isFiltered ? primaryColor.withOpacity(0.2) : Colors.transparent),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.menu_book_rounded, size: 16, color: isFiltered ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7)),
+          const SizedBox(width: 6),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: selectedValue,
+              dropdownColor: theme.cardColor,
+              icon: Icon(Icons.arrow_drop_down_rounded, color: isFiltered ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7)),
+              style: TextStyle(
+                fontSize: 13,
+                color: isFiltered ? primaryColor : theme.colorScheme.onSurface.withOpacity(0.7),
+                fontWeight: isFiltered ? FontWeight.bold : FontWeight.normal,
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: _allUnitsValue,
+                  child: Text(_programmeUnitsLoading ? 'Unit: Loading…' : 'Unit: All'),
+                ),
+                for (final unit in units)
+                  DropdownMenuItem(
+                    value: unit.unitId,
+                    child: Text(
+                      '${unit.unitCode} — ${unit.unitTitle}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              selectedItemBuilder: (context) => [
+                Text(_programmeUnitsLoading ? 'Unit: Loading…' : 'Unit: All'),
+                for (final unit in units) Text(unit.unitCode),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedUnitId = value == _allUnitsValue ? null : value;
+                });
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMyNotesChip(BuildContext context) {
     final theme = Theme.of(context);
     final primaryColor = theme.colorScheme.primary;
@@ -534,6 +853,75 @@ class _NotesPageState extends State<NotesPage> {
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(color: isSelected ? primaryColor.withOpacity(0.2) : Colors.transparent),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(BuildContext context, _NoteSectionHeader header) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+
+    if (header.isStage) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 10),
+        child: Row(
+          children: [
+            Text(
+              header.title,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+                color: primaryColor,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${header.noteCount} ${header.noteCount == 1 ? 'note' : 'notes'}',
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurface.withOpacity(0.4),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Divider(
+                height: 1,
+                color: theme.dividerColor.withOpacity(0.2),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Row(
+        children: [
+          Icon(Icons.folder_copy_rounded, size: 16, color: primaryColor.withOpacity(0.7)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              header.title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.onSurface.withOpacity(0.8),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${header.noteCount}',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface.withOpacity(0.4),
+            ),
+          ),
+        ],
       ),
     );
   }

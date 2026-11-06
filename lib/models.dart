@@ -1,6 +1,3 @@
-import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
 enum UserRole { student, lecturer, admin, moderator, classRep }
 
 class UserProfile {
@@ -9,6 +6,7 @@ class UserProfile {
   final String? fullName;
   final List<UserRole> roles;
   final int? yearLevel;
+  final String? course;
   final String? bio;
   final List<String>? interests;
   final String? avatarUrl;
@@ -16,7 +14,14 @@ class UserProfile {
   final bool isGuest;
   final bool yearChanged;
   final DateTime? lastYearUpdate;
-  
+
+  // JOOUST taxonomy. School/programme/stage are admin-managed; the app shows
+  // them read-only for students.
+  final String? schoolId;
+  final String? programmeId;
+  final int? stageSemester;
+  final String? currentPeriodId;
+
   // Theme Preferences
   final String themeMode; // 'light', 'dark', 'system'
   final int themeColor;   // Seed color value
@@ -29,6 +34,7 @@ class UserProfile {
     this.fullName,
     required this.roles,
     this.yearLevel,
+    this.course,
     this.bio,
     this.interests,
     this.avatarUrl,
@@ -36,6 +42,10 @@ class UserProfile {
     this.isGuest = false,
     this.yearChanged = false,
     this.lastYearUpdate,
+    this.schoolId,
+    this.programmeId,
+    this.stageSemester,
+    this.currentPeriodId,
     this.themeMode = 'system',
     this.themeColor = 0xFF1A237E,
     this.themeFont = 'Inter',
@@ -64,6 +74,7 @@ class UserProfile {
       fullName: map['full_name'],
       roles: roles,
       yearLevel: map['year_level'],
+      course: map['course'],
       bio: map['bio'],
       interests: map['interests'] != null ? List<String>.from(map['interests']) : null,
       avatarUrl: map['avatar_url'],
@@ -71,6 +82,10 @@ class UserProfile {
       isGuest: map['is_guest'] ?? false,
       yearChanged: map['year_changed'] ?? false,
       lastYearUpdate: map['last_year_update'] != null ? DateTime.parse(map['last_year_update']) : null,
+      schoolId: map['school_id'] as String?,
+      programmeId: map['programme_id'] as String?,
+      stageSemester: (map['stage_semester'] as num?)?.toInt(),
+      currentPeriodId: map['current_period_id'] as String?,
       themeMode: map['theme_mode'] ?? 'system',
       themeColor: map['theme_color'] ?? 0xFF1A237E,
       themeFont: map['theme_font'] ?? 'Inter',
@@ -95,6 +110,18 @@ class Note {
   final String status; // pending | approved | rejected
   final String? userId;
 
+  // Course/unit placement (null on legacy notes).
+  final String? programmeId;
+  final String? unitId;
+  final String? unitCode;
+  final String? programmeUnitId;
+  final int? stageYear;
+  final int? stageSemester;
+  final String? academicPeriodId;
+  final String visibility; // private | shared
+  final bool aiIndexed;
+  final String? assetId;
+
   Note({
     required this.id,
     required this.title,
@@ -110,7 +137,26 @@ class Note {
     this.isFromCache = false,
     this.status = 'approved',
     this.userId,
+    this.programmeId,
+    this.unitId,
+    this.unitCode,
+    this.programmeUnitId,
+    this.stageYear,
+    this.stageSemester,
+    this.academicPeriodId,
+    this.visibility = 'private',
+    this.aiIndexed = false,
+    this.assetId,
   });
+
+  bool get isShared => visibility == 'shared';
+  bool get isPrivate => visibility != 'shared';
+  bool get hasUnit => unitCode != null && unitCode!.trim().isNotEmpty;
+
+  String get stageLabel {
+    if (stageYear == null) return 'Unassigned';
+    return 'Y$stageYear${stageSemester == null ? '' : 'S$stageSemester'}';
+  }
 
   bool get isPending => status == 'pending';
   bool get isApproved => status == 'approved';
@@ -132,6 +178,16 @@ class Note {
       isFromCache: isFromCache,
       status: (map['status'] as String?) ?? 'approved',
       userId: map['user_id'] as String?,
+      programmeId: map['programme_id'] as String?,
+      unitId: map['unit_id'] as String?,
+      unitCode: map['unit_code'] as String?,
+      programmeUnitId: map['programme_unit_id'] as String?,
+      stageYear: (map['stage_year'] as num?)?.toInt(),
+      stageSemester: (map['stage_semester'] as num?)?.toInt(),
+      academicPeriodId: map['academic_period_id'] as String?,
+      visibility: (map['visibility'] as String?) ?? 'private',
+      aiIndexed: map['ai_indexed'] == true,
+      assetId: map['asset_id'] as String?,
     );
   }
 }
@@ -153,6 +209,15 @@ class DonationSubmission {
   final String? reviewNote;
   final DateTime createdAt;
 
+  final String? programmeId;
+  final String? unitId;
+  final String? unitCode;
+  final String? programmeUnitId;
+  final int? stageYear;
+  final int? stageSemester;
+  final String? academicPeriodId;
+  final String? assetId;
+
   const DonationSubmission({
     required this.id,
     required this.title,
@@ -167,6 +232,14 @@ class DonationSubmission {
     this.status = 'pending',
     this.reviewNote,
     required this.createdAt,
+    this.programmeId,
+    this.unitId,
+    this.unitCode,
+    this.programmeUnitId,
+    this.stageYear,
+    this.stageSemester,
+    this.academicPeriodId,
+    this.assetId,
   });
 
   bool get isPending => status == 'pending';
@@ -188,6 +261,14 @@ class DonationSubmission {
       status: (map['status'] as String?) ?? 'pending',
       reviewNote: map['review_note'] as String?,
       createdAt: DateTime.tryParse('${map['created_at']}') ?? DateTime.now(),
+      programmeId: map['programme_id'] as String?,
+      unitId: map['unit_id'] as String?,
+      unitCode: map['unit_code'] as String?,
+      programmeUnitId: map['programme_unit_id'] as String?,
+      stageYear: (map['stage_year'] as num?)?.toInt(),
+      stageSemester: (map['stage_semester'] as num?)?.toInt(),
+      academicPeriodId: map['academic_period_id'] as String?,
+      assetId: map['asset_id'] as String?,
     );
   }
 }

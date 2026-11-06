@@ -10,8 +10,11 @@ import 'package:url_launcher/url_launcher.dart';
 import 'models.dart';
 import 'services.dart';
 import 'r2_service.dart';
+import 'note_storage_service.dart';
 import 'file_viewer_page.dart';
 import 'editors/pptx_to_pdf.dart';
+import 'notesy/study_generator_page.dart';
+import 'notesy/study_models.dart';
 
 class NoteDetailPage extends StatefulWidget {
   final Note note;
@@ -26,16 +29,32 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
   bool _isLoading = false;
   bool _isSummarizing = false;
   String? _summary;
+  late bool _aiIndexed;
+  late bool _isShared;
+  bool _savingAccess = false;
 
   @override
   void initState() {
     super.initState();
     _summary = widget.note.summary;
+    _aiIndexed = widget.note.aiIndexed;
+    _isShared = widget.note.isShared;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_summary == null || _summary!.isEmpty) {
         unawaited(_generateSummary(silent: true));
       }
     });
+  }
+
+  /// Asset-backed notes go through `note-file` so R2 signed URLs and the
+  /// Telegram fallback are resolved server-side. Legacy notes keep their
+  /// existing Cloudinary / Google Drive link.
+  Future<String> _resolveFileUrlAsync() async {
+    if (widget.note.assetId != null && widget.note.assetId!.isNotEmpty) {
+      final url = await NoteStorageService().getFileUrl(widget.note.id);
+      if (url != null && url.isNotEmpty) return url;
+    }
+    return _resolveFileUrl();
   }
 
   /// Resolves a note's stored file reference to a downloadable URL.
@@ -73,25 +92,39 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
 
   /// Downloads the note file (if needed) and returns the local File.
   Future<File?> _downloadNoteFile() async {
-    final url = _resolveFileUrl();
-    if (url.isEmpty) return null;
     final noteService = context.read<NoteService>();
     final appDirPath = await noteService.getAppDirectory();
     final file = File(p.join(
       appDirPath,
       'ai_doc_${widget.note.id}${_resolveFileExt()}',
     ));
-    if (!await file.exists()) {
-      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
-      debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $url');
-      if (response.statusCode != 200) {
-        if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
-          throw Exception('This file is no longer available on the server (HTTP ${response.statusCode}). It may have been removed by the uploader.');
-        }
-        throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $url');
+    if (await file.exists()) return file;
+
+    // Asset-backed notes may live in R2, Cloudinary or Telegram. The storage
+    // service resolves the current replica (re-signing R2) and joins Telegram
+    // chunks with the caller's token.
+    if (widget.note.assetId != null && widget.note.assetId!.isNotEmpty) {
+      final bytes = await NoteStorageService().downloadNoteBytes(widget.note.id);
+      if (bytes != null && bytes.isNotEmpty) {
+        await file.writeAsBytes(bytes);
+        return file;
       }
-      await file.writeAsBytes(response.bodyBytes);
+      debugPrint('Note file: asset download failed, trying the legacy URL');
     }
+
+    final url = await _resolveFileUrlAsync();
+    if (url.isEmpty) {
+      throw Exception('This file could not be downloaded from storage right now.');
+    }
+    final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
+    debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode}');
+    if (response.statusCode != 200) {
+      if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
+        throw Exception('This file is no longer available on the server (HTTP ${response.statusCode}). It may have been removed by the uploader.');
+      }
+      throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}).');
+    }
+    await file.writeAsBytes(response.bodyBytes);
     return file;
   }
 
@@ -204,6 +237,20 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     }
   }
 
+  Future<void> _makeStudySet() async {
+    final deck = await Navigator.push<StudyDeck>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StudyGeneratorPage(initialNote: widget.note),
+      ),
+    );
+    if (deck != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved “${deck.title}” to Study Lab.')),
+      );
+    }
+  }
+
   Future<void> _handleOpenNote() async {
     final user = context.read<AuthService>().currentUser!;
     if (user.isGuest) {
@@ -282,7 +329,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
   }
 
   Future<void> _openOnWebsite() async {
-    final url = _resolveFileUrl();
+    final url = await _resolveFileUrlAsync();
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('This note has no file to open.'), backgroundColor: Colors.orange),
@@ -392,78 +439,82 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
       final isConvertibleFormat = ['pptx', 'ppt', 'pub'].contains(ext.replaceFirst('.', ''));
       final hasPdf = widget.note.pdfUrl != null && widget.note.pdfUrl!.isNotEmpty;
       final usePdf = !isExternal && isConvertibleFormat && hasPdf;
+      final isAssetBacked = widget.note.assetId != null && widget.note.assetId!.isNotEmpty;
 
-      // Determine which file to download
-      final String downloadUrl;
-      final String downloadExt;
+      late File file;
+      String downloadExt = ext;
+
       if (usePdf) {
-        downloadUrl = widget.note.pdfUrl!;
         downloadExt = '.pdf';
-      } else if (!isExternal && isConvertibleFormat && !hasPdf) {
-        // No PDF yet — convert on device for in-app reader
-        final originalUrl = _resolveFileUrl();
-        if (originalUrl.isNotEmpty) {
-          setState(() => _isLoading = true);
-          final response = await http.get(Uri.parse(originalUrl)).timeout(const Duration(seconds: 60));
-          if (response.statusCode == 200) {
-            // Write PPTX to temp file
-            final tempDir = Directory.systemTemp;
-            final tempPptx = File('${tempDir.path}${Platform.pathSeparator}temp_${widget.note.id}.pptx');
-            await tempPptx.writeAsBytes(response.bodyBytes);
-            try {
-              final pdfBytes = await PptxToPdf.convert(tempPptx, title: widget.note.title);
-              final tempPdf = File('${tempDir.path}${Platform.pathSeparator}temp_${widget.note.id}.pdf');
-              await tempPdf.writeAsBytes(pdfBytes);
-              // Upload PDF to Cloudinary and persist pdf_url
-              try {
-                final noteService = context.read<NoteService>();
-                final auth = context.read<AuthService>();
-                final pdfUrl = await CloudinaryService().uploadFile(
-                  file: tempPdf,
-                  userId: auth.currentUser?.id ?? 'guest',
-                  folder: 'notes',
-                );
-                if (pdfUrl != null) {
-                  await noteService.updateNotePdfUrl(widget.note.id, pdfUrl);
-                }
-              } catch (_) {}
-              // Open the local PDF
-              Navigator.push(context, MaterialPageRoute(
-                builder: (context) => FileViewerPage(file: tempPdf, title: widget.note.title, onSave: _uploadEditedFile),
-              ));
-              return;
-            } catch (e) {
-              debugPrint('On-the-fly PDF conversion failed: $e');
-              // Fall through to open original PPTX
-            }
-          }
-        }
-        // Fallback: open original
-        downloadUrl = originalUrl;
-        downloadExt = ext;
-      } else {
-        downloadUrl = _resolveFileUrl();
-        downloadExt = ext;
-      }
-      
-      final fileName = '${widget.note.title.replaceAll(' ', '_')}$downloadExt';
-      final filePath = p.join(appDirPath, fileName);
-      final file = File(filePath);
-
-      if (!await file.exists()) {
-        if (downloadUrl.isNotEmpty) {
-          // Download from Cloudinary / Google Drive
-          final response = await http.get(Uri.parse(downloadUrl)).timeout(const Duration(seconds: 60));
-          debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode} from $downloadUrl');
+        final filePath = p.join(appDirPath, '${widget.note.title.replaceAll(' ', '_')}.pdf');
+        file = File(filePath);
+        if (!await file.exists()) {
+          final response =
+              await http.get(Uri.parse(widget.note.pdfUrl!)).timeout(const Duration(seconds: 60));
           if (response.statusCode != 200) {
-            if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
-              throw Exception('This file is no longer available on the server (HTTP ${response.statusCode}). It may have been removed by the uploader.');
-            }
-            throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}): $downloadUrl');
+            throw Exception('Could not fetch the PDF version (HTTP ${response.statusCode}).');
           }
           await file.writeAsBytes(response.bodyBytes);
-        } else {
-          await file.writeAsString(widget.note.content);
+        }
+      } else if (isAssetBacked) {
+        // R2, Cloudinary and Telegram all resolve through note-file so the
+        // current replica is used and Telegram chunks stay authenticated.
+        final downloaded = await _downloadNoteFile();
+        if (downloaded == null) {
+          throw Exception('This note has no downloadable file.');
+        }
+        file = downloaded;
+
+        if (!isExternal && isConvertibleFormat) {
+          try {
+            final pdfBytes = await PptxToPdf.convert(file, title: widget.note.title);
+            final tempPdf = File(
+              '${Directory.systemTemp.path}${Platform.pathSeparator}temp_${widget.note.id}.pdf',
+            );
+            await tempPdf.writeAsBytes(pdfBytes);
+            file = tempPdf;
+            downloadExt = '.pdf';
+            try {
+              final noteService = context.read<NoteService>();
+              final auth = context.read<AuthService>();
+              final pdfUrl = await CloudinaryService().uploadFile(
+                file: tempPdf,
+                userId: auth.currentUser?.id ?? 'guest',
+                folder: 'notes',
+              );
+              if (pdfUrl != null) {
+                await noteService.updateNotePdfUrl(widget.note.id, pdfUrl);
+              }
+            } catch (_) {}
+          } catch (e) {
+            debugPrint('On-the-fly PDF conversion failed: $e');
+            // Fall through to open the original file.
+          }
+        }
+      } else {
+        final downloadUrl = await _resolveFileUrlAsync();
+        if (downloadUrl.isEmpty && widget.note.content.trim().isEmpty) {
+          throw Exception('This note has no downloadable file.');
+        }
+        final fileName = '${widget.note.title.replaceAll(' ', '_')}$downloadExt';
+        file = File(p.join(appDirPath, fileName));
+
+        if (!await file.exists()) {
+          if (downloadUrl.isNotEmpty) {
+            // Legacy Cloudinary / Google Drive link.
+            final response =
+                await http.get(Uri.parse(downloadUrl)).timeout(const Duration(seconds: 60));
+            debugPrint('Note file fetch [${widget.note.id}]: HTTP ${response.statusCode}');
+            if (response.statusCode != 200) {
+              if (response.statusCode == 401 || response.statusCode == 403 || response.statusCode == 404) {
+                throw Exception('This file is no longer available on the server (HTTP ${response.statusCode}). It may have been removed by the uploader.');
+              }
+              throw Exception('Could not fetch file from storage (HTTP ${response.statusCode}).');
+            }
+            await file.writeAsBytes(response.bodyBytes);
+          } else {
+            await file.writeAsString(widget.note.content);
+          }
         }
       }
 
@@ -614,11 +665,150 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
     }
   }
 
+  Future<void> _setShared(bool shared) async {
+    if (_savingAccess) return;
+    final noteService = context.read<NoteService>();
+    setState(() {
+      _savingAccess = true;
+      _isShared = shared;
+    });
+    final ok = await noteService.setNoteVisibility(widget.note.id, shared);
+    if (!mounted) return;
+    setState(() {
+      _savingAccess = false;
+      if (!ok) {
+        _isShared = widget.note.isShared;
+        _aiIndexed = widget.note.aiIndexed;
+      }
+    });
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not change sharing. Try again when you are online.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _setAiConsent(bool enabled) async {
+    if (_savingAccess) return;
+    final noteService = context.read<NoteService>();
+    setState(() {
+      _savingAccess = true;
+      _aiIndexed = enabled;
+    });
+    final ok = await noteService.setNoteAiConsent(widget.note.id, enabled);
+    if (!mounted) return;
+    setState(() {
+      _savingAccess = false;
+      if (!ok) _aiIndexed = widget.note.aiIndexed;
+    });
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not update AI access. Try again when you are online.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Widget _buildAccessCard(ThemeData theme, String? userId, bool canManage) {
+    final isOwner = userId != null && widget.note.userId == userId;
+    if (!isOwner) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.lock_outline, size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              const Text(
+                'Sharing & AI access',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              ),
+              if (_savingAccess) ...[
+                const Spacer(),
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            canManage
+                ? 'Your notes stay private by default. Sharing puts this file in your programme library. Foluma AI can only read a note after you allow AI access, and you can withdraw that at any time.'
+                : 'Your notes stay private by default. Foluma AI can only read a note after you allow AI access, and you can withdraw that at any time.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.4,
+              color: theme.colorScheme.onSurface.withOpacity(0.7),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (canManage)
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: _isShared,
+              onChanged: _savingAccess ? null : _setShared,
+              title: const Text('Share with my programme', style: TextStyle(fontSize: 14)),
+              subtitle: const Text(
+                'Stored in the cloud and backed up to Telegram.',
+                style: TextStyle(fontSize: 12),
+              ),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _isShared
+                    ? 'Shared with your programme. Your class rep, lecturer or an admin manages sharing for this note.'
+                    : 'Students publish notes by donating them. Use Donate Notes to share this file with your programme.',
+                style: const TextStyle(fontSize: 12, height: 1.4),
+              ),
+            ),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: _aiIndexed,
+            onChanged: _savingAccess ? null : _setAiConsent,
+            title: const Text('Allow Foluma AI access', style: TextStyle(fontSize: 14)),
+            subtitle: const Text(
+              'Indexes this note so Notesy can answer questions from it.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final user = context.watch<AuthService>().currentUser;
     final isAdmin = user?.hasRole(UserRole.admin) ?? false;
+    final canManage = user != null &&
+        (user.hasRole(UserRole.admin) ||
+            user.hasRole(UserRole.moderator) ||
+            user.hasRole(UserRole.lecturer) ||
+            user.hasRole(UserRole.classRep));
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -633,6 +823,11 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
               tooltip: 'Delete Note (Admin)',
               onPressed: () => _deleteNote(context),
             ),
+          IconButton(
+            icon: const Icon(Icons.style_outlined),
+            onPressed: _makeStudySet,
+            tooltip: 'Make a study set from this note',
+          ),
           IconButton(
             icon: _isSummarizing
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
@@ -654,7 +849,9 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                'Year ${widget.note.targetYear} • Semester ${widget.note.semester}',
+                widget.note.hasUnit
+                    ? '${widget.note.unitCode} • ${widget.note.stageLabel}'
+                    : 'Year ${widget.note.targetYear} • Semester ${widget.note.semester}',
                 style: TextStyle(
                   color: theme.colorScheme.primary,
                   fontWeight: FontWeight.bold,
@@ -731,6 +928,10 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
             if (_summary != null && _summary!.isNotEmpty) ...[
               const SizedBox(height: 24),
               _buildSummaryCard(theme, _summary!),
+            ],
+            if (widget.note.userId != null && widget.note.userId == user?.id) ...[
+              const SizedBox(height: 24),
+              _buildAccessCard(theme, user?.id, canManage),
             ],
             const SizedBox(height: 100),
           ],

@@ -13,7 +13,7 @@ import 'admin_dashboard_page.dart';
 import 'profile_page.dart';
 import 'settings_page.dart';
 import 'notes_page.dart';
-import 'ai_chat_page.dart';
+import 'notesy/notesy_hub_page.dart';
 import 'updates_page.dart';
 import 'feedback_page.dart';
 import 'donate_notes_page.dart';
@@ -168,6 +168,24 @@ class _DashboardPageState extends State<DashboardPage>
       _setupBackgroundNotifications();
       // Refresh FCM token in case it rotated while app was dead
       PushService.instance.init();
+
+      // Auto Backup: keep a local snapshot of the user's notes while the
+      // user has the setting switched on.
+      _maybeAutoBackup();
+    }
+  }
+
+  Future<void> _maybeAutoBackup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('settings_auto_backup') ?? false) {
+        final user = context.read<AuthService>().currentUser;
+        if (user != null) {
+          unawaited(context.read<NoteService>().createLocalBackup(user.id));
+        }
+      }
+    } catch (_) {
+      // Best effort — backup failures must never affect app behaviour.
     }
   }
 
@@ -817,8 +835,7 @@ class _DashboardPageState extends State<DashboardPage>
 
   Widget _buildNotesyMemoryCard(BuildContext context) {
     final theme = Theme.of(context);
-    final accent = const Color(0xFF7C3AED);
-    final warm = const Color(0xFFF59E0B);
+    final accent = const Color(0xFFFFC53D);
 
     return Card(
       elevation: 0,
@@ -830,7 +847,7 @@ class _DashboardPageState extends State<DashboardPage>
       child: InkWell(
         onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const AiChatPage()),
+          MaterialPageRoute(builder: (context) => const NotesyHubPage()),
         ),
         borderRadius: BorderRadius.circular(24),
         child: Padding(
@@ -844,12 +861,14 @@ class _DashboardPageState extends State<DashboardPage>
                     width: 64,
                     height: 64,
                     decoration: BoxDecoration(
-                      color: accent.withOpacity(0.12),
+                      color: accent.withOpacity(0.18),
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Icon(
                       Icons.psychology_alt_rounded,
-                      color: accent,
+                      color: theme.brightness == Brightness.dark
+                          ? accent
+                          : const Color(0xFF111214),
                       size: 34,
                     ),
                   ),
@@ -862,7 +881,7 @@ class _DashboardPageState extends State<DashboardPage>
                           children: [
                             const Expanded(
                               child: Text(
-                                'Notesy Memory Lab',
+                                'Notesy',
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
@@ -875,15 +894,16 @@ class _DashboardPageState extends State<DashboardPage>
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: warm.withOpacity(0.14),
+                                color: accent.withOpacity(0.18),
                                 borderRadius: BorderRadius.circular(6),
                               ),
-                              child: Text(
-                                'NEW',
+                              child: const Text(
+                                'STUDY AI',
                                 style: TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 9,
+                                  letterSpacing: 0.5,
                                   fontWeight: FontWeight.w900,
-                                  color: warm,
+                                  color: Color(0xFF111214),
                                 ),
                               ),
                             ),
@@ -891,7 +911,7 @@ class _DashboardPageState extends State<DashboardPage>
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Quizzes, flashcards & memory tools',
+                          'Ask, quiz and revise with your notes',
                           style: TextStyle(
                             fontSize: 12,
                             color: theme.colorScheme.onSurface.withOpacity(0.5),
